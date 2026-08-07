@@ -2,9 +2,20 @@
 
 ## Memoria contextual persistente para agentes de IA
 
-**Estado:** Borrador de arquitectura y roadmap ejecutable
+**Estado:** Ejecutado — v1.0 entregada el 2026-08-07 (ver tabla de estado abajo)
 **Reemplaza a:** `plan.md` (v0.2)
 **Fecha:** 2026-08-06
+
+> **Estado de ejecución (2026-08-07):**
+> | Fase | Estado | Resultado |
+> |---|---|---|
+> | 0 — Validación | ✅ | Decisión: construir (`decisions/000-build-vs-adopt.md`) |
+> | 1 — Núcleo | ✅ | Contaminación ambiguos 25% (vs 50% baseline) |
+> | 2 — Context Engine | ✅ | **0% contaminación**, recall 100% (`evals/REPORT.md`) |
+> | 3 — Relaciones | ✅ | Grafo ligero en Postgres, sin regresión |
+> | 4 — Clasificador local | ✅ (infra) | Dataset exportable + hook Ollama opt-in; fine-tuning diferido a ~500 resoluciones reales |
+> | 5 — Conectores | ✅ (1º) | Importador Markdown (MEMORY.md/CLAUDE.md); resto según dolor real |
+> | Productización | ✅ | Tokens con scopes, Docker completo, backups, 102+ tests |
 
 ---
 

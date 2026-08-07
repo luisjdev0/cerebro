@@ -6,7 +6,6 @@ memory.source (default "unknown").
 """
 
 import logging
-import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -16,6 +15,17 @@ import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from knowledgeos.auth import (
+    DuplicateTokenNameError,
+    InvalidScopesError,
+    Principal,
+    TokenNotFoundError,
+    create_api_token,
+    get_principal,
+    list_api_tokens,
+    require_scope,
+    revoke_api_token,
+)
 from knowledgeos.config import Settings, get_settings
 from knowledgeos.context_engine import (
     DisambiguationAlreadyResolvedError,
@@ -171,6 +181,31 @@ class StatsOut(BaseModel):
     preferences_learned: list[PreferenceOut]
 
 
+class TokenCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    scopes: list[str] = Field(min_length=1)
+    allowed_contexts: list[str] | None = None
+
+
+class TokenOut(BaseModel):
+    id: UUID
+    name: str
+    scopes: list[str]
+    allowed_contexts: list[str] | None
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+class TokenCreateOut(TokenOut):
+    token: str  # plaintext - only ever present in THIS response, never again
+
+
+class ContextDeleteOut(BaseModel):
+    slug: str
+    status: str
+    memories_deleted: int
+
+
 class DisambiguationExportRow(BaseModel):
     query: str
     candidates: list[dict[str, Any]]
@@ -233,7 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             await pool.close()
 
-    app = FastAPI(title="KnowledgeOS", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="KnowledgeOS", version="1.0.0", lifespan=lifespan)
 
     # ---------------------------------------------------------------- dependencies
 
@@ -246,18 +281,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_settings_dep(request: Request) -> Settings:
         return request.app.state.settings
 
-    def require_auth(
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
-        expected = f"Bearer {settings.api_token}"
-        if not authorization or not secrets.compare_digest(authorization, expected):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="missing or invalid Authorization: Bearer <API_TOKEN>",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-    def agent_name(x_agent_name: Annotated[str | None, Header()] = None) -> str:
+    def agent_name(
+        principal: Annotated[Principal, Depends(get_principal)],
+        x_agent_name: Annotated[str | None, Header()] = None,
+    ) -> str:
+        """Identity used for `memory.source` / `audit_log.agent`. A named token's
+        `name` is the real (non-self-declared) identity and always wins (plan_v2.md
+        SS9: "el name del token pisa X-Agent-Name"). The root token has no fixed
+        identity of its own, so it falls back to the caller-supplied header (default
+        "unknown"), same as Fase 1."""
+        if not principal.is_root:
+            return principal.name
         return x_agent_name or "unknown"
 
     async def log_audit(
@@ -283,6 +317,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data.pop("context_id", None)
         return data
 
+    async def context_slug_of_memory(pool: asyncpg.Pool, memory_id: UUID) -> str | None:
+        """Context slug of `memory_id`, or None if it does not exist. Used to check
+        `Principal.allowed_contexts` against a memory reached by id (edges, related)
+        without needing its full row."""
+        return await pool.fetchval(
+            "SELECT c.slug FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1", memory_id
+        )
+
+    def require_context_allowed(principal: Principal, ctx_slug: str | None, *, memory_id: UUID | str) -> None:
+        """403 if `ctx_slug` is not None and outside `principal.allowed_contexts`. A
+        None slug (memory not found) is deliberately NOT an error here - callers let
+        the underlying 404 (memory truly missing) surface on its own so a restricted
+        token can't distinguish "doesn't exist" from "exists but forbidden" through
+        this check alone."""
+        if ctx_slug is not None and not principal.context_allowed(ctx_slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to access context '{ctx_slug}' (memory {memory_id})",
+            )
+
     # ---------------------------------------------------------------- health
 
     @app.get("/health")
@@ -292,10 +346,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unreachable")
         return {"status": "ok"}
 
+    # ---------------------------------------------------------------- tokens (plan_v2.md SS9)
+
+    @app.post(
+        "/tokens",
+        status_code=status.HTTP_201_CREATED,
+        response_model=TokenCreateOut,
+        dependencies=[Depends(require_scope("admin"))],
+    )
+    async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        try:
+            created = await create_api_token(
+                pool, name=body.name, scopes=body.scopes, allowed_contexts=body.allowed_contexts
+            )
+        except InvalidScopesError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        except DuplicateTokenNameError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"an active token named '{exc}' already exists - revoke it first",
+            ) from exc
+        return TokenCreateOut(**created)
+
+    @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_scope("admin"))])
+    async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        rows = await list_api_tokens(pool)
+        return [dict(r) for r in rows]
+
+    @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_scope("admin"))])
+    async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        try:
+            row = await revoke_api_token(pool, name)
+        except TokenNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"no active token named '{exc}'",
+            ) from exc
+        return dict(row)
+
     # ---------------------------------------------------------------- contexts
 
-    @app.post("/contexts", status_code=status.HTTP_201_CREATED, response_model=ContextOut, dependencies=[Depends(require_auth)])
-    async def create_context(body: ContextCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+    @app.post("/contexts", status_code=status.HTTP_201_CREATED, response_model=ContextOut)
+    async def create_context(
+        body: ContextCreate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        if not principal.context_allowed(body.slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to create context '{body.slug}'",
+            )
         try:
             row = await pool.fetchrow(
                 """
@@ -315,22 +416,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
         return dict(row)
 
-    @app.get("/contexts", response_model=list[ContextOut], dependencies=[Depends(require_auth)])
-    async def list_contexts(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+    @app.get("/contexts", response_model=list[ContextOut])
+    async def list_contexts(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
         rows = await pool.fetch(
             "SELECT id, slug, name, kind, description, created_at FROM contexts ORDER BY created_at"
         )
-        return [dict(r) for r in rows]
+        return [dict(r) for r in rows if principal.context_allowed(r["slug"])]
+
+    @app.delete("/contexts/{slug}", response_model=ContextDeleteOut)
+    async def delete_context(
+        slug: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        force: bool = False,
+    ):
+        """Hard-deletes a context. 409 if it still has memories (of any status),
+        unless `?force=true` - in which case those memories (and, via cascade, their
+        `memory_edges`) are hard-deleted first. `admin`-only (plan_v2.md SS9: token
+        management-adjacent, destructive), regardless of `write` scope."""
+        if not principal.context_allowed(slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to delete context '{slug}'",
+            )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                context_id = await conn.fetchval("SELECT id FROM contexts WHERE slug = $1 FOR UPDATE", slug)
+                if context_id is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"context '{slug}' not found")
+
+                memory_count = await conn.fetchval("SELECT count(*) FROM memories WHERE context_id = $1", context_id)
+                if memory_count > 0 and not force:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"context '{slug}' still has {memory_count} memories - "
+                            "pass ?force=true to hard-delete them along with the context"
+                        ),
+                    )
+                if memory_count > 0:
+                    # Break the self-referencing superseded_by FK before wiping the
+                    # whole context in one shot (memory_edges cascades on its own).
+                    await conn.execute("UPDATE memories SET superseded_by = NULL WHERE context_id = $1", context_id)
+                    await conn.execute("DELETE FROM memories WHERE context_id = $1", context_id)
+                await conn.execute("DELETE FROM contexts WHERE id = $1", context_id)
+
+        await log_audit(
+            pool,
+            agent=agent,
+            action="delete_context",
+            memory_id=None,
+            detail={"context": slug, "force": force, "memories_deleted": memory_count},
+        )
+        return ContextDeleteOut(slug=slug, status="deleted", memories_deleted=memory_count)
 
     # ---------------------------------------------------------------- memories
 
-    @app.post("/memories", status_code=status.HTTP_201_CREATED, response_model=MemoryOut, dependencies=[Depends(require_auth)])
+    @app.post("/memories", status_code=status.HTTP_201_CREATED, response_model=MemoryOut)
     async def create_memory(
         body: MemoryCreate,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
+        if not principal.context_allowed(body.context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to write to context '{body.context}'",
+            )
         leak = find_credential_leak(body.content)
         if leak is None and body.title:
             leak = find_credential_leak(body.title)
@@ -383,12 +541,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return row_to_memory_out(row)
 
-    @app.get("/memories/search", response_model=MemorySearchResponse, dependencies=[Depends(require_auth)])
+    @app.get("/memories/search", response_model=MemorySearchResponse)
     async def search_memories(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
         settings_dep: Annotated[Settings, Depends(get_settings_dep)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
         q: Annotated[str, Query(min_length=1)],
         context: str | None = None,
         scope: str = "auto",
@@ -423,6 +582,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if explicit_context is None and scope not in ("auto", "all"):
             explicit_context = scope
 
+        if explicit_context is not None and not principal.context_allowed(explicit_context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to search context '{explicit_context}'",
+            )
+        allowed_contexts = (
+            list(principal.allowed_contexts) if principal.allowed_contexts is not None else None
+        )
+
         decided_context: str | None = None
 
         try:
@@ -448,6 +616,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     type_=type,
                     limit=limit,
                     include_superseded=include_superseded,
+                    allowed_contexts=allowed_contexts,
                 )
                 scope_decision = ScopeDecisionOut(mode="all")
 
@@ -461,6 +630,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     settings=settings_dep,
                     agent=agent,
                     limit=limit,
+                    allowed_contexts=allowed_contexts,
                 )
                 if decision.mode == "auto":
                     if decision.context is not None:
@@ -505,6 +675,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 top_results=results,
                 decided_context=decided_context,
             )
+            if principal.allowed_contexts is not None:
+                # A restricted token must never see a neighbor from a context outside
+                # its allowlist, even one reached via an explicit edge (`cross_context`
+                # marks an INTENTIONAL bridge for tokens that can see both sides - it
+                # is not a bypass of the allowlist for tokens that can't).
+                related = [r for r in related if principal.context_allowed(r["memory"]["context"])]
 
         await log_audit(
             pool,
@@ -533,14 +709,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post(
         "/disambiguations/{disambiguation_id}/resolve",
         response_model=DisambiguationResolveOut,
-        dependencies=[Depends(require_auth)],
     )
     async def resolve_disambiguation_endpoint(
         disambiguation_id: str,
         body: DisambiguationResolveIn,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
+        if not principal.context_allowed(body.context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to resolve to context '{body.context}'",
+            )
         try:
             result = await resolve_disambiguation(
                 pool,
@@ -574,8 +755,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return DisambiguationResolveOut(**result)
 
-    @app.get("/stats", response_model=StatsOut, dependencies=[Depends(require_auth)])
-    async def get_stats(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+    @app.get("/stats", response_model=StatsOut)
+    async def get_stats(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
         memory_rows = await pool.fetch(
             """
             SELECT c.slug AS context, m.status, count(*) AS count
@@ -609,18 +793,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             memories_by_context=[
                 ContextMemoryCount(context=r["context"], status=r["status"], count=r["count"])
                 for r in memory_rows
+                if principal.context_allowed(r["context"])
             ],
             disambiguations=DisambiguationStats(**dict(disamb_row)),
             preferences_learned=[
                 PreferenceOut(context=r["context"], term=r["term"], weight=r["weight"])
                 for r in preference_rows
+                if principal.context_allowed(r["context"])
             ],
         )
 
     @app.get(
         "/disambiguations/export",
         response_model=list[DisambiguationExportRow],
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_scope("admin"))],
     )
     async def export_disambiguations(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
@@ -652,13 +838,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out.append(d)
         return out
 
-    @app.patch("/memories/{memory_id}", response_model=MemoryOut, dependencies=[Depends(require_auth)])
+    @app.patch("/memories/{memory_id}", response_model=MemoryOut)
     async def update_memory(
         memory_id: UUID,
         body: MemoryUpdate,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
         leak = find_credential_leak(body.content)
         if leak is not None:
@@ -677,6 +864,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         status_code=status.HTTP_409_CONFLICT,
                         detail=f"memory {memory_id} is '{old['status']}', not 'active' - cannot update",
                     )
+                if principal.allowed_contexts is not None:
+                    ctx_slug = await conn.fetchval("SELECT slug FROM contexts WHERE id = $1", old["context_id"])
+                    if not principal.context_allowed(ctx_slug):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"token '{principal.name}' is not allowed to write to context '{ctx_slug}'",
+                        )
 
                 embedding = await provider.embed_passage(body.content)
 
@@ -716,13 +910,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return row_to_memory_out(new_row)
 
-    @app.delete("/memories/{memory_id}", status_code=status.HTTP_200_OK, dependencies=[Depends(require_auth)])
+    @app.delete("/memories/{memory_id}", status_code=status.HTTP_200_OK)
     async def delete_memory(
         memory_id: UUID,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
         hard: bool = False,
     ):
+        if principal.allowed_contexts is not None:
+            ctx_slug = await pool.fetchval(
+                "SELECT c.slug FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1", memory_id
+            )
+            if ctx_slug is not None and not principal.context_allowed(ctx_slug):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"token '{principal.name}' is not allowed to write to context '{ctx_slug}'",
+                )
+
         if hard:
             try:
                 result = await pool.execute("DELETE FROM memories WHERE id = $1", memory_id)
@@ -755,14 +960,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/memories/{memory_id}/edges",
         status_code=status.HTTP_201_CREATED,
         response_model=EdgeOut,
-        dependencies=[Depends(require_auth)],
     )
     async def create_edge(
         memory_id: UUID,
         body: EdgeCreate,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
+        if principal.allowed_contexts is not None:
+            from_ctx = await context_slug_of_memory(pool, memory_id)
+            require_context_allowed(principal, from_ctx, memory_id=memory_id)
+            to_ctx = await context_slug_of_memory(pool, body.to_memory)
+            require_context_allowed(principal, to_ctx, memory_id=body.to_memory)
         try:
             row = await add_edge(
                 pool,
@@ -798,14 +1008,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete(
         "/memories/{memory_id}/edges/{edge_id}",
-        dependencies=[Depends(require_auth)],
     )
     async def delete_edge_endpoint(
         memory_id: UUID,
         edge_id: UUID,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
+        if principal.allowed_contexts is not None:
+            # Look up the edge itself (not just the path's memory_id) so BOTH
+            # endpoints get checked - memory_id is only one side, and the other side
+            # could sit in a context this token has no business touching.
+            edge_row = await pool.fetchrow(
+                "SELECT from_memory, to_memory FROM memory_edges WHERE id = $1 AND (from_memory = $2 OR to_memory = $2)",
+                edge_id,
+                memory_id,
+            )
+            if edge_row is not None:
+                from_ctx = await context_slug_of_memory(pool, edge_row["from_memory"])
+                require_context_allowed(principal, from_ctx, memory_id=edge_row["from_memory"])
+                to_ctx = await context_slug_of_memory(pool, edge_row["to_memory"])
+                require_context_allowed(principal, to_ctx, memory_id=edge_row["to_memory"])
+            # edge_row is None (no such edge touching memory_id): fall through to
+            # delete_edge() below, which raises the same 404 it always would.
         try:
             row = await delete_edge(pool, memory_id=memory_id, edge_id=edge_id)
         except EdgeNotFoundError as exc:
@@ -831,16 +1057,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get(
         "/memories/{memory_id}/related",
         response_model=RelatedResponse,
-        dependencies=[Depends(require_auth)],
     )
     async def get_related_endpoint(
         memory_id: UUID,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
         relation: str | None = None,
     ):
         """1-hop neighbors of `memory_id`, both directions, plus the derived
         supersedence chain (`relation="supersedes"`) - see `graph.get_related`.
+
+        `allowed_contexts` (plan_v2.md SS9): 403 if `memory_id` itself sits in a
+        disallowed context (a missing memory still 404s normally, below - a
+        restricted token can't tell "forbidden" from "doesn't exist" from this check
+        alone). Neighbors from a disallowed context are dropped from `related`
+        entirely, even ones reached via an explicit edge - `cross_context` marks an
+        intentional bridge for tokens that CAN see both sides, it is not an allowlist
+        bypass for tokens that can't.
         """
+        if principal.allowed_contexts is not None:
+            ctx_slug = await context_slug_of_memory(pool, memory_id)
+            require_context_allowed(principal, ctx_slug, memory_id=memory_id)
+
         try:
             neighbors = await get_related(pool, memory_id=memory_id, relation=relation)
         except MemoryNotFoundError as exc:
@@ -854,6 +1092,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"invalid relation '{exc}': must be one of {RELATION_VOCAB} or 'supersedes'",
             ) from exc
 
+        if principal.allowed_contexts is not None:
+            neighbors = [n for n in neighbors if principal.context_allowed(n["memory"]["context"])]
+
         return RelatedResponse(
             memory_id=memory_id,
             related=[
@@ -863,9 +1104,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---------------------------------------------------------------- Fase 3: timeline
 
-    @app.get("/timeline", response_model=TimelineResponse, dependencies=[Depends(require_auth)])
+    @app.get("/timeline", response_model=TimelineResponse)
     async def timeline(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
         context: str | None = None,
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
@@ -876,6 +1118,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pensado para "que paso en X las ultimas semanas". Filtros: `context` (slug),
         `from`/`to` (rango de fecha efectiva), `limit` (default 50).
         """
+        if context is not None and not principal.context_allowed(context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to see context '{context}'",
+            )
+        allowed_contexts = (
+            list(principal.allowed_contexts) if principal.allowed_contexts is not None else None
+        )
         try:
             rows = await get_timeline(
                 pool,
@@ -883,6 +1133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 from_date=from_,
                 to_date=to,
                 limit=limit,
+                allowed_contexts=allowed_contexts,
             )
         except GraphUnknownContextError as exc:
             raise HTTPException(

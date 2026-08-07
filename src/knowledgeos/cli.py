@@ -291,6 +291,86 @@ def cmd_import_markdown(args: argparse.Namespace) -> None:
     print(f"Resumen: {imported} importadas, {duplicated} duplicadas (saltadas), {rejected} rechazadas.")
 
 
+# --------------------------------------------------------------------------- token (plan_v2.md SS9)
+
+
+def _token_api_error(resp: httpx.Response) -> None:
+    detail = resp.text
+    try:
+        detail = resp.json().get("detail", resp.text)
+    except ValueError:
+        pass
+    print(f"La API devolvio {resp.status_code}: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_token_create(args: argparse.Namespace) -> None:
+    scopes = [s.strip() for s in args.scopes.split(",") if s.strip()]
+    contexts = [c.strip() for c in args.contexts.split(",") if c.strip()] if args.contexts else None
+
+    client = _api_client()
+    body: dict[str, Any] = {"name": args.name, "scopes": scopes}
+    if contexts is not None:
+        body["allowed_contexts"] = contexts
+
+    try:
+        resp = client.post("/tokens", json=body)
+    except httpx.RequestError as exc:
+        print(_connection_error(exc), file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code != 201:
+        _token_api_error(resp)
+
+    data = resp.json()
+    contexts_desc = ", ".join(data["allowed_contexts"]) if data.get("allowed_contexts") else "todos"
+    print(f"Token creado para '{data['name']}' (scopes: {', '.join(data['scopes'])}; contextos: {contexts_desc}).")
+    print()
+    print(f"  {data['token']}")
+    print()
+    print(
+        "Guarda este token ahora - KnowledgeOS solo guarda su hash SHA-256 y no puede "
+        "volver a mostrarlo. Usalo como KNOWLEDGEOS_API_TOKEN o Authorization: Bearer <token>."
+    )
+
+
+def cmd_token_list(args: argparse.Namespace) -> None:
+    client = _api_client()
+    try:
+        resp = client.get("/tokens")
+        resp.raise_for_status()
+    except httpx.RequestError as exc:
+        print(_connection_error(exc), file=sys.stderr)
+        sys.exit(1)
+    except httpx.HTTPStatusError:
+        _token_api_error(resp)
+
+    tokens = resp.json()
+    if not tokens:
+        print("(sin tokens todavia; el token root de .env sigue funcionando aparte)")
+        return
+
+    print(f"{'name':<25} {'scopes':<20} {'contexts':<30} {'estado':<10} created_at")
+    print("-" * 110)
+    for t in tokens:
+        scopes = ",".join(t["scopes"])
+        contexts = ",".join(t["allowed_contexts"]) if t.get("allowed_contexts") else "*"
+        estado = "revocado" if t.get("revoked_at") else "activo"
+        print(f"{t['name']:<25} {scopes:<20} {contexts:<30} {estado:<10} {t['created_at']}")
+
+
+def cmd_token_revoke(args: argparse.Namespace) -> None:
+    client = _api_client()
+    try:
+        resp = client.delete(f"/tokens/{args.name}")
+    except httpx.RequestError as exc:
+        print(_connection_error(exc), file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code != 200:
+        _token_api_error(resp)
+
+    print(f"Token '{args.name}' revocado.")
+
+
 # --------------------------------------------------------------------------- backup / restore
 
 
@@ -379,6 +459,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--create-context", action="store_true", help="crea el contexto si no existe")
     p_import.add_argument("--context-description", default=None, help="descripcion del contexto nuevo (con --create-context)")
     p_import.set_defaults(func=cmd_import_markdown)
+
+    p_token = sub.add_parser("token", help="Gestion de tokens con scopes (plan_v2.md SS9, requiere auth admin)")
+    token_sub = p_token.add_subparsers(dest="token_command", required=True)
+
+    p_token_create = token_sub.add_parser("create", help="Crea un token nuevo (lo imprime UNA vez)")
+    p_token_create.add_argument("name", help="identidad del agente, ej. 'claude-desktop' (unica entre tokens activos)")
+    p_token_create.add_argument("--scopes", required=True, help="lista separada por comas: read,write,admin")
+    p_token_create.add_argument(
+        "--contexts", default=None, help="lista de slugs separada por comas; si se omite, el token ve todos los contextos"
+    )
+    p_token_create.set_defaults(func=cmd_token_create)
+
+    p_token_list = token_sub.add_parser("list", help="Lista tokens (sin hashes ni valores en claro)")
+    p_token_list.set_defaults(func=cmd_token_list)
+
+    p_token_revoke = token_sub.add_parser("revoke", help="Revoca un token por nombre")
+    p_token_revoke.add_argument("name", help="nombre del token a revocar")
+    p_token_revoke.set_defaults(func=cmd_token_revoke)
 
     p_backup = sub.add_parser("backup", help="pg_dump via docker compose")
     p_backup.add_argument("--output", default=None, help="directorio de salida (default: backups/)")

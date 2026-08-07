@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+.pytest_cache/
+src/knowledgeos.egg-info/
+evals/results/
+backups/
+*.log
+.env
+plan.md
+plan_v2.md
+decisions/

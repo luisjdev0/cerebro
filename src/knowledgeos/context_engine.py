@@ -369,6 +369,7 @@ async def decide_scope(
     agent: str,
     limit: int,
     resolver: AmbiguityResolver | None = None,
+    allowed_contexts: list[str] | None = None,
 ) -> ScopeDecision:
     """Full decision: preliminary retrieval -> score -> threshold -> log -> (ambiguous:
     fetch per-candidate evidence, then optionally hand off to `resolver` - Fase 4,
@@ -376,6 +377,13 @@ async def decide_scope(
 
     `resolver` defaults to `build_ambiguity_resolver(settings)` when omitted (mainly
     so callers/tests can inject a fake one directly).
+
+    `allowed_contexts` (plan_v2.md SS9, token authorization): when not None, contexts
+    outside this set are dropped BEFORE scoring - they can never become the auto-scope
+    winner, never appear as an "ambiguous" candidate, and never leak their name or
+    description to a restricted token. The preliminary retrieval is also narrowed at
+    the SQL level (`hybrid_search(allowed_contexts=...)`) so disallowed-context rows
+    are not even fetched, let alone scored.
     """
     preliminary = await hybrid_search(
         pool,
@@ -385,8 +393,12 @@ async def decide_scope(
         type_=type_,
         limit=settings.context_engine_candidate_pool,
         include_superseded=include_superseded,
+        allowed_contexts=allowed_contexts,
     )
     contexts = await _fetch_contexts(pool)
+    if allowed_contexts is not None:
+        allowed_set = set(allowed_contexts)
+        contexts = [c for c in contexts if c.slug in allowed_set]
     query_tokens = set(normalize_tokens(query))
     preferences = await _fetch_preferences(pool, query_tokens)
 

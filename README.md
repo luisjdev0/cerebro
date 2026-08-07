@@ -1,45 +1,81 @@
-# KnowledgeOS - Fase 1-3
+# KnowledgeOS
 
-Memoria persistente self-hosted para agentes de IA. PostgreSQL + pgvector, retrieval
-híbrido (vector + full-text en español, fusionado con RRF), ciclo de vida por
-supersedencia, audit log, Context Engine (Fase 2) y grafo ligero de relaciones +
-timeline (Fase 3). Ver `plan_v2.md` (secciones 4, 5, 6 y 8) para la arquitectura y el
-modelo de datos completos.
+Memoria persistente self-hosted y agnóstica al modelo para agentes de IA (Claude,
+GPT, Gemini, agentes propios). PostgreSQL + pgvector, retrieval híbrido (vector +
+full-text en español, fusionado con RRF), ciclo de vida por supersedencia, audit log,
+Context Engine (desambiguación de contexto sin LLM), grafo ligero de relaciones +
+timeline, y autorización por token con scopes. v1.0 = Fases 1-3 sólidas +
+evaluación pasando + dogfooding sostenido (plan_v2.md SS8); el clasificador local, el
+grafo y los conectores externos son mejoras encima de esa base, no requisitos. Ver
+`plan_v2.md` (secciones 4-10) para la arquitectura y el modelo de datos completos.
 
-## Levantar todo en 5 minutos
+## Quickstart
+
+Tres caminos según lo que quieras hacer - elige uno:
+
+### A. Desarrollo local (recomendado para dogfooding / seguir desarrollando)
+
+API corriendo directo con Python, solo Postgres en Docker. Es el modo más rápido para
+iterar (recarga instantánea, logs en tu propia terminal).
 
 Requisitos: Docker Desktop corriendo, Python 3.11+.
 
 ```bash
-# 1. Base de datos
+# 1. Base de datos (docker compose sin --profile solo levanta postgres)
 docker compose up -d
-# espera a que este "healthy":
-docker compose ps
+docker compose ps   # espera a que este "healthy"
 
 # 2. Entorno Python
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-# source .venv/bin/activate
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux/Mac
 pip install -e ".[dev]"
 
 # 3. Configuracion
 cp .env.example .env
 # los valores por defecto ya funcionan contra el compose.yaml de este repo;
-# cambia API_TOKEN antes de exponer el servicio fuera de tu maquina.
+# cambia API_TOKEN antes de exponer el servicio fuera de tu maquina (ver "Seguridad").
 
 # 4. Arrancar la API (aplica migraciones automaticamente al iniciar)
 python -m knowledgeos.main
 # o: uvicorn knowledgeos.main:app --reload
 ```
 
-La API queda en `http://localhost:8000`. `GET /health` no requiere auth; el resto de
-endpoints requieren `Authorization: Bearer <API_TOKEN>` (ver `.env`).
-
 La primera vez que arranca, descarga el modelo de embeddings
 (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` vía `fastembed`, ~9s,
 luego queda cacheado localmente por `fastembed`/`huggingface_hub`).
+
+### B. Todo en Docker (producción / probar el deploy real)
+
+Postgres **y** la API en contenedores, sin instalar Python en el host. La API se
+sirve desde una imagen multi-stage (`Dockerfile`) que pre-descarga el modelo de
+embeddings *en build*, así el contenedor arranca en segundos, no minutos.
+
+```bash
+cp .env.example .env   # y cambia API_TOKEN
+
+# levanta AMBOS servicios (el profile "full" es lo que agrega la API; sin el flag,
+# `docker compose up -d` sigue levantando solo postgres, modo dev de arriba)
+docker compose --profile full up -d
+docker compose --profile full ps   # espera a que "api" este "healthy"
+
+curl http://localhost:8000/health
+```
+
+Para reconstruir la imagen tras un cambio de código: `docker compose --profile full build api`.
+
+### C. Solo quiero conectar Claude/un agente vía MCP (ya tengo la API corriendo en otro lado)
+
+No necesitas clonar nada del backend - solo el cliente MCP. Ve directo a "Conectar a
+Claude (servidor MCP)" más abajo, con `KNOWLEDGEOS_API_URL` apuntando a la API ya
+desplegada (modo A o B, tuya o de un tercero) y `KNOWLEDGEOS_API_TOKEN` con un token
+de scope apropiado (ver "Seguridad" - normalmente no querrás darle el token root a
+cada agente).
+
+---
+
+`GET /health` no requiere auth; el resto de endpoints requieren
+`Authorization: Bearer <token>` (ver "Seguridad").
 
 ## Uso rapido
 
@@ -58,26 +94,168 @@ curl -s "localhost:8000/memories/search?q=cuanto+gaste+este+mes&context=finanzas
   -H "Authorization: Bearer $TOKEN"
 ```
 
-## Endpoints (Fase 1 + Fase 2 + Fase 3)
+## Arquitectura
 
-| Metodo | Ruta | Descripcion |
-|---|---|---|
-| `POST` | `/contexts` | crear contexto (`slug`, `name`, `kind`, `description?`) |
-| `GET` | `/contexts` | listar contextos |
-| `POST` | `/memories` | crear memoria; `context` obligatorio; rechaza credenciales (422) |
-| `GET` | `/memories/search` | retrieval hibrido: `q`, `context?`, `scope?` (`auto`\|`all`\|`<slug>`, default `auto`), `type?`, `limit?`, `include_superseded?`, `expand?` (Fase 3, default `false`). Devuelve `{results, scope_decision, related}` -- ver "Context Engine" y "Relaciones y timeline" abajo. |
-| `PATCH` | `/memories/{id}` | crea version nueva + supersede la anterior (nunca edita in-place) |
-| `DELETE` | `/memories/{id}` | `?hard=false` archiva (default), `?hard=true` borra en duro (cascada a sus `memory_edges`) |
-| `POST` | `/memories/{id}/edges` | (Fase 3) crea una arista `{to_memory, relation, note?}`; 422 si `relation` no es del vocabulario o `to_memory == id`, 404 si alguna memoria no existe, 409 si la arista ya existe |
-| `DELETE` | `/memories/{id}/edges/{edge_id}` | (Fase 3) borra una arista (debe tocar `id`) |
-| `GET` | `/memories/{id}/related` | (Fase 3) vecinos a 1 salto (ambas direcciones) + cadena de supersedencia virtual; filtro `relation?` |
-| `GET` | `/timeline` | (Fase 3) memorias `episodic`/`decision` ordenadas por fecha efectiva; filtros `context?`, `from?`, `to?`, `limit?=50` |
-| `POST` | `/disambiguations/{id}/resolve` | resuelve una desambiguacion pendiente (`{"context": "<slug>"}`); hace crecer `context_preferences` |
-| `GET` | `/stats` | memorias por contexto/estado, desambiguaciones (total/auto/agent/user), preferencias aprendidas |
-| `GET` | `/health` | sin auth; chequea conexion a la base de datos |
+Estado real del sistema (plan_v2.md SS4, adaptado: todas las capas de abajo estan
+implementadas y en uso, no son plan a futuro):
+
+```
+Agente (Claude / GPT / Gemini / custom)
+        |
+        v
+   MCP Server (stdio)  ---------------------  src/knowledgeos/mcp_server.py
+        |                                     adaptador delgado, sin logica propia
+        v
+  API HTTP (FastAPI)  ----------------------  src/knowledgeos/api.py
+        |                                     auth + scopes, audit log, CRUD
+        |
+        +--> Retrieval hibrido: vector + full-text + RRF     retrieval.py
+        +--> Context Engine: scoping y desambiguacion        context_engine.py
+        +--> Relaciones / grafo ligero (aristas + timeline)  graph.py
+        +--> Clasificador local opcional (OFF por defecto)   context_engine.py (Fase 4)
+        |
+        v
+  PostgreSQL + pgvector   ------------------  db/migrations/*.sql
+  (unica base de datos; contexts, memories, audit_log, disambiguation_log,
+   context_preferences, memory_edges, api_tokens)
+```
+
+Un CLI (`src/knowledgeos/cli.py`) es otro cliente delgado sobre la misma API HTTP,
+igual que el servidor MCP -- ninguno tiene lógica de negocio propia (salvo la
+orquestación del importador de Markdown y de `backup`/`restore`, que hablan directo
+con `docker compose` porque Postgres no expone su puerto fuera de `localhost`). Todo
+cliente (MCP, CLI, o cualquier integración futura) pasa por el mismo camino de auth,
+scopes y audit log de la API -- no hay atajos.
+
+Qdrant, Redis y un modelo auxiliar local corriendo por defecto **no aparecen** en el
+compose a propósito (plan_v2.md SS4.2, "earn your complexity"): pgvector cubre el
+volumen de memoria de un usuario individual con latencias de un dígito de ms, y el
+punto de enchufe para un clasificador local (Ollama) existe pero está apagado hasta
+que haya dataset real que lo justifique (ver "Clasificador local opcional" abajo).
+
+## Endpoints
+
+| Metodo | Ruta | Scope | Descripcion |
+|---|---|---|---|
+| `POST` | `/contexts` | write | crear contexto (`slug`, `name`, `kind`, `description?`) |
+| `GET` | `/contexts` | read | listar contextos (filtrado a `allowed_contexts` del token, si tiene) |
+| `DELETE` | `/contexts/{slug}` | admin | borra el contexto; 409 si tiene memorias salvo `?force=true` (las borra en duro junto con el contexto, cascada a sus `memory_edges`) |
+| `POST` | `/memories` | write | crear memoria; `context` obligatorio; rechaza credenciales (422) |
+| `GET` | `/memories/search` | read | retrieval hibrido: `q`, `context?`, `scope?` (`auto`\|`all`\|`<slug>`, default `auto`), `type?`, `limit?`, `include_superseded?`, `expand?` (default `false`). Devuelve `{results, scope_decision, related}` -- ver "Context Engine" y "Relaciones y timeline" abajo. |
+| `PATCH` | `/memories/{id}` | write | crea version nueva + supersede la anterior (nunca edita in-place) |
+| `DELETE` | `/memories/{id}` | write | `?hard=false` archiva (default), `?hard=true` borra en duro (cascada a sus `memory_edges`) |
+| `POST` | `/memories/{id}/edges` | write | crea una arista `{to_memory, relation, note?}`; 422 si `relation` no es del vocabulario o `to_memory == id`, 404 si alguna memoria no existe, 409 si la arista ya existe |
+| `DELETE` | `/memories/{id}/edges/{edge_id}` | write | borra una arista (debe tocar `id`) |
+| `GET` | `/memories/{id}/related` | read | vecinos a 1 salto (ambas direcciones) + cadena de supersedencia virtual; filtro `relation?` |
+| `GET` | `/timeline` | read | memorias `episodic`/`decision` ordenadas por fecha efectiva; filtros `context?`, `from?`, `to?`, `limit?=50` |
+| `POST` | `/disambiguations/{id}/resolve` | write | resuelve una desambiguacion pendiente (`{"context": "<slug>"}`); hace crecer `context_preferences` |
+| `GET` | `/disambiguations/export` | admin | dataset crudo para `knowledgeos export-disambiguations` |
+| `GET` | `/stats` | read | memorias por contexto/estado (filtrado por `allowed_contexts`), desambiguaciones (total/auto/agent/user), preferencias aprendidas |
+| `POST` | `/tokens` | admin | crea un token con scopes (`{name, scopes, allowed_contexts?}`); el valor en claro solo se devuelve en ESTA respuesta |
+| `GET` | `/tokens` | admin | lista tokens (sin hashes ni valores en claro) |
+| `DELETE` | `/tokens/{name}` | admin | revoca un token por nombre |
+| `GET` | `/health` | ninguno | sin auth; chequea conexion a la base de datos |
 
 Header opcional `X-Agent-Name` identifica al agente que llama (usado en `source` y en
-`audit_log`; default `"unknown"`).
+`audit_log`; default `"unknown"`) -- **excepto con un token con nombre**, cuyo `name`
+pisa siempre este header (ver "Seguridad": es la identidad real del agente, no
+autodeclarada). Detalle completo de scopes y `allowed_contexts` en "Seguridad" abajo.
+
+## Seguridad
+
+Cuatro piezas (plan_v2.md SS9): tokens con identidad propia, scopes, restricción por
+contexto, y backups. Todo excepto `GET /health` requiere
+`Authorization: Bearer <token>`.
+
+### Tokens y scopes
+
+Dos tipos de credencial válidos en el mismo header:
+
+- **Token root** (`API_TOKEN` del `.env`): comparado byte a byte
+  (`secrets.compare_digest`), tiene los tres scopes (`read`, `write`, `admin`) sobre
+  todos los contextos, sin restricción. Pensado para ti mismo / el bootstrap inicial
+  -- no lo repartas a agentes individuales.
+- **Tokens con nombre**, creados con `knowledgeos token create` (o `POST /tokens`
+  directamente, requiere scope `admin`). Se guardan en la tabla `api_tokens` como su
+  hash SHA-256 -- **el valor en claro se muestra una sola vez, al crearlo**, y no se
+  puede volver a recuperar (solo revocar y crear uno nuevo).
+
+```bash
+# token de lectura/escritura sin restriccion de contexto
+knowledgeos token create claude-desktop --scopes read,write
+
+# token de solo lectura, restringido a un contexto (un agente de trabajo que no debe
+# ver finanzas-personales)
+knowledgeos token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
+
+knowledgeos token list      # sin hashes ni valores en claro
+knowledgeos token revoke agente-trabajo
+```
+
+Tres scopes:
+
+| Scope | Cubre |
+|---|---|
+| `read` | todo `GET` (excepto `/health`, que no necesita auth) |
+| `write` | `POST`/`PATCH`/`DELETE` de memorias, contextos (crear), aristas y `POST /disambiguations/{id}/resolve` |
+| `admin` | gestión de tokens (`/tokens/*`), `GET /disambiguations/export`, `DELETE /contexts/{slug}` |
+
+Un token puede tener varios scopes a la vez (`--scopes read,write`); `admin` **no**
+implica `read`/`write` automáticamente -- un token solo-`admin` puede gestionar
+tokens pero no leer ni escribir memorias.
+
+### Restricción por contexto (`allowed_contexts`)
+
+`--contexts a,b` (o `allowed_contexts` en `POST /tokens`) limita un token a un
+subconjunto de contextos; sin la opción, ve todos (equivalente a `NULL` en la
+columna). Se aplica en tres sitios distintos:
+
+- **Búsqueda** (`GET /memories/search`): un `context`/`scope=<slug>` explícito fuera
+  de la lista es `403`. Sin contexto explícito, `scope=all` narrows silenciosamente
+  los resultados al subconjunto permitido, y `scope=auto` (Context Engine) directamente
+  **excluye** los contextos ajenos del scoring -- nunca pueden ganar como auto-scope
+  ni aparecer como candidato "ambiguo": el token ni se entera de que existen.
+- **Escritura**: crear/actualizar/borrar una memoria, arista o desambiguación en un
+  contexto fuera de la lista es `403`.
+- **`GET /stats` / `GET /timeline`**: filas de contextos no permitidos se omiten en
+  vez de listarse; un `context` explícito fuera de la lista en `/timeline` es `403`.
+
+### Identidad de agente
+
+El `name` de un token con nombre **pisa** cualquier `X-Agent-Name` que el cliente
+mande -- queda como `memory.source` y como `audit_log.agent` la identidad real
+verificada por el token, no lo que el propio cliente diga ser. El token root no tiene
+identidad fija propia, así que sigue usando `X-Agent-Name` (default `"unknown"`),
+igual que en Fase 1.
+
+### Secretos
+
+`POST /memories` y `PATCH /memories/{id}` rechazan (422) contenido que matchee
+patrones de credenciales reales (claves AWS, tokens de GitHub/Slack, API keys estilo
+`sk-...`, cadenas de conexión con password embebido, asignaciones `password=...`) --
+ver `src/knowledgeos/security.py`. El mensaje de rechazo sugiere el formato de
+referencia sancionado: `secret://<entorno>/<nombre>` (nunca se almacena el valor).
+
+### Cifrado y backups
+
+TLS en tránsito (termínalo con un reverse proxy delante si expones la API fuera de tu
+red -- KnowledgeOS mismo no hace TLS); en reposo, cifrado de disco a nivel de VPS
+como línea base (plan_v2.md SS9 deja cifrado a nivel de aplicación explícitamente
+fuera de alcance hasta que haya multiusuario).
+
+`knowledgeos backup` (`pg_dump` vía `docker compose`) es la pieza que falta para que
+"memoria persistente" no sea una promesa vacía. Automatízalo:
+
+```bash
+# Windows: Task Scheduler, diario a las 3am
+schtasks /create /tn "KnowledgeOS backup" /tr "D:\ruta\al\repo\.venv\Scripts\knowledgeos.exe backup" /sc daily /st 03:00
+
+# Linux/Mac: cron, diario a las 3am
+0 3 * * * cd /ruta/al/repo && .venv/bin/knowledgeos backup >> backups/backup.log 2>&1
+```
+
+Prueba el restore de verdad de vez en cuando (`knowledgeos restore <archivo.sql>`) --
+un backup nunca verificado no cuenta como backup.
 
 ## Context Engine (Fase 2)
 
@@ -251,9 +429,12 @@ curl -s "localhost:8000/timeline?context=infraestructura&from=2026-07-01T00:00:0
 pytest
 ```
 
-`tests/test_rrf.py`, `tests/test_security.py`, `tests/test_context_engine.py` y la
-parte unitaria de `tests/test_graph.py` (vocabulario de relaciones) son unitarios (sin
-base de datos). `tests/test_supersedence.py` y la parte de integracion de
+`tests/test_rrf.py`, `tests/test_security.py`, `tests/test_context_engine.py`, la
+parte unitaria de `tests/test_auth.py` (`Principal`, `hash_token`/`generate_token`) y
+la parte unitaria de `tests/test_graph.py` (vocabulario de relaciones) son unitarios
+(sin base de datos). `tests/test_supersedence.py`, la parte de integracion de
+`tests/test_auth.py` (ciclo de vida de tokens, enforcement de scopes y de
+`allowed_contexts`, `DELETE /contexts/{slug}`) y la parte de integracion de
 `tests/test_graph.py` (aristas, no-duplicados, direccion en `related`, cascada de
 hard-delete, ordering de `timeline`) se saltan automaticamente si `DATABASE_URL` no es
 alcanzable (arranca `docker compose up -d` primero).
@@ -351,6 +532,12 @@ un dump no tiene sentido como llamada HTTP).
 ```bash
 knowledgeos --help
 
+# tokens con scopes (ver "Seguridad" arriba) - requiere auth admin (el token root sirve)
+knowledgeos token create claude-desktop --scopes read,write
+knowledgeos token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
+knowledgeos token list
+knowledgeos token revoke agente-trabajo
+
 # dataset de disambiguation_log para un futuro fine-tuning local (Fase 4)
 knowledgeos export-disambiguations --output disambiguations.jsonl
 knowledgeos export-disambiguations --resolved-only
@@ -363,6 +550,9 @@ knowledgeos backup --output backups/
 knowledgeos restore backups/knowledgeos-20260807-010359.sql   # pide confirmacion
 knowledgeos restore backups/knowledgeos-20260807-010359.sql --yes   # sin confirmar
 ```
+
+`knowledgeos token create` imprime el token en claro **una sola vez** -- guárdalo de
+inmediato (p.ej. como `KNOWLEDGEOS_API_TOKEN` del cliente MCP correspondiente).
 
 `export-disambiguations` siempre imprime cuántos ejemplos hay frente al umbral del
 plan (`~500`, ver "Clasificador local opcional (Fase 4)" arriba) para que sea fácil
@@ -486,32 +676,47 @@ un comando de CLI que el harness nunca invoca. Se re-corrió la tabla de arriba
 (`scope=auto`) tras ambas tareas y dio los mismos números: 0% contaminación en las 3
 categorías, 100% recall.
 
+**v1.0 (tokens con scopes + Docker + limpieza de datos) re-verificada sin regresión:**
+el harness usa el token root (todos los scopes, sin `allowed_contexts`), así que la
+autorización de la Tarea de v1.0 es transparente a estas corridas -- no hay ningún
+camino nuevo que module el retrieval en sí. Se re-corrieron las tres corridas
+completas (`naive`, `scope=all`, `scope=auto`, las tres con `--include-superseded`,
+truncando `disambiguation_log`/`context_preferences` antes de `scope=auto` para medir
+en frío) contra un Postgres ya limpiado de residuos de smoke tests (solo los 6
+contextos del corpus): mismos números exactos que la tabla de arriba - `scope=auto`
+en 0% de contaminación y 100% de recall en las 3 categorías.
+
 ## Estructura
 
 ```
-compose.yaml                  # postgres con pgvector; puerto 5432 solo en localhost
-.env.example                  # DATABASE_URL, API_TOKEN, EMBEDDING_MODEL, EMBEDDING_DIMENSION
-db/migrations/001_init.sql    # schema Fase 1 (contexts, memories, audit_log)
-db/migrations/002_context_engine.sql   # schema Fase 2 (disambiguation_log, context_preferences)
-db/migrations/003_edges.sql   # schema Fase 3 (memory_edges: grafo ligero de relaciones)
+Dockerfile                    # imagen multi-stage de la API, no-root, pre-descarga el modelo en build
+.dockerignore
+compose.yaml                  # postgres (siempre) + api (servicio "api", profile "full")
+.env.example                  # DATABASE_URL, API_TOKEN, EMBEDDING_MODEL, CONTEXT_ENGINE_*, RESOLVER/OLLAMA
+db/migrations/001_init.sql    # schema base (contexts, memories, audit_log)
+db/migrations/002_context_engine.sql   # Context Engine (disambiguation_log, context_preferences)
+db/migrations/003_edges.sql   # memory_edges: grafo ligero de relaciones
+db/migrations/004_api_tokens.sql   # api_tokens: tokens con nombre, scopes, allowed_contexts
 src/knowledgeos/
     config.py                 # settings desde env (pydantic-settings), incluye CONTEXT_ENGINE_*
     db.py                     # pool asyncpg + aplicacion de migraciones al arrancar
     embeddings.py             # EmbeddingProvider (fastembed local, con fallback a sentence-transformers)
     security.py                # deteccion de credenciales en remember()
+    auth.py                    # Principal, scopes, hash de tokens, CRUD de api_tokens
     retrieval.py               # busqueda hibrida (vector + full-text) fusionada con RRF
-    context_engine.py          # Context Engine (Fase 2) + AmbiguityResolver/NullResolver/OllamaResolver (Fase 4)
-    graph.py                   # Fase 3: aristas (memory_edges), related() 1-hop, timeline, expand de search
-    api.py                     # FastAPI app (auth, CRUD, search con scoping, disambiguations, stats, edges, timeline)
-    markdown_importer.py       # Fase 5: parsing puro (frontmatter / indice MEMORY.md / generico por headings)
-    cli.py                     # entry point `knowledgeos`: export-disambiguations, stats, import-markdown, backup/restore
+    context_engine.py          # Context Engine + AmbiguityResolver/NullResolver/OllamaResolver (opcional)
+    graph.py                   # aristas (memory_edges), related() 1-hop, timeline, expand de search
+    api.py                     # FastAPI app (auth, scopes, CRUD, search con scoping, disambiguations, stats, edges, timeline, tokens)
+    markdown_importer.py       # parsing puro (frontmatter / indice MEMORY.md / generico por headings)
+    cli.py                     # entry point `knowledgeos`: token, export-disambiguations, stats, import-markdown, backup/restore
     main.py                    # uvicorn entrypoint
     mcp_server.py              # servidor MCP (FastMCP, stdio) - adaptador delgado sobre la API
 evals/
     harness/adapters/knowledgeos_adapter.py   # adaptador del harness contra la API real
 tests/
     test_context_engine.py    # unitarios: dominancia, empate->ambiguo, boost por preferencias
-    test_ambiguity_resolver.py # Fase 4: NullResolver, OllamaResolver mockeado (valida/invalida/timeout)
-    test_markdown_importer.py # Fase 5: frontmatter, indice MEMORY.md, genérico por headings (fixtures en tests/fixtures/)
-    test_graph.py              # Fase 3: vocabulario (unitario) + aristas/related/timeline (integracion)
+    test_ambiguity_resolver.py # NullResolver, OllamaResolver mockeado (valida/invalida/timeout)
+    test_markdown_importer.py # frontmatter, indice MEMORY.md, genérico por headings (fixtures en tests/fixtures/)
+    test_graph.py              # vocabulario (unitario) + aristas/related/timeline (integracion)
+    test_auth.py                # Principal/hash (unitario) + scopes/allowed_contexts/tokens/delete-context (integracion)
 ```

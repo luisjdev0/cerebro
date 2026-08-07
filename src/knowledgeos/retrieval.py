@@ -60,12 +60,22 @@ async def hybrid_search(
     include_superseded: bool = False,
     candidate_pool: int = 50,
     rrf_k: int = 60,
+    allowed_contexts: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Run vector + full-text search under the given filters and fuse with RRF.
 
     Only `status='active'` rows are considered unless `include_superseded=True`, in
     which case `superseded` rows are included too. `archived` (soft-deleted) rows are
     never returned here.
+
+    `allowed_contexts` (plan_v2.md SS9, token authorization): when `context_slug` is
+    not given and `allowed_contexts` is not None, results are narrowed to that set of
+    slugs -- the token-scoping equivalent of an explicit context filter, used when a
+    restricted token searches without naming a context (`scope=all`, or the
+    unfiltered preliminary retrieval inside the Context Engine). Ignored when
+    `context_slug` is given (an explicit context always wins; callers are expected to
+    have already checked it against `allowed_contexts` themselves and rejected it
+    with 403 if not allowed - see `knowledgeos.auth.Principal.context_allowed`).
     """
     statuses = ["active", "superseded"] if include_superseded else ["active"]
 
@@ -81,6 +91,9 @@ async def hybrid_search(
         if context_id is not None:
             params.append(context_id)
             filters.append(f"m.context_id = ${len(params)}")
+        elif allowed_contexts is not None:
+            params.append(list(allowed_contexts))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
         if type_:
             params.append(type_)
             filters.append(f"m.type = ${len(params)}")

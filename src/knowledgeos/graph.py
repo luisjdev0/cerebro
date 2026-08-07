@@ -257,12 +257,18 @@ async def get_timeline(
     from_date: datetime | None,
     to_date: datetime | None,
     limit: int,
+    allowed_contexts: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Episodic (and decision) memories ordered by "fecha efectiva"
     (occurred_at, falling back to created_at when occurred_at is NULL), most recent
     first - built for "que paso en X las ultimas semanas". Only `status='active'`.
 
     Raises UnknownContextError if `context` is given and does not match any context.
+
+    `allowed_contexts` (plan_v2.md SS9): when `context` is not given and
+    `allowed_contexts` is not None, rows from disallowed contexts are filtered out.
+    Ignored when `context` is given - the caller (api.py) is expected to have already
+    rejected an out-of-scope explicit `context` with 403.
     """
     async with pool.acquire() as conn:
         if context is not None:
@@ -275,6 +281,9 @@ async def get_timeline(
         if context is not None:
             params.append(context)
             filters.append(f"c.slug = ${len(params)}")
+        elif allowed_contexts is not None:
+            params.append(list(allowed_contexts))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
         if from_date is not None:
             params.append(from_date)
             filters.append(f"COALESCE(m.occurred_at, m.created_at) >= ${len(params)}")

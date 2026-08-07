@@ -18,5 +18,38 @@ services:
       timeout: 5s
       retries: 10
 
+  # Dockerized API (plan_v2.md SS10). Behind the `full` profile on purpose: plain
+  # `docker compose up -d` (default, no --profile flag) still only starts postgres -
+  # the day-to-day dev workflow (`python -m knowledgeos.main` against it) is unchanged.
+  # `docker compose --profile full up -d` starts BOTH: postgres + this container.
+  api:
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+        EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+    image: knowledgeos-api
+    container_name: knowledgeos-api
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Inside the compose network postgres is reachable by service name, not
+      # localhost (which .env points at for local, non-docker dev) - override it here
+      # so the same .env works for both modes without editing it.
+      DATABASE_URL: postgresql://knowledgeos:knowledgeos@postgres:5432/knowledgeos
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   knowledgeos-pgdata:
