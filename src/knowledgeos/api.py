@@ -26,12 +26,26 @@ from knowledgeos.context_engine import (
 )
 from knowledgeos.db import apply_migrations, check_health, create_pool
 from knowledgeos.embeddings import EmbeddingProvider, build_embedding_provider
+from knowledgeos.graph import (
+    RELATION_VOCAB,
+    DuplicateEdgeError,
+    EdgeNotFoundError,
+    InvalidRelationError,
+    MemoryNotFoundError,
+    add_edge,
+    delete_edge,
+    get_related,
+    get_search_related,
+    get_timeline,
+)
+from knowledgeos.graph import UnknownContextError as GraphUnknownContextError
 from knowledgeos.retrieval import UnknownContextError, hybrid_search
 from knowledgeos.security import credential_rejection_message, find_credential_leak
 
 logger = logging.getLogger("knowledgeos.api")
 
 MemoryType = Literal["semantic", "episodic", "procedural", "decision"]
+EdgeRelation = Literal["relates_to", "caused_by", "part_of", "contradicts", "follows"]
 
 TITLE_TRUNCATE_LEN = 80
 
@@ -97,9 +111,25 @@ class ScopeDecisionOut(BaseModel):
     results_by_candidate: dict[str, list[MemorySearchResult]] | None = None
 
 
+class RelatedNeighbor(BaseModel):
+    edge_id: UUID | None
+    relation: str
+    direction: str  # "outgoing" | "incoming"
+    note: str | None
+    created_by: str | None
+    created_at: datetime | None
+    virtual: bool  # True only for the derived 'supersedes' chain (never in memory_edges)
+    memory: MemoryOut
+
+
+class SearchRelatedNeighbor(RelatedNeighbor):
+    cross_context: bool
+
+
 class MemorySearchResponse(BaseModel):
     results: list[MemorySearchResult]
     scope_decision: ScopeDecisionOut
+    related: list[SearchRelatedNeighbor] | None = None
 
 
 class DisambiguationResolveIn(BaseModel):
@@ -138,6 +168,38 @@ class StatsOut(BaseModel):
     memories_by_context: list[ContextMemoryCount]
     disambiguations: DisambiguationStats
     preferences_learned: list[PreferenceOut]
+
+
+# --------------------------------------------------------------------------- Fase 3: grafo ligero
+
+
+class EdgeCreate(BaseModel):
+    to_memory: UUID
+    relation: EdgeRelation
+    note: str | None = None
+
+
+class EdgeOut(BaseModel):
+    id: UUID
+    from_memory: UUID
+    to_memory: UUID
+    relation: str
+    note: str | None
+    created_by: str
+    created_at: datetime
+
+
+class RelatedResponse(BaseModel):
+    memory_id: UUID
+    related: list[RelatedNeighbor]
+
+
+class TimelineItem(MemoryOut):
+    effective_date: datetime
+
+
+class TimelineResponse(BaseModel):
+    items: list[TimelineItem]
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -324,6 +386,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         type: str | None = None,  # noqa: A002
         limit: Annotated[int, Query(ge=1, le=50)] = 5,
         include_superseded: bool = False,
+        expand: bool = False,
     ):
         """Hybrid retrieval. `scope` controls the Context Engine (plan_v2.md SS7):
 
@@ -338,10 +401,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           empty on purpose - see `results_by_candidate` for a few results per
           candidate instead, and `disambiguation_id` to resolve the choice later via
           POST /disambiguations/{id}/resolve).
+
+        `expand` (Fase 3, default False): when True, adds a separate `related` block
+        with the 1-hop neighbors (memory_edges + the virtual supersedence chain) of
+        the top 3 `results`, deduplicated, capped at 5. `related` is NEVER merged into
+        `results` - it must not perturb retrieval metrics. Neighbors from a different
+        context than the one this search resolved to (if any) are included only when
+        reached via an explicit edge (`cross_context: true` on that entry) - explicit
+        edges are intentional user-made bridges, not contamination.
         """
         explicit_context = context
         if explicit_context is None and scope not in ("auto", "all"):
             explicit_context = scope
+
+        decided_context: str | None = None
 
         try:
             if explicit_context is not None:
@@ -355,6 +428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     include_superseded=include_superseded,
                 )
                 scope_decision = ScopeDecisionOut(mode="explicit", context=explicit_context)
+                decided_context = explicit_context
 
             elif scope == "all":
                 results = await hybrid_search(
@@ -397,6 +471,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         context=decision.context,
                         disambiguation_id=decision.disambiguation_id,
                     )
+                    decided_context = decision.context
                 else:
                     results = []
                     scope_decision = ScopeDecisionOut(
@@ -414,6 +489,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"unknown context '{exc}'",
             ) from exc
 
+        related: list[dict[str, Any]] | None = None
+        if expand:
+            related = await get_search_related(
+                pool,
+                top_results=results,
+                decided_context=decided_context,
+            )
+
         await log_audit(
             pool,
             agent=agent,
@@ -428,11 +511,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "include_superseded": include_superseded,
                 "result_count": len(results),
                 "scope_mode": scope_decision.mode,
+                "expand": expand,
+                "related_count": len(related) if related is not None else None,
             },
         )
         return MemorySearchResponse(
             results=[row_to_memory_out(r) for r in results],
             scope_decision=scope_decision,
+            related=related,
         )
 
     @app.post(
@@ -617,6 +703,149 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail={"hard": hard},
         )
         return {"id": str(memory_id), "hard": hard, "status": "deleted" if hard else "archived"}
+
+    # ---------------------------------------------------------------- Fase 3: grafo ligero
+
+    @app.post(
+        "/memories/{memory_id}/edges",
+        status_code=status.HTTP_201_CREATED,
+        response_model=EdgeOut,
+        dependencies=[Depends(require_auth)],
+    )
+    async def create_edge(
+        memory_id: UUID,
+        body: EdgeCreate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        agent: Annotated[str, Depends(agent_name)],
+    ):
+        try:
+            row = await add_edge(
+                pool,
+                from_memory=memory_id,
+                to_memory=body.to_memory,
+                relation=body.relation,
+                note=body.note,
+                created_by=agent,
+            )
+        except MemoryNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"memory '{exc}' not found",
+            ) from exc
+        except DuplicateEdgeError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+        await log_audit(
+            pool,
+            agent=agent,
+            action="add_edge",
+            memory_id=memory_id,
+            detail={
+                "edge_id": str(row["id"]),
+                "from_memory": str(row["from_memory"]),
+                "to_memory": str(row["to_memory"]),
+                "relation": row["relation"],
+            },
+        )
+        return row
+
+    @app.delete(
+        "/memories/{memory_id}/edges/{edge_id}",
+        dependencies=[Depends(require_auth)],
+    )
+    async def delete_edge_endpoint(
+        memory_id: UUID,
+        edge_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        agent: Annotated[str, Depends(agent_name)],
+    ):
+        try:
+            row = await delete_edge(pool, memory_id=memory_id, edge_id=edge_id)
+        except EdgeNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"no edge '{exc}' touching memory '{memory_id}'",
+            ) from exc
+
+        await log_audit(
+            pool,
+            agent=agent,
+            action="delete_edge",
+            memory_id=memory_id,
+            detail={
+                "edge_id": str(row["id"]),
+                "from_memory": str(row["from_memory"]),
+                "to_memory": str(row["to_memory"]),
+                "relation": row["relation"],
+            },
+        )
+        return {"id": str(edge_id), "status": "deleted"}
+
+    @app.get(
+        "/memories/{memory_id}/related",
+        response_model=RelatedResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_related_endpoint(
+        memory_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        relation: str | None = None,
+    ):
+        """1-hop neighbors of `memory_id`, both directions, plus the derived
+        supersedence chain (`relation="supersedes"`) - see `graph.get_related`.
+        """
+        try:
+            neighbors = await get_related(pool, memory_id=memory_id, relation=relation)
+        except MemoryNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"memory '{exc}' not found",
+            ) from exc
+        except InvalidRelationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"invalid relation '{exc}': must be one of {RELATION_VOCAB} or 'supersedes'",
+            ) from exc
+
+        return RelatedResponse(
+            memory_id=memory_id,
+            related=[
+                {**item, "memory": row_to_memory_out(item["memory"])} for item in neighbors
+            ],
+        )
+
+    # ---------------------------------------------------------------- Fase 3: timeline
+
+    @app.get("/timeline", response_model=TimelineResponse, dependencies=[Depends(require_auth)])
+    async def timeline(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        context: str | None = None,
+        from_: Annotated[datetime | None, Query(alias="from")] = None,
+        to: datetime | None = None,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ):
+        """Memorias `episodic`/`decision`, ordenadas por fecha efectiva
+        (`occurred_at`, o `created_at` si no hay `occurred_at`) mas reciente primero -
+        pensado para "que paso en X las ultimas semanas". Filtros: `context` (slug),
+        `from`/`to` (rango de fecha efectiva), `limit` (default 50).
+        """
+        try:
+            rows = await get_timeline(
+                pool,
+                context=context,
+                from_date=from_,
+                to_date=to,
+                limit=limit,
+            )
+        except GraphUnknownContextError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"unknown context '{exc}'",
+            ) from exc
+
+        return TimelineResponse(items=[row_to_memory_out(r) for r in rows])
 
     return app
 

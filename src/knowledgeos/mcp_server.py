@@ -125,6 +125,7 @@ def memory_search(
     context: str | None = None,
     type: str | None = None,  # noqa: A002 - nombre alineado con la API/plan_v2
     limit: int = 5,
+    expand: bool = False,
 ) -> dict[str, Any]:
     """Busca memorias guardadas por contenido (retrieval híbrido: vector + texto completo).
 
@@ -163,6 +164,19 @@ def memory_search(
     después de esa siguiente llamada (se resuelva o no), así que solo cubre el patrón
     "ambigua -> repregunto con context" inmediato, no búsquedas sueltas más tarde.
 
+    Relaciones (Fase 3): si pasas `expand=True`, la respuesta incluye además un bloque
+    `related` -- los vecinos a 1 salto (memory_link explícitos + la cadena de
+    supersedencia) de los 3 primeros `results`, deduplicados y con un máximo de 5.
+    `related` NUNCA se mezcla con `results`: son memorias conectadas por relación, no
+    resultados de la búsqueda en sí, así que no deben tratarse con la misma confianza
+    de relevancia semántica. Cada entrada trae `relation`, `direction` ("outgoing" si
+    el resultado apunta hacia el vecino, "incoming" si es al revés), `virtual` (True
+    solo para la cadena de supersedencia derivada, que no vive en una arista real) y
+    `cross_context` (True si el vecino pertenece a un contexto distinto del que ya
+    resolvió esta búsqueda -- solo ocurre vía una arista explícita creada con
+    memory_link, nunca por casualidad). Útil para enriquecer una respuesta con
+    "esto está relacionado con..." sin disparar una búsqueda aparte.
+
     Args:
         query: la pregunta o texto a buscar, en lenguaje natural.
         context: slug de un contexto para acotar la búsqueda a él (recomendado si ya
@@ -172,14 +186,15 @@ def memory_search(
             "episodic" (eventos puntuales), "procedural" (cómo hacer algo) o
             "decision" (una decisión tomada y su motivo). Opcional.
         limit: máximo de resultados a devolver (default 5).
+        expand: si True, añade el bloque `related` descrito arriba (default False).
 
     Returns:
         dict con `results` (lista de memorias, vacía si `ambiguous` es True),
         `scope_decision` (la decisión cruda de la API), `ambiguous` (bool, azúcar
         sobre `scope_decision.mode`), `message` (str, presente solo si `ambiguous` es
-        True: texto ya formateado para decidir o mostrar al usuario) y `note` (str o
+        True: texto ya formateado para decidir o mostrar al usuario), `note` (str o
         None, confirma cuando se aprendió una preferencia por resolver una
-        ambigüedad anterior).
+        ambigüedad anterior) y `related` (lista, solo presente si `expand=True`).
     """
     global _last_disambiguation_id
 
@@ -188,6 +203,8 @@ def memory_search(
         params["context"] = context
     if type:
         params["type"] = type
+    if expand:
+        params["expand"] = True
 
     try:
         with _client() as client:
@@ -203,6 +220,7 @@ def memory_search(
 
     results = data.get("results", [])
     scope_decision = data.get("scope_decision", {})
+    related = data.get("related")
     mode = scope_decision.get("mode")
 
     # Consume the pending slot on THIS call (whether or not it gets used below) so it
@@ -227,20 +245,26 @@ def memory_search(
 
     if mode == "ambiguous":
         _last_disambiguation_id = scope_decision.get("disambiguation_id")
-        return {
+        out: dict[str, Any] = {
             "results": results,
             "scope_decision": scope_decision,
             "ambiguous": True,
             "message": _format_ambiguous_message(scope_decision),
             "note": note,
         }
+        if expand:
+            out["related"] = related
+        return out
 
-    return {
+    out = {
         "results": results,
         "scope_decision": scope_decision,
         "ambiguous": False,
         "note": note,
     }
+    if expand:
+        out["related"] = related
+    return out
 
 
 @mcp.tool()
@@ -395,6 +419,189 @@ def memory_forget(memory_id: str, hard: bool = False) -> dict[str, Any]:
         return {"error": _http_error_message(exc)}
 
     return result
+
+
+# --------------------------------------------------------------------------- Fase 3: relaciones / timeline
+
+
+@mcp.tool()
+def memory_link(
+    from_memory_id: str,
+    to_memory_id: str,
+    relation: str,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Crea una relación explícita y dirigida entre dos memorias existentes (grafo ligero).
+
+    KnowledgeOS no es solo una lista de memorias sueltas: `memory_link` deja constancia
+    de CÓMO se conectan dos hechos/eventos/decisiones que ya guardaste, para que
+    `memory_related` y el bloque `related` de `memory_search` (con `expand=True`)
+    puedan recuperarlas juntas después.
+
+    Vocabulario de relaciones (`relation`, obligatorio, uno de estos 5 -- no hay
+    texto libre, es a propósito para que el grafo se mantenga consultable):
+      - "relates_to": asociación genérica, sin dirección causal ni temporal fuerte.
+        Úsala cuando dos memorias claramente se tocan pero ninguna de las otras
+        cuatro relaciones encaja mejor.
+      - "caused_by": `from_memory_id` fue CAUSADO por `to_memory_id`. El caso típico:
+        una decisión (`from`) enlazada a la razón/evento que la motivó (`to`) --
+        p.ej. "decidimos migrar a Postgres" caused_by "el proveedor de Mongo subió
+        precios".
+      - "part_of": `from_memory_id` es PARTE de `to_memory_id`. El caso típico: un
+        procedimiento (`from`) enlazado al proyecto al que pertenece (`to`) --
+        p.ej. "cómo hacer deploy" part_of "proyecto expense-tracker".
+      - "contradicts": `from_memory_id` CONTRADICE a `to_memory_id`. Útil cuando
+        detectas dos memorias activas en conflicto que no son una supersedencia clara
+        (si sí lo es, usa memory_update en vez de esto -- ver más abajo).
+      - "follows": `from_memory_id` ocurrió DESPUÉS de / como CONSECUENCIA de
+        `to_memory_id`, sin que uno haya "causado" estrictamente al otro. El caso
+        típico: un episodio (`from`) enlazado a su consecuencia posterior (`to`) --
+        p.ej. "se cayó el servidor" follows "se agotó el disco".
+
+    Cuándo enlazar (patrones más comunes): decisiones → sus causas (`caused_by`),
+    procedimientos → el proyecto al que pertenecen (`part_of`), episodios → sus
+    consecuencias (`follows`). No uses esta tool para versionar una memoria que
+    cambió (eso es `memory_update`, que crea una nueva versión y marca la anterior
+    como reemplazada) -- `memory_link` es para relaciones entre memorias que siguen
+    siendo independientes y vigentes.
+
+    Args:
+        from_memory_id: UUID de la memoria de origen de la relación.
+        to_memory_id: UUID de la memoria de destino. Debe ser distinta de
+            `from_memory_id`.
+        relation: una de "relates_to", "caused_by", "part_of", "contradicts",
+            "follows" (ver arriba).
+        note: comentario opcional explicando la relación (p.ej. por qué se enlazaron).
+
+    Returns:
+        dict con la arista creada (`edge`, incluye su `id`), o `error` si el
+        vocabulario es inválido, alguna memoria no existe, o la relación ya existía
+        (mismo par + misma relación -- no se duplica).
+    """
+    try:
+        with _client() as client:
+            resp = client.post(
+                f"/memories/{from_memory_id}/edges",
+                json={"to_memory": to_memory_id, "relation": relation, "note": note},
+            )
+            if resp.status_code == 401:
+                return {"error": _auth_error_message()}
+            if resp.status_code == 404:
+                return {"error": f"KnowledgeOS no encontró alguna de las dos memorias: {resp.json().get('detail')}"}
+            if resp.status_code == 409:
+                return {"error": f"Esa relación ya existe: {resp.json().get('detail')}"}
+            if resp.status_code == 422:
+                return {"error": f"Datos inválidos: {resp.json().get('detail')}"}
+            resp.raise_for_status()
+            edge = resp.json()
+    except httpx.RequestError as exc:
+        return {"error": _connection_error_message(exc)}
+    except httpx.HTTPStatusError as exc:
+        return {"error": _http_error_message(exc)}
+
+    return {"edge": edge}
+
+
+@mcp.tool()
+def memory_related(memory_id: str, relation: str | None = None) -> dict[str, Any]:
+    """Lista los vecinos a 1 salto de una memoria: relaciones explícitas + supersedencia.
+
+    Devuelve, para `memory_id`, todas las memorias conectadas directamente en
+    cualquier dirección: tanto las aristas creadas con `memory_link` como -- de forma
+    automática, sin que nadie las haya creado a mano -- la cadena de versiones
+    (`relation == "supersedes"`) si esa memoria fue reemplazada por otra más nueva o
+    reemplazó a una más vieja (ver `memory_update`).
+
+    Cada entrada trae `relation`, `direction` ("outgoing" si `memory_id` es el origen
+    de esa relación, "incoming" si es el destino), `virtual` (True solo para las
+    entradas de supersedencia derivadas, que no son una arista real en la base de
+    datos) y `memory` (la memoria vecina completa).
+
+    Args:
+        memory_id: UUID de la memoria cuyos vecinos quieres ver.
+        relation: filtra a un solo tipo de relación -- uno de "relates_to",
+            "caused_by", "part_of", "contradicts", "follows", o "supersedes" (para
+            ver solo la cadena de versiones). Si se omite, devuelve todo.
+
+    Returns:
+        dict con `related`: lista de vecinos (puede estar vacía si la memoria no
+        tiene relaciones), o `error` si la memoria no existe o `relation` no es
+        válido.
+    """
+    params: dict[str, Any] = {}
+    if relation:
+        params["relation"] = relation
+
+    try:
+        with _client() as client:
+            resp = client.get(f"/memories/{memory_id}/related", params=params)
+            if resp.status_code == 401:
+                return {"error": _auth_error_message()}
+            if resp.status_code == 404:
+                return {"error": f"No existe ninguna memoria con id '{memory_id}'."}
+            if resp.status_code == 422:
+                return {"error": f"relation inválida: {resp.json().get('detail')}"}
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.RequestError as exc:
+        return {"error": _connection_error_message(exc)}
+    except httpx.HTTPStatusError as exc:
+        return {"error": _http_error_message(exc)}
+
+    return {"related": data.get("related", [])}
+
+
+@mcp.tool()
+def memory_timeline(
+    context: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Devuelve una línea de tiempo de eventos y decisiones, la más reciente primero.
+
+    Útil para responder preguntas tipo "¿qué pasó en <contexto> las últimas semanas?"
+    o "¿qué decisiones se tomaron en el proyecto X en <rango de fechas>?" -- junta
+    memorias de tipo "episodic" (eventos puntuales) y "decision" (decisiones tomadas),
+    ordenadas por su fecha efectiva (`occurred_at` si se especificó al guardarlas, si
+    no `created_at`).
+
+    Args:
+        context: slug de un contexto para acotar la línea de tiempo a él (opcional;
+            si se omite, junta eventos/decisiones de todos los contextos).
+        from_date: fecha/hora ISO 8601 (p.ej. "2026-07-01" o
+            "2026-07-01T00:00:00Z") -- solo eventos con fecha efectiva >= esta.
+        to_date: igual que `from_date` pero como límite superior (<=).
+        limit: máximo de items a devolver (default 50).
+
+    Returns:
+        dict con `items`: lista de memorias con su `effective_date` (la fecha usada
+        para ordenar), más reciente primero. `error` si `context` no existe o alguna
+        fecha es inválida.
+    """
+    params: dict[str, Any] = {"limit": limit}
+    if context:
+        params["context"] = context
+    if from_date:
+        params["from"] = from_date
+    if to_date:
+        params["to"] = to_date
+
+    try:
+        with _client() as client:
+            resp = client.get("/timeline", params=params)
+            if resp.status_code == 401:
+                return {"error": _auth_error_message()}
+            if resp.status_code == 422:
+                return {"error": f"KnowledgeOS rechazó la consulta: {resp.json().get('detail')}"}
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.RequestError as exc:
+        return {"error": _connection_error_message(exc)}
+    except httpx.HTTPStatusError as exc:
+        return {"error": _http_error_message(exc)}
+
+    return {"items": data.get("items", [])}
 
 
 @mcp.tool()
