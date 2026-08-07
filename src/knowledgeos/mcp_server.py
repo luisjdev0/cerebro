@@ -33,6 +33,13 @@ AGENT_NAME = os.environ.get("KNOWLEDGEOS_AGENT_NAME", "mcp-client")
 
 MEMORY_TYPES = ("semantic", "episodic", "procedural", "decision")
 
+# Process-memory of the most recent *unresolved* disambiguation (Fase 2 Context
+# Engine, plan_v2.md SS7). See memory_search()'s docstring for the auto-resolve
+# behavior this enables. Deliberately a single slot, not a stack/history: it only
+# needs to bridge "ambiguous search" -> "agent's very next search with an explicit
+# context", which is the pattern a tool-calling agent naturally produces.
+_last_disambiguation_id: str | None = None
+
 mcp = FastMCP(
     name="knowledgeos",
     instructions=(
@@ -94,6 +101,24 @@ def _format_context_list(contexts: list[dict[str, Any]]) -> str:
 # --------------------------------------------------------------------------- tools
 
 
+def _format_ambiguous_message(scope_decision: dict[str, Any]) -> str:
+    candidates = scope_decision.get("candidates") or []
+    results_by_candidate = scope_decision.get("results_by_candidate") or {}
+
+    lines = ["La consulta es ambigua entre estos contextos:"]
+    for c in candidates:
+        pct = f"{c.get('score', 0.0):.0%}"
+        desc = c.get("description") or c.get("name") or c["slug"]
+        lines.append(f"- {c['slug']} ({pct}): {desc}")
+        for r in results_by_candidate.get(c["slug"], []):
+            lines.append(f"    · {r['title']}")
+    lines.append(
+        "Elige llamando memory_search con context=<slug>, o pregunta al usuario cuál "
+        "corresponde."
+    )
+    return "\n".join(lines)
+
+
 @mcp.tool()
 def memory_search(
     query: str,
@@ -114,26 +139,50 @@ def memory_search(
     compartir vocabulario (p.ej. "gastos" aparece tanto en un proyecto de finanzas
     como en las finanzas personales reales del usuario) sin ser relevantes entre sí.
 
-    Si NO pasas `context`, la búsqueda se hace sobre TODOS los contextos y cada
-    resultado incluye su campo `context` para que tú (el agente que llama) puedas
-    juzgar cuáles son realmente pertinentes a la pregunta. Si detectamos que los
-    resultados mezclan 2+ contextos distintos, te lo señalamos explícitamente para
-    que consideres repetir la búsqueda con `context` fijado al que corresponda.
+    Scoping automático (Context Engine, Fase 2): si NO pasas `context`, la búsqueda usa
+    `scope=auto` en la API. Un scorer barato y determinista (sin LLM) decide si un
+    contexto domina claramente:
+      - Si domina, la búsqueda ya viene filtrada a ese contexto (`scope_decision.mode
+        == "auto"`) -- no necesitas hacer nada más.
+      - Si es ambiguo (`scope_decision.mode == "ambiguous"`), `results` viene vacío a
+        propósito (para no mezclar memorias de contextos distintos a ciegas) y en su
+        lugar recibes `candidates` (2-4 contextos posibles con su descripción y score)
+        y `results_by_candidate` (2-3 resultados reales de cada uno, como evidencia).
+        El campo `message` ya trae esto formateado en texto listo para razonar o
+        mostrar. Decide tú (con el contexto de la conversación) o pregunta al usuario,
+        y repite la llamada pasando `context=<slug>` del que corresponda.
+
+    Aprendizaje automático: este servidor MCP recuerda en memoria de proceso el
+    `disambiguation_id` de la última búsqueda ambigua. Si tu SIGUIENTE llamada a
+    memory_search pasa `context` explícito, el servidor asume que así resolviste esa
+    ambigüedad y llama automáticamente a `POST /disambiguations/{id}/resolve` con ese
+    contexto -- sin que tengas que hacer nada extra. Eso hace crecer
+    `context_preferences` en el servidor (los tokens de esa query suman peso hacia el
+    contexto elegido), así que preguntas parecidas en el futuro tienden a resolverse
+    solas (`mode == "auto"`) en vez de volver a ser ambiguas. El "slot" se limpia
+    después de esa siguiente llamada (se resuelva o no), así que solo cubre el patrón
+    "ambigua -> repregunto con context" inmediato, no búsquedas sueltas más tarde.
 
     Args:
         query: la pregunta o texto a buscar, en lenguaje natural.
         context: slug de un contexto para acotar la búsqueda a él (recomendado si ya
-            sabes de qué contexto se trata). Si no lo sabes, omítelo.
+            sabes de qué contexto se trata, o si estás resolviendo una ambigüedad
+            anterior). Si no lo sabes, omítelo y deja que el Context Engine decida.
         type: filtra por tipo de memoria: "semantic" (hechos/preferencias estables),
             "episodic" (eventos puntuales), "procedural" (cómo hacer algo) o
             "decision" (una decisión tomada y su motivo). Opcional.
         limit: máximo de resultados a devolver (default 5).
 
     Returns:
-        dict con `results` (lista de memorias con id, context, type, title, content,
-        score, etc.) y `note` (str o None) con una advertencia si los resultados
-        mezclan contextos distintos.
+        dict con `results` (lista de memorias, vacía si `ambiguous` es True),
+        `scope_decision` (la decisión cruda de la API), `ambiguous` (bool, azúcar
+        sobre `scope_decision.mode`), `message` (str, presente solo si `ambiguous` es
+        True: texto ya formateado para decidir o mostrar al usuario) y `note` (str o
+        None, confirma cuando se aprendió una preferencia por resolver una
+        ambigüedad anterior).
     """
+    global _last_disambiguation_id
+
     params: dict[str, Any] = {"q": query, "limit": limit}
     if context:
         params["context"] = context
@@ -146,23 +195,52 @@ def memory_search(
             if resp.status_code == 401:
                 return {"error": _auth_error_message()}
             resp.raise_for_status()
-            results = resp.json()
+            data = resp.json()
     except httpx.RequestError as exc:
         return {"error": _connection_error_message(exc)}
     except httpx.HTTPStatusError as exc:
         return {"error": _http_error_message(exc)}
 
-    note: str | None = None
-    if not context and results:
-        contexts_seen = sorted({r["context"] for r in results})
-        if len(contexts_seen) >= 2:
-            note = (
-                "Los resultados provienen de contextos distintos: "
-                f"{', '.join(contexts_seen)} — considera repetir la búsqueda con "
-                "`context` fijado a uno de ellos si sabes cuál corresponde."
-            )
+    results = data.get("results", [])
+    scope_decision = data.get("scope_decision", {})
+    mode = scope_decision.get("mode")
 
-    return {"results": results, "note": note}
+    # Consume the pending slot on THIS call (whether or not it gets used below) so it
+    # only ever covers one subsequent call - see docstring.
+    pending_id = _last_disambiguation_id
+    _last_disambiguation_id = None
+
+    note: str | None = None
+    if context and pending_id:
+        try:
+            with _client() as client:
+                resolve_resp = client.post(
+                    f"/disambiguations/{pending_id}/resolve", json={"context": context}
+                )
+            if resolve_resp.status_code == 200:
+                note = (
+                    f"Aprendido: se registró que esta consulta corresponde a '{context}' "
+                    "-- preguntas similares se inclinarán hacia este contexto en el futuro."
+                )
+        except httpx.HTTPError:
+            pass  # best-effort: no perdemos el resultado de la búsqueda por esto
+
+    if mode == "ambiguous":
+        _last_disambiguation_id = scope_decision.get("disambiguation_id")
+        return {
+            "results": results,
+            "scope_decision": scope_decision,
+            "ambiguous": True,
+            "message": _format_ambiguous_message(scope_decision),
+            "note": note,
+        }
+
+    return {
+        "results": results,
+        "scope_decision": scope_decision,
+        "ambiguous": False,
+        "note": note,
+    }
 
 
 @mcp.tool()
@@ -390,6 +468,36 @@ def memory_create_context(slug: str, name: str, kind: str, description: str | No
         return {"error": _http_error_message(exc)}
 
     return {"context": context}
+
+
+@mcp.tool()
+def memory_stats() -> dict[str, Any]:
+    """Muestra estadísticas del sistema: memorias, desambiguaciones y preferencias aprendidas.
+
+    Útil para que el usuario vea al Context Engine (Fase 2) "aprender" con el tiempo:
+    cuántas búsquedas ambiguas se resolvieron automáticamente vs. cuántas necesitaron
+    que un agente eligiera, y qué términos ya se asociaron a qué contextos.
+
+    Returns:
+        dict con `stats`: {
+          memories_by_context: [{context, status, count}, ...],
+          disambiguations: {total, auto, agent, user, unresolved},
+          preferences_learned: [{context, term, weight}, ...] (top 100 por peso),
+        }, o `error` si algo falló.
+    """
+    try:
+        with _client() as client:
+            resp = client.get("/stats")
+            if resp.status_code == 401:
+                return {"error": _auth_error_message()}
+            resp.raise_for_status()
+            stats = resp.json()
+    except httpx.RequestError as exc:
+        return {"error": _connection_error_message(exc)}
+    except httpx.HTTPStatusError as exc:
+        return {"error": _http_error_message(exc)}
+
+    return {"stats": stats}
 
 
 def main() -> None:

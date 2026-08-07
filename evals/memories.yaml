@@ -12,6 +12,12 @@
 #   content  - 1-3 frases en español con el contenido real de la memoria
 #   status   - active | superseded (las "superseded" son la versión vieja de un hecho
 #              que cambió; existen para probar la categoría "temporal" de casos)
+#   superseded_by_id - (solo en memorias con status: superseded) id (dentro de este
+#              mismo corpus) de la memoria activa que la reemplaza. El adaptador
+#              knowledgeos_adapter.py lo usa para construir la cadena de supersedencia
+#              REAL del sistema (POST la version vieja, PATCH con el contenido de la
+#              nueva) en vez de insertar ambas como filas activas independientes -
+#              ver docstring de KnowledgeOSAdapter._insert_supersedence_chain().
 #
 # Colisiones léxicas deliberadas (para estresar el retrieval):
 #   - "gastos" / "costos": expense-tracker <-> finanzas-personales
@@ -99,6 +105,7 @@ memories:
     title: "Presupuesto mensual personal (versión anterior)"
     content: "Mi presupuesto mensual personal en 2025 era de 1,500 y no incluía una partida separada para ahorro de emergencia."
     status: superseded
+    superseded_by_id: fp-presupuesto-mensual
 
   - id: fp-ahorro-meta
     context: finanzas-personales
@@ -151,6 +158,7 @@ memories:
     title: "Tarifa por hora con Acme (versión anterior)"
     content: "La tarifa acordada con Acme es de $35 por hora para tareas fuera de alcance."
     status: superseded
+    superseded_by_id: ca-tarifa-hora-nueva
 
   - id: ca-tarifa-hora-nueva
     context: cliente-acme
@@ -196,6 +204,7 @@ memories:
     title: "Sistema operativo de producción (versión anterior)"
     content: "El servidor de producción corre Ubuntu 22.04 LTS."
     status: superseded
+    superseded_by_id: inf-produccion-os-nuevo
 
   - id: inf-produccion-os-nuevo
     context: infraestructura

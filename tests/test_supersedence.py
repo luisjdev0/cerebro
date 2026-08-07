@@ -77,7 +77,7 @@ def test_update_supersedes_old_memory_and_excludes_it_from_search(client, auth_h
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
-    ids = [r["id"] for r in resp.json()]
+    ids = [r["id"] for r in resp.json()["results"]]
     assert old_id in ids
 
     resp = client.patch(
@@ -98,7 +98,7 @@ def test_update_supersedes_old_memory_and_excludes_it_from_search(client, auth_h
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
-    ids_after = [r["id"] for r in resp.json()]
+    ids_after = [r["id"] for r in resp.json()["results"]]
     assert old_id not in ids_after
     assert new_id in ids_after
 
@@ -108,7 +108,7 @@ def test_update_supersedes_old_memory_and_excludes_it_from_search(client, auth_h
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
-    ids_with_superseded = [r["id"] for r in resp.json()]
+    ids_with_superseded = [r["id"] for r in resp.json()["results"]]
     assert old_id in ids_with_superseded
 
 

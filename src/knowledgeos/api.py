@@ -17,6 +17,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from pydantic import BaseModel, Field
 
 from knowledgeos.config import Settings, get_settings
+from knowledgeos.context_engine import (
+    DisambiguationAlreadyResolvedError,
+    DisambiguationNotFoundError,
+    ScopeDecision,
+    decide_scope,
+    resolve_disambiguation,
+)
 from knowledgeos.db import apply_migrations, check_health, create_pool
 from knowledgeos.embeddings import EmbeddingProvider, build_embedding_provider
 from knowledgeos.retrieval import UnknownContextError, hybrid_search
@@ -82,6 +89,57 @@ class MemorySearchResult(MemoryOut):
     score: float
 
 
+class ScopeDecisionOut(BaseModel):
+    mode: str  # "explicit" | "all" | "auto" | "ambiguous"
+    context: str | None = None
+    candidates: list[dict[str, Any]] | None = None
+    disambiguation_id: str | None = None
+    results_by_candidate: dict[str, list[MemorySearchResult]] | None = None
+
+
+class MemorySearchResponse(BaseModel):
+    results: list[MemorySearchResult]
+    scope_decision: ScopeDecisionOut
+
+
+class DisambiguationResolveIn(BaseModel):
+    context: str = Field(min_length=1)
+
+
+class DisambiguationResolveOut(BaseModel):
+    id: str
+    query: str
+    chosen_context: str
+    resolved_by: str
+    learned_terms: list[str]
+
+
+class ContextMemoryCount(BaseModel):
+    context: str
+    status: str
+    count: int
+
+
+class DisambiguationStats(BaseModel):
+    total: int
+    auto: int
+    agent: int
+    user: int
+    unresolved: int
+
+
+class PreferenceOut(BaseModel):
+    context: str
+    term: str
+    weight: float
+
+
+class StatsOut(BaseModel):
+    memories_by_context: list[ContextMemoryCount]
+    disambiguations: DisambiguationStats
+    preferences_learned: list[PreferenceOut]
+
+
 # --------------------------------------------------------------------------- app wiring
 
 
@@ -113,6 +171,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def get_embedding_provider(request: Request) -> EmbeddingProvider:
         return request.app.state.embedding_provider
+
+    def get_settings_dep(request: Request) -> Settings:
+        return request.app.state.settings
 
     def require_auth(
         authorization: Annotated[str | None, Header()] = None,
@@ -251,27 +312,102 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return row_to_memory_out(row)
 
-    @app.get("/memories/search", response_model=list[MemorySearchResult], dependencies=[Depends(require_auth)])
+    @app.get("/memories/search", response_model=MemorySearchResponse, dependencies=[Depends(require_auth)])
     async def search_memories(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+        settings_dep: Annotated[Settings, Depends(get_settings_dep)],
         agent: Annotated[str, Depends(agent_name)],
         q: Annotated[str, Query(min_length=1)],
         context: str | None = None,
+        scope: str = "auto",
         type: str | None = None,  # noqa: A002
         limit: Annotated[int, Query(ge=1, le=50)] = 5,
         include_superseded: bool = False,
     ):
+        """Hybrid retrieval. `scope` controls the Context Engine (plan_v2.md SS7):
+
+        - explicit `context=<slug>` (or `scope=<slug>` not equal to auto/all) filters
+          directly, no engine involved - `scope_decision.mode == "explicit"`.
+        - `scope=all` (default off) is the Fase 1 behavior: unfiltered hybrid search
+          across every context - kept for the benchmark's control arm.
+        - `scope=auto` (default) runs the Context Engine: a cheap deterministic
+          preliminary scoring decides whether one context clearly dominates
+          (`mode == "auto"`, results already filtered to it) or the query is
+          ambiguous between 2-4 contexts (`mode == "ambiguous"`, `results` comes back
+          empty on purpose - see `results_by_candidate` for a few results per
+          candidate instead, and `disambiguation_id` to resolve the choice later via
+          POST /disambiguations/{id}/resolve).
+        """
+        explicit_context = context
+        if explicit_context is None and scope not in ("auto", "all"):
+            explicit_context = scope
+
         try:
-            results = await hybrid_search(
-                pool,
-                provider,
-                query=q,
-                context_slug=context,
-                type_=type,
-                limit=limit,
-                include_superseded=include_superseded,
-            )
+            if explicit_context is not None:
+                results = await hybrid_search(
+                    pool,
+                    provider,
+                    query=q,
+                    context_slug=explicit_context,
+                    type_=type,
+                    limit=limit,
+                    include_superseded=include_superseded,
+                )
+                scope_decision = ScopeDecisionOut(mode="explicit", context=explicit_context)
+
+            elif scope == "all":
+                results = await hybrid_search(
+                    pool,
+                    provider,
+                    query=q,
+                    context_slug=None,
+                    type_=type,
+                    limit=limit,
+                    include_superseded=include_superseded,
+                )
+                scope_decision = ScopeDecisionOut(mode="all")
+
+            else:  # scope == "auto"
+                decision: ScopeDecision = await decide_scope(
+                    pool,
+                    provider,
+                    query=q,
+                    type_=type,
+                    include_superseded=include_superseded,
+                    settings=settings_dep,
+                    agent=agent,
+                    limit=limit,
+                )
+                if decision.mode == "auto":
+                    if decision.context is not None:
+                        results = await hybrid_search(
+                            pool,
+                            provider,
+                            query=q,
+                            context_slug=decision.context,
+                            type_=type,
+                            limit=limit,
+                            include_superseded=include_superseded,
+                        )
+                    else:
+                        results = []
+                    scope_decision = ScopeDecisionOut(
+                        mode="auto",
+                        context=decision.context,
+                        disambiguation_id=decision.disambiguation_id,
+                    )
+                else:
+                    results = []
+                    scope_decision = ScopeDecisionOut(
+                        mode="ambiguous",
+                        candidates=[c.to_dict() for c in (decision.candidates or [])],
+                        disambiguation_id=decision.disambiguation_id,
+                        results_by_candidate={
+                            slug: [row_to_memory_out(r) for r in rows]
+                            for slug, rows in (decision.results_by_candidate or {}).items()
+                        },
+                    )
         except UnknownContextError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -286,13 +422,104 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail={
                 "query": q,
                 "context": context,
+                "scope": scope,
                 "type": type,
                 "limit": limit,
                 "include_superseded": include_superseded,
                 "result_count": len(results),
+                "scope_mode": scope_decision.mode,
             },
         )
-        return [row_to_memory_out(r) for r in results]
+        return MemorySearchResponse(
+            results=[row_to_memory_out(r) for r in results],
+            scope_decision=scope_decision,
+        )
+
+    @app.post(
+        "/disambiguations/{disambiguation_id}/resolve",
+        response_model=DisambiguationResolveOut,
+        dependencies=[Depends(require_auth)],
+    )
+    async def resolve_disambiguation_endpoint(
+        disambiguation_id: str,
+        body: DisambiguationResolveIn,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        agent: Annotated[str, Depends(agent_name)],
+    ):
+        try:
+            result = await resolve_disambiguation(
+                pool,
+                disambiguation_id=disambiguation_id,
+                context_slug=body.context,
+                resolved_by="agent",
+                agent=agent,
+            )
+        except DisambiguationNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"no disambiguation found with id '{exc}'",
+            ) from exc
+        except DisambiguationAlreadyResolvedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"disambiguation '{exc}' was already resolved",
+            ) from exc
+        except UnknownContextError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"unknown context '{exc}'",
+            ) from exc
+
+        await log_audit(
+            pool,
+            agent=agent,
+            action="resolve_disambiguation",
+            memory_id=None,
+            detail={"disambiguation_id": disambiguation_id, "chosen_context": body.context},
+        )
+        return DisambiguationResolveOut(**result)
+
+    @app.get("/stats", response_model=StatsOut, dependencies=[Depends(require_auth)])
+    async def get_stats(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        memory_rows = await pool.fetch(
+            """
+            SELECT c.slug AS context, m.status, count(*) AS count
+            FROM memories m JOIN contexts c ON c.id = m.context_id
+            GROUP BY c.slug, m.status
+            ORDER BY c.slug, m.status
+            """
+        )
+        disamb_row = await pool.fetchrow(
+            """
+            SELECT
+                count(*) AS total,
+                count(*) FILTER (WHERE resolved_by = 'auto') AS auto,
+                count(*) FILTER (WHERE resolved_by = 'agent') AS agent,
+                count(*) FILTER (WHERE resolved_by = 'user') AS "user",
+                count(*) FILTER (WHERE resolved_by IS NULL) AS unresolved
+            FROM disambiguation_log
+            """
+        )
+        preference_rows = await pool.fetch(
+            """
+            SELECT c.slug AS context, cp.term, cp.weight
+            FROM context_preferences cp
+            JOIN contexts c ON c.id = cp.context_id
+            ORDER BY cp.weight DESC, c.slug, cp.term
+            LIMIT 100
+            """
+        )
+        return StatsOut(
+            memories_by_context=[
+                ContextMemoryCount(context=r["context"], status=r["status"], count=r["count"])
+                for r in memory_rows
+            ],
+            disambiguations=DisambiguationStats(**dict(disamb_row)),
+            preferences_learned=[
+                PreferenceOut(context=r["context"], term=r["term"], weight=r["weight"])
+                for r in preference_rows
+            ],
+        )
 
     @app.patch("/memories/{memory_id}", response_model=MemoryOut, dependencies=[Depends(require_auth)])
     async def update_memory(
