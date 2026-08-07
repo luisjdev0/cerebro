@@ -4,3 +4,4 @@ __pycache__/
 evals/results/
 *.pyc
 src/knowledgeos.egg-info/
+api.log
