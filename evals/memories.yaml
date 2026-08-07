@@ -1,0 +1,323 @@
+# Corpus sintético de memorias para la suite de evaluación de retrieval de KnowledgeOS.
+#
+# Usuario simulado: desarrollador freelance hispanohablante con un proyecto de software
+# propio ("Expense Tracker"), un cliente ("Acme"), y varios dominios de vida personal.
+#
+# Campos:
+#   id       - slug único, prefijo por contexto (et-, fp-, ca-, inf-, sa-, ap-)
+#   context  - uno de: expense-tracker, finanzas-personales, cliente-acme,
+#              infraestructura, salud, aprendizaje
+#   type     - semantic | episodic | procedural | decision
+#   title    - título corto de la memoria
+#   content  - 1-3 frases en español con el contenido real de la memoria
+#   status   - active | superseded (las "superseded" son la versión vieja de un hecho
+#              que cambió; existen para probar la categoría "temporal" de casos)
+#
+# Colisiones léxicas deliberadas (para estresar el retrieval):
+#   - "gastos" / "costos": expense-tracker <-> finanzas-personales
+#   - "migración" / "migrar": infraestructura <-> cliente-acme
+#   - "presupuesto": cliente-acme <-> finanzas-personales
+#
+# Pares superseded -> active (3 en total):
+#   - inf-produccion-os-antiguo -> inf-produccion-os-nuevo
+#   - ca-tarifa-hora-antigua -> ca-tarifa-hora-nueva
+#   - fp-presupuesto-antiguo -> fp-presupuesto-mensual
+
+memories:
+  # ---------------------------------------------------------------------
+  # expense-tracker (proyecto de software propio)
+  # ---------------------------------------------------------------------
+  - id: et-stack-tecnologico
+    context: expense-tracker
+    type: semantic
+    title: "Stack tecnológico de Expense Tracker"
+    content: "El proyecto Expense Tracker usa Next.js 14 con TypeScript en el frontend y Supabase como backend."
+    status: active
+
+  - id: et-modelo-datos-gastos
+    context: expense-tracker
+    type: semantic
+    title: "Modelo de datos de gastos"
+    content: "El modelo de datos define una tabla `gastos` con categoría, monto, fecha y método de pago para cada transacción del usuario, y esos gastos se agregan por mes para calcular el total en la app."
+    status: active
+
+  - id: et-decision-categorias
+    context: expense-tracker
+    type: decision
+    title: "Categorías fijas en vez de etiquetas libres"
+    content: "Decidimos usar categorías fijas (comida, transporte, vivienda, ocio) en vez de etiquetas libres para simplificar los reportes de gastos."
+    status: active
+
+  - id: et-bug-calculo-total
+    context: expense-tracker
+    type: episodic
+    title: "Bug en el cálculo del total mensual"
+    content: "El 12 de julio corregí un bug donde el cálculo del gasto total mensual no restaba los reembolsos, inflando el reporte en un 15%."
+    status: active
+
+  - id: et-feature-exportar-csv
+    context: expense-tracker
+    type: episodic
+    title: "Feature de exportar a CSV"
+    content: "Agregué la función de exportar los gastos del mes a CSV para que los usuarios puedan analizarlos en Excel."
+    status: active
+
+  - id: et-costos-hosting
+    context: expense-tracker
+    type: semantic
+    title: "Costos de hosting del proyecto"
+    content: "Los costos de hosting del proyecto Expense Tracker en Vercel y Supabase suman unos $25 al mes."
+    status: active
+
+  - id: et-procedimiento-deploy
+    context: expense-tracker
+    type: procedural
+    title: "Procedimiento de despliegue"
+    content: "Para desplegar Expense Tracker: correr `npm run build`, luego `vercel --prod`, y verificar las migraciones de Supabase antes de confirmar."
+    status: active
+
+  # ---------------------------------------------------------------------
+  # finanzas-personales (dominio)
+  # ---------------------------------------------------------------------
+  - id: fp-resumen-gastos-mes
+    context: finanzas-personales
+    type: episodic
+    title: "Resumen de gastos de julio"
+    content: "En julio gasté un total de 1,850 entre vivienda, comida, transporte y ocio, dentro de mi presupuesto mensual de 2,000."
+    status: active
+
+  - id: fp-presupuesto-mensual
+    context: finanzas-personales
+    type: semantic
+    title: "Presupuesto mensual personal actual"
+    content: "Mi presupuesto mensual personal es de 2,000: 800 vivienda, 500 comida, 300 transporte y 400 ahorro/ocio."
+    status: active
+
+  - id: fp-presupuesto-antiguo
+    context: finanzas-personales
+    type: semantic
+    title: "Presupuesto mensual personal (versión anterior)"
+    content: "Mi presupuesto mensual personal en 2025 era de 1,500 y no incluía una partida separada para ahorro de emergencia."
+    status: superseded
+
+  - id: fp-ahorro-meta
+    context: finanzas-personales
+    type: semantic
+    title: "Meta de ahorro 2026"
+    content: "Mi meta de ahorro para 2026 es acumular 6,000 para un fondo de emergencia, aportando 500 al mes."
+    status: active
+
+  - id: fp-tarjeta-credito-limite
+    context: finanzas-personales
+    type: semantic
+    title: "Límite de tarjeta de crédito"
+    content: "El límite de mi tarjeta de crédito principal es de 3,000 y trato de no usar más del 30% para mantener buen historial."
+    status: active
+
+  - id: fp-gasto-categoria-comida
+    context: finanzas-personales
+    type: episodic
+    title: "Gasto en comida de agosto"
+    content: "En agosto gasté 380 en comida, la mayoría en restaurantes durante los fines de semana."
+    status: active
+
+  - id: fp-decision-app-gastos
+    context: finanzas-personales
+    type: decision
+    title: "Uso de Expense Tracker para finanzas personales"
+    content: "Decidí usar Expense Tracker, mi propia app, en vez de una app de terceros para llevar el control de mis gastos personales."
+    status: active
+
+  # ---------------------------------------------------------------------
+  # cliente-acme (proyecto freelance para el cliente Acme)
+  # ---------------------------------------------------------------------
+  - id: ca-contrato-alcance
+    context: cliente-acme
+    type: semantic
+    title: "Alcance del contrato con Acme"
+    content: "El contrato con Acme cubre el desarrollo de un dashboard interno de inventario, con entregas quincenales."
+    status: active
+
+  - id: ca-presupuesto-proyecto
+    context: cliente-acme
+    type: semantic
+    title: "Presupuesto del proyecto Acme"
+    content: "El presupuesto total aprobado por Acme para el proyecto es de $8,000, pagado en 3 hitos."
+    status: active
+
+  - id: ca-tarifa-hora-antigua
+    context: cliente-acme
+    type: decision
+    title: "Tarifa por hora con Acme (versión anterior)"
+    content: "La tarifa acordada con Acme es de $35 por hora para tareas fuera de alcance."
+    status: superseded
+
+  - id: ca-tarifa-hora-nueva
+    context: cliente-acme
+    type: decision
+    title: "Tarifa por hora con Acme (actualizada)"
+    content: "Desde marzo de 2026 la tarifa con Acme para tareas fuera de alcance subió a $45 por hora."
+    status: active
+
+  - id: ca-migracion-base-datos
+    context: cliente-acme
+    type: episodic
+    title: "Migración de base de datos de Acme"
+    content: "Completé la migración de la base de datos de Acme de MySQL a PostgreSQL sin downtime durante el fin de semana."
+    status: active
+
+  - id: ca-reunion-kickoff
+    context: cliente-acme
+    type: episodic
+    title: "Kickoff del proyecto Acme"
+    content: "En la reunión de kickoff con Acme acordamos entregas cada dos semanas los viernes."
+    status: active
+
+  - id: ca-costos-terceros
+    context: cliente-acme
+    type: semantic
+    title: "Costos de licencias de terceros en el proyecto Acme"
+    content: "Los costos de las licencias de terceros que usa el proyecto de Acme, como la API de geolocalización, los asume el cliente directamente."
+    status: active
+
+  # ---------------------------------------------------------------------
+  # infraestructura (dominio: VPS, despliegues personales)
+  # ---------------------------------------------------------------------
+  - id: inf-vps-proveedor
+    context: infraestructura
+    type: semantic
+    title: "Proveedor del VPS personal"
+    content: "El VPS personal está alojado en Hetzner, con 4 vCPU y 8GB de RAM, usado para side projects y pruebas."
+    status: active
+
+  - id: inf-produccion-os-antiguo
+    context: infraestructura
+    type: semantic
+    title: "Sistema operativo de producción (versión anterior)"
+    content: "El servidor de producción corre Ubuntu 22.04 LTS."
+    status: superseded
+
+  - id: inf-produccion-os-nuevo
+    context: infraestructura
+    type: semantic
+    title: "Sistema operativo de producción (actualizado)"
+    content: "Desde junio de 2026 el servidor de producción corre Ubuntu 24.04 LTS tras la migración."
+    status: active
+
+  - id: inf-backups-procedimiento
+    context: infraestructura
+    type: procedural
+    title: "Procedimiento de backups del VPS"
+    content: "Los backups del VPS corren cada noche a las 3am con un script de cron que sube los dumps a un bucket de Backblaze B2."
+    status: active
+
+  - id: inf-decision-docker
+    context: infraestructura
+    type: decision
+    title: "Migrar servicios del VPS a Docker"
+    content: "Decidí migrar todos los servicios del VPS a contenedores Docker para simplificar los despliegues."
+    status: active
+
+  - id: inf-incidente-caida
+    context: infraestructura
+    type: episodic
+    title: "Caída del VPS por disco lleno"
+    content: "El 5 de julio el VPS se cayó por 40 minutos debido a que el disco se llenó con logs sin rotar; ya configuré logrotate para evitarlo."
+    status: active
+
+  - id: inf-dns-cloudflare
+    context: infraestructura
+    type: semantic
+    title: "Gestión de DNS con Cloudflare"
+    content: "El DNS de todos mis dominios personales y de clientes está gestionado a través de Cloudflare."
+    status: active
+
+  # ---------------------------------------------------------------------
+  # salud (dominio personal)
+  # ---------------------------------------------------------------------
+  - id: sa-rutina-ejercicio
+    context: salud
+    type: semantic
+    title: "Rutina de ejercicio actual"
+    content: "Entreno pesas 4 veces por semana en las mañanas, siguiendo una rutina de fuerza tipo push/pull/legs."
+    status: active
+
+  - id: sa-alergia-medicamento
+    context: salud
+    type: semantic
+    title: "Alergia a la penicilina"
+    content: "Soy alérgico a la penicilina; en su lugar los médicos me recetan azitromicina si necesito un antibiótico."
+    status: active
+
+  - id: sa-chequeo-anual
+    context: salud
+    type: episodic
+    title: "Chequeo médico anual"
+    content: "En mi chequeo anual de mayo el médico confirmó que el colesterol bajó gracias al cambio de dieta."
+    status: active
+
+  - id: sa-meta-peso
+    context: salud
+    type: decision
+    title: "Meta de peso para fin de año"
+    content: "Mi meta es bajar 5kg antes de fin de año combinando dieta y cardio tres veces por semana."
+    status: active
+
+  - id: sa-sueno-habito
+    context: salud
+    type: procedural
+    title: "Hábitos para dormir mejor"
+    content: "Para dormir mejor evito pantallas después de las 11pm y tomo melatonina solo si viajo con jet lag."
+    status: active
+
+  - id: sa-lesion-espalda
+    context: salud
+    type: episodic
+    title: "Lesión leve en la espalda baja"
+    content: "En abril tuve una lesión leve en la espalda baja por mala postura trabajando muchas horas seguidas; ahora uso silla ergonómica."
+    status: active
+
+  # ---------------------------------------------------------------------
+  # aprendizaje (dominio: cursos, lecturas)
+  # ---------------------------------------------------------------------
+  - id: ap-curso-rust
+    context: aprendizaje
+    type: episodic
+    title: "Curso de Rust en Udemy"
+    content: "Estoy tomando un curso de Rust en Udemy para mejorar mis habilidades en programación de sistemas."
+    status: active
+
+  - id: ap-libro-diseno-sistemas
+    context: aprendizaje
+    type: episodic
+    title: "Lectura de Designing Data-Intensive Applications"
+    content: "Terminé de leer 'Designing Data-Intensive Applications' y me sirvió para entender mejor las bases de datos distribuidas."
+    status: active
+
+  - id: ap-meta-certificacion
+    context: aprendizaje
+    type: decision
+    title: "Meta de certificación AWS"
+    content: "Decidí sacar la certificación de AWS Solutions Architect Associate este año para reforzar mi perfil freelance."
+    status: active
+
+  - id: ap-podcast-favorito
+    context: aprendizaje
+    type: semantic
+    title: "Podcast favorito de tecnología"
+    content: "Mi podcast favorito de tecnología es Syntax.fm, lo escucho mientras hago ejercicio."
+    status: active
+
+  - id: ap-nota-charla-conferencia
+    context: aprendizaje
+    type: episodic
+    title: "Nota de charla sobre IA generativa"
+    content: "En una charla sobre IA generativa aprendí sobre RAG y cómo mejora la precisión de los agentes con bases de conocimiento externas."
+    status: active
+
+  - id: ap-habito-lectura
+    context: aprendizaje
+    type: procedural
+    title: "Hábito de lectura nocturna"
+    content: "Leo al menos 20 minutos cada noche antes de dormir, alternando entre libros técnicos y ficción."
+    status: active

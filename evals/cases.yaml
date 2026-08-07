@@ -1,0 +1,235 @@
+# Casos de evaluación de retrieval para KnowledgeOS.
+#
+# Se ejecutan contra el corpus de evals/memories.yaml. Cada caso define una query en
+# español, el conjunto de memorias que deberían aparecer en el top-5 (memorias_relevantes),
+# y el conjunto de memorias "trampa" que NO deberían aparecer porque pertenecen a un
+# contexto distinto al de la query (memorias_trampa). El harness calcula precision@5,
+# recall@5 y si alguna memoria trampa contaminó el top-5.
+#
+# Categorías:
+#   directo   - una sola memoria relevante, sin ambigüedad de vocabulario. memorias_trampa
+#               suele ir vacío.
+#   ambiguo   - la query comparte vocabulario con memorias de >=2 contextos distintos.
+#               memorias_trampa lista esas memorias de contexto equivocado.
+#   temporal  - la respuesta correcta es la memoria activa vigente; la versión
+#               "superseded" del mismo hecho es la trampa.
+
+cases:
+  # =======================================================================
+  # DIRECTOS (12)
+  # =======================================================================
+  - id: d-001
+    categoria: directo
+    query: "¿Qué stack tecnológico usa el proyecto Expense Tracker?"
+    memorias_relevantes: [et-stack-tecnologico]
+    memorias_trampa: []
+    contexto_esperado: expense-tracker
+
+  - id: d-002
+    categoria: directo
+    query: "¿Cuál es mi rutina de ejercicio actual?"
+    memorias_relevantes: [sa-rutina-ejercicio]
+    memorias_trampa: []
+    contexto_esperado: salud
+
+  - id: d-003
+    categoria: directo
+    query: "¿A qué medicamento soy alérgico?"
+    memorias_relevantes: [sa-alergia-medicamento]
+    memorias_trampa: []
+    contexto_esperado: salud
+
+  - id: d-004
+    categoria: directo
+    query: "¿En qué proveedor está alojado mi VPS personal?"
+    memorias_relevantes: [inf-vps-proveedor]
+    memorias_trampa: []
+    contexto_esperado: infraestructura
+
+  - id: d-005
+    categoria: directo
+    query: "¿Qué curso estoy tomando en Udemy?"
+    memorias_relevantes: [ap-curso-rust]
+    memorias_trampa: []
+    contexto_esperado: aprendizaje
+
+  - id: d-006
+    categoria: directo
+    query: "¿Cómo funcionan los backups del VPS?"
+    memorias_relevantes: [inf-backups-procedimiento]
+    memorias_trampa: []
+    contexto_esperado: infraestructura
+
+  - id: d-007
+    categoria: directo
+    query: "¿Qué alcance cubre el contrato firmado con Acme?"
+    memorias_relevantes: [ca-contrato-alcance]
+    memorias_trampa: []
+    contexto_esperado: cliente-acme
+
+  - id: d-008
+    categoria: directo
+    query: "¿Cuál es mi meta de ahorro para 2026?"
+    memorias_relevantes: [fp-ahorro-meta]
+    memorias_trampa: []
+    contexto_esperado: finanzas-personales
+
+  - id: d-009
+    categoria: directo
+    query: "¿Qué libro sobre sistemas distribuidos terminé de leer?"
+    memorias_relevantes: [ap-libro-diseno-sistemas]
+    memorias_trampa: []
+    contexto_esperado: aprendizaje
+
+  - id: d-010
+    categoria: directo
+    query: "¿Qué pasó con el VPS el 5 de julio?"
+    memorias_relevantes: [inf-incidente-caida]
+    memorias_trampa: []
+    contexto_esperado: infraestructura
+
+  - id: d-011
+    categoria: directo
+    query: "¿Qué bug de Expense Tracker corregí el 12 de julio?"
+    memorias_relevantes: [et-bug-calculo-total]
+    memorias_trampa: []
+    contexto_esperado: expense-tracker
+
+  - id: d-012
+    categoria: directo
+    query: "¿Qué acordamos en la reunión de kickoff con Acme?"
+    memorias_relevantes: [ca-reunion-kickoff]
+    memorias_trampa: []
+    contexto_esperado: cliente-acme
+
+  # =======================================================================
+  # AMBIGUOS (12) — colisión de vocabulario entre contextos
+  # =======================================================================
+  - id: amb-001
+    categoria: ambiguo
+    query: "¿Cuánto gasté este mes?"
+    memorias_relevantes: [fp-resumen-gastos-mes]
+    memorias_trampa: [et-modelo-datos-gastos, et-costos-hosting]
+    contexto_esperado: finanzas-personales
+
+  - id: amb-002
+    categoria: ambiguo
+    query: "¿Cuál es el presupuesto del proyecto con Acme?"
+    memorias_relevantes: [ca-presupuesto-proyecto]
+    memorias_trampa: [fp-presupuesto-mensual, fp-presupuesto-antiguo]
+    contexto_esperado: cliente-acme
+
+  - id: amb-003
+    categoria: ambiguo
+    query: "¿Cuál es mi presupuesto mensual actual?"
+    memorias_relevantes: [fp-presupuesto-mensual]
+    memorias_trampa: [ca-presupuesto-proyecto]
+    contexto_esperado: finanzas-personales
+
+  - id: amb-004
+    categoria: ambiguo
+    query: "¿Qué migración hice para el cliente Acme?"
+    memorias_relevantes: [ca-migracion-base-datos]
+    memorias_trampa: [inf-produccion-os-nuevo, inf-decision-docker]
+    contexto_esperado: cliente-acme
+
+  - id: amb-005
+    categoria: ambiguo
+    query: "¿A qué versión migré el servidor de producción?"
+    memorias_relevantes: [inf-produccion-os-nuevo]
+    memorias_trampa: [ca-migracion-base-datos]
+    contexto_esperado: infraestructura
+
+  - id: amb-006
+    categoria: ambiguo
+    query: "¿Qué decidí migrar recientemente en mi infraestructura personal?"
+    memorias_relevantes: [inf-decision-docker]
+    memorias_trampa: [ca-migracion-base-datos]
+    contexto_esperado: infraestructura
+
+  - id: amb-007
+    categoria: ambiguo
+    query: "¿Cuánto pago al mes en costos de hosting o servidores?"
+    memorias_relevantes: [et-costos-hosting]
+    memorias_trampa: [inf-vps-proveedor, ca-costos-terceros]
+    contexto_esperado: expense-tracker
+
+  - id: amb-008
+    categoria: ambiguo
+    query: "¿A quién le corresponden los costos de las licencias externas del proyecto de Acme?"
+    memorias_relevantes: [ca-costos-terceros]
+    memorias_trampa: [et-costos-hosting]
+    contexto_esperado: cliente-acme
+
+  - id: amb-009
+    categoria: ambiguo
+    query: "¿Qué app uso para controlar mis gastos personales?"
+    memorias_relevantes: [fp-decision-app-gastos]
+    memorias_trampa: [et-stack-tecnologico]
+    contexto_esperado: finanzas-personales
+
+  - id: amb-010
+    categoria: ambiguo
+    query: "¿Cómo se calculan los gastos totales dentro de la app?"
+    memorias_relevantes: [et-modelo-datos-gastos]
+    memorias_trampa: [fp-resumen-gastos-mes, fp-gasto-categoria-comida]
+    contexto_esperado: expense-tracker
+
+  - id: amb-011
+    categoria: ambiguo
+    query: "¿Cuánto puedo gastar en comida este mes según mi presupuesto?"
+    memorias_relevantes: [fp-presupuesto-mensual]
+    memorias_trampa: [ca-presupuesto-proyecto]
+    contexto_esperado: finanzas-personales
+
+  - id: amb-012
+    categoria: ambiguo
+    query: "¿Dónde está alojado el servidor que uso para mis proyectos?"
+    memorias_relevantes: [inf-vps-proveedor]
+    memorias_trampa: [et-stack-tecnologico]
+    contexto_esperado: infraestructura
+
+  # =======================================================================
+  # TEMPORALES (6) — activa vs. superseded
+  # =======================================================================
+  - id: tmp-001
+    categoria: temporal
+    query: "¿Qué sistema operativo corre actualmente en el servidor de producción?"
+    memorias_relevantes: [inf-produccion-os-nuevo]
+    memorias_trampa: [inf-produccion-os-antiguo]
+    contexto_esperado: infraestructura
+
+  - id: tmp-002
+    categoria: temporal
+    query: "¿Qué versión de Ubuntu uso hoy en producción?"
+    memorias_relevantes: [inf-produccion-os-nuevo]
+    memorias_trampa: [inf-produccion-os-antiguo]
+    contexto_esperado: infraestructura
+
+  - id: tmp-003
+    categoria: temporal
+    query: "¿Cuánto cobro por hora a Acme por trabajo fuera de alcance?"
+    memorias_relevantes: [ca-tarifa-hora-nueva]
+    memorias_trampa: [ca-tarifa-hora-antigua]
+    contexto_esperado: cliente-acme
+
+  - id: tmp-004
+    categoria: temporal
+    query: "¿Cuál es mi tarifa vigente con el cliente Acme?"
+    memorias_relevantes: [ca-tarifa-hora-nueva]
+    memorias_trampa: [ca-tarifa-hora-antigua]
+    contexto_esperado: cliente-acme
+
+  - id: tmp-005
+    categoria: temporal
+    query: "¿Cuál es mi presupuesto mensual personal actual?"
+    memorias_relevantes: [fp-presupuesto-mensual]
+    memorias_trampa: [fp-presupuesto-antiguo]
+    contexto_esperado: finanzas-personales
+
+  - id: tmp-006
+    categoria: temporal
+    query: "¿Cuánto tengo asignado hoy en mi presupuesto para vivienda, comida y transporte?"
+    memorias_relevantes: [fp-presupuesto-mensual]
+    memorias_trampa: [fp-presupuesto-antiguo]
+    contexto_esperado: finanzas-personales
