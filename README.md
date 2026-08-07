@@ -120,10 +120,57 @@ Umbrales configurables por entorno (nombres `CONTEXT_ENGINE_*`, ver
 `src/knowledgeos/config.py` para la lista completa y los defaults calibrados contra
 `evals/`).
 
-`GET /stats` expone `disambiguations` (total, cuántas se resolvieron `auto` vs
-`agent`) y `preferences_learned` (términos aprendidos por contexto) -- es la forma más
-directa de ver al sistema aprender con el uso; el MCP server lo expone como
-`memory_stats()`.
+`GET /stats` expone `disambiguations` (total, cuántas se resolvieron `auto`, `agent`,
+`user` o `local_model` -- Fase 4, ver abajo) y `preferences_learned` (términos
+aprendidos por contexto) -- es la forma más directa de ver al sistema aprender con el
+uso; el MCP server lo expone como `memory_stats()`, y `knowledgeos stats` (CLI) lo
+formatea para consola.
+
+## Clasificador local opcional (Fase 4)
+
+**OFF por defecto.** plan_v2.md SS8 (Fase 4) es explícito: no tiene sentido entrenar
+ni activar un modelo local de desambiguación mientras no exista un dataset real de
+ambigüedades resueltas -- hoy no existe. Lo que esta fase construye no es el modelo,
+es el **punto de enchufe**: la interfaz `AmbiguityResolver`
+(`src/knowledgeos/context_engine.py`) que `decide_scope` invoca *después* de que el
+scoring determinista de la Fase 2 ya decidió que un caso es ambiguo, para intentar
+resolverlo localmente en vez de devolverlo al agente que llama.
+
+Dos implementaciones:
+
+- **`NullResolver`** (default, `CONTEXT_ENGINE_RESOLVER` sin definir o `"none"`):
+  siempre devuelve `None` -- el flujo de hoy (ambigüedad al agente, Fase 2) queda
+  **exactamente igual**, byte por byte, mientras esto no se active a propósito.
+- **`OllamaResolver`** (`CONTEXT_ENGINE_RESOLVER=ollama`): llama a la API de Ollama
+  (`POST {OLLAMA_URL}/api/generate`, default `http://localhost:11434`, modelo
+  `OLLAMA_MODEL`, default `qwen2.5:1.5b`) con un prompt corto que lista los
+  candidatos (slug + descripción) y pide un slug de respuesta. Timeout de 2s.
+  Cualquier fallo -- Ollama no está corriendo, timeout, respuesta no parseable, o un
+  slug que no está entre los candidatos -- cae en silencio a `None` (mismo
+  comportamiento que `NullResolver`): **esto nunca debe poder romper una búsqueda**.
+  No instala ni configura Ollama por ti; solo trae el cliente con este fallback.
+
+Cuando el resolver sí devuelve un slug válido, la ambigüedad se resuelve como si el
+propio Context Engine hubiera dominado desde el principio (`scope_decision.mode ==
+"auto"`, resultados ya filtrados a ese contexto), pero queda registrada en
+`disambiguation_log` con `resolved_by = 'local_model'` -- distinguible en `GET /stats`
+/ `knowledgeos stats` de las resoluciones `auto` (scoring determinista) y `agent`
+(agente/MCP eligiendo con el contexto de la conversación).
+
+**Cuándo activarlo en serio** (condición del plan, plan_v2.md SS8): (a) hay **≥ ~500
+desambiguaciones registradas** -- usa `knowledgeos export-disambiguations` para ver
+cuántas hay y exportar el dataset -- **y** (b) hay una razón medida para hacerlo
+(latencia, costo, o una política de privacidad estricta de "ni la query sale del
+VPS"). Sin ambas condiciones, esto es infraestructura sin usar a propósito -- earn
+your complexity (plan_v2.md SS4.2).
+
+Variables de entorno (`src/knowledgeos/config.py`):
+
+| Variable | Default | Uso |
+|---|---|---|
+| `CONTEXT_ENGINE_RESOLVER` | `none` | `none` (NullResolver) \| `ollama` (OllamaResolver) |
+| `OLLAMA_URL` | `http://localhost:11434` | base URL de la API de Ollama |
+| `OLLAMA_MODEL` | `qwen2.5:1.5b` | modelo a pedirle a Ollama |
 
 ## Relaciones y timeline (Fase 3)
 
@@ -289,6 +336,89 @@ Si `knowledgeos-mcp` no está en el `PATH` que ve Claude Desktop, usa la ruta ab
 al ejecutable del venv, p.ej. en Windows:
 `"command": "D:\\ruta\\al\\repo\\.venv\\Scripts\\knowledgeos-mcp.exe"`.
 
+## CLI
+
+`src/knowledgeos/cli.py` (entry point de consola `knowledgeos`, instalado por
+`pip install -e ".[dev]"`) es un cliente delgado de la API HTTP -- igual que el
+servidor MCP, no tiene lógica de negocio propia (salvo la orquestación del importador
+de Markdown, ver abajo). Lee `.env` (vía `knowledgeos.config.get_settings`) para el
+token; por defecto asume la API en `http://localhost:<APP_PORT>` y puede
+sobreescribirse con las mismas variables que el servidor MCP:
+`KNOWLEDGEOS_API_URL` / `KNOWLEDGEOS_API_TOKEN`. `backup`/`restore` son la excepción:
+hablan directo con `docker compose` (Postgres solo expone su puerto en `localhost`, y
+un dump no tiene sentido como llamada HTTP).
+
+```bash
+knowledgeos --help
+
+# dataset de disambiguation_log para un futuro fine-tuning local (Fase 4)
+knowledgeos export-disambiguations --output disambiguations.jsonl
+knowledgeos export-disambiguations --resolved-only
+
+# estadisticas del sistema (igual que GET /stats), formateadas para consola
+knowledgeos stats
+
+# backup / restore (pg_dump / psql via docker compose)
+knowledgeos backup --output backups/
+knowledgeos restore backups/knowledgeos-20260807-010359.sql   # pide confirmacion
+knowledgeos restore backups/knowledgeos-20260807-010359.sql --yes   # sin confirmar
+```
+
+`export-disambiguations` siempre imprime cuántos ejemplos hay frente al umbral del
+plan (`~500`, ver "Clasificador local opcional (Fase 4)" arriba) para que sea fácil
+saber si ya vale la pena considerar el fine-tuning.
+
+### Importar memorias existentes (Fase 5)
+
+`knowledgeos import-markdown` es el **primer conector de Fase 5** (plan_v2.md SS8):
+importa archivos Markdown de memoria ya existentes (`MEMORY.md`/`CLAUDE.md` estilo
+Claude Code, o notas sueltas) como memorias de KnowledgeOS. Se eligió como conector #1
+a propósito porque resuelve la migración desde el statu quo del usuario, no porque sea
+técnicamente lo más interesante (plan_v2.md SS11: "sin dogfooding no hay dataset").
+
+El parsing (`src/knowledgeos/markdown_importer.py`) reconoce tres formatos, en este
+orden:
+
+1. **Frontmatter YAML estilo memoria de Claude Code** (`name`, `description`,
+   `metadata.type`) -> una memoria por archivo. `description` se usa como título,
+   el cuerpo (sin el frontmatter) como contenido. Mapeo de `metadata.type`:
+   `user`/`feedback`/`reference` -> `semantic`; `project` -> `semantic` con
+   `importance=0.7`.
+2. **Índice `MEMORY.md`** (líneas `- [título](archivo.md) — hook`): si el archivo
+   enlazado existe, se sigue el link y se parsea recursivamente (con el mismo
+   dispatch: puede a su vez tener frontmatter); si no existe, el bullet mismo se
+   vuelve una memoria pequeña (`title`, `content=hook`).
+3. **Markdown genérico** (fallback): se divide por headings de nivel 1-2; cada
+   sección con >= 2 líneas de contenido real es una memoria (`title`=heading,
+   `content`=cuerpo); las secciones más chicas se fusionan con la anterior.
+
+En cualquiera de los tres casos, bloques de código de más de 30 líneas se truncan a
+`[código truncado]` antes de procesar -- una memoria es un resumen destilado, no un
+volcado de código fuente (plan_v2.md SS4.1, "memory over conversation").
+
+```bash
+# vista previa: que se importaria, sin escribir nada
+knowledgeos import-markdown ./mis-notas --context notas-personales --dry-run
+
+# import real; crea el contexto si no existe
+knowledgeos import-markdown ./mis-notas \
+  --context notas-personales --create-context \
+  --context-description "Notas migradas desde Markdown"
+
+# un solo archivo, tipo forzado
+knowledgeos import-markdown ./MEMORY.md --context notas-personales --type semantic
+```
+
+Antes de insertar cada memoria, el importador busca por similitud (`GET
+/memories/search` acotado al contexto destino) usando el propio contenido como query;
+si el resultado top tiene un score de RRF alto **y** el mismo título exacto, la salta
+y la reporta como "duplicada" en vez de reinsertarla -- así una segunda corrida sobre
+el mismo directorio (o un `MEMORY.md` que enlaza archivos que el glob recursivo ya
+recorrió por separado) no duplica memorias. Credenciales detectadas por la API
+(`POST /memories` -> 422, ver `src/knowledgeos/security.py`) se capturan y reportan
+como "rechazada" sin interrumpir el resto del import. Al final imprime un resumen:
+`N importadas, M duplicadas (saltadas), K rechazadas`.
+
 ## Evaluación
 
 La suite de evaluación de retrieval (`evals/`, ver `evals/README.md` para el detalle
@@ -349,6 +479,13 @@ en sus búsquedas y `memory_edges`/`/timeline` son endpoints nuevos que el corpu
 exactamente los mismos números (`scope=auto`: 0% contaminación en los 3 categorías,
 100% recall; `scope=all` control: 25% contaminación en ambiguo, igual que antes).
 
+**Fase 4/5 (resolver opcional + importador de Markdown) re-verificada sin regresión:**
+`CONTEXT_ENGINE_RESOLVER` no está seteado en el entorno de evaluación (`NullResolver`,
+default), así que el hook de la Fase 4 es un no-op garantizado; `import-markdown` es
+un comando de CLI que el harness nunca invoca. Se re-corrió la tabla de arriba
+(`scope=auto`) tras ambas tareas y dio los mismos números: 0% contaminación en las 3
+categorías, 100% recall.
+
 ## Estructura
 
 ```
@@ -363,14 +500,18 @@ src/knowledgeos/
     embeddings.py             # EmbeddingProvider (fastembed local, con fallback a sentence-transformers)
     security.py                # deteccion de credenciales en remember()
     retrieval.py               # busqueda hibrida (vector + full-text) fusionada con RRF
-    context_engine.py          # Context Engine (Fase 2): scoring, umbrales, aprendizaje de preferencias
+    context_engine.py          # Context Engine (Fase 2) + AmbiguityResolver/NullResolver/OllamaResolver (Fase 4)
     graph.py                   # Fase 3: aristas (memory_edges), related() 1-hop, timeline, expand de search
     api.py                     # FastAPI app (auth, CRUD, search con scoping, disambiguations, stats, edges, timeline)
+    markdown_importer.py       # Fase 5: parsing puro (frontmatter / indice MEMORY.md / generico por headings)
+    cli.py                     # entry point `knowledgeos`: export-disambiguations, stats, import-markdown, backup/restore
     main.py                    # uvicorn entrypoint
     mcp_server.py              # servidor MCP (FastMCP, stdio) - adaptador delgado sobre la API
 evals/
     harness/adapters/knowledgeos_adapter.py   # adaptador del harness contra la API real
 tests/
     test_context_engine.py    # unitarios: dominancia, empate->ambiguo, boost por preferencias
+    test_ambiguity_resolver.py # Fase 4: NullResolver, OllamaResolver mockeado (valida/invalida/timeout)
+    test_markdown_importer.py # Fase 5: frontmatter, indice MEMORY.md, genérico por headings (fixtures en tests/fixtures/)
     test_graph.py              # Fase 3: vocabulario (unitario) + aristas/related/timeline (integracion)
 ```

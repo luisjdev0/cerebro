@@ -688,7 +688,7 @@ def memory_stats() -> dict[str, Any]:
     Returns:
         dict con `stats`: {
           memories_by_context: [{context, status, count}, ...],
-          disambiguations: {total, auto, agent, user, unresolved},
+          disambiguations: {total, auto, agent, user, local_model, unresolved},
           preferences_learned: [{context, term, weight}, ...] (top 100 por peso),
         }, o `error` si algo falló.
     """

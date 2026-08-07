@@ -155,6 +155,7 @@ class DisambiguationStats(BaseModel):
     auto: int
     agent: int
     user: int
+    local_model: int  # Fase 4 (plan_v2.md SS8), OFF por defecto - ver README
     unresolved: int
 
 
@@ -168,6 +169,14 @@ class StatsOut(BaseModel):
     memories_by_context: list[ContextMemoryCount]
     disambiguations: DisambiguationStats
     preferences_learned: list[PreferenceOut]
+
+
+class DisambiguationExportRow(BaseModel):
+    query: str
+    candidates: list[dict[str, Any]]
+    chosen_context: str | None
+    resolved_by: str | None
+    created_at: datetime
 
 
 # --------------------------------------------------------------------------- Fase 3: grafo ligero
@@ -582,6 +591,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 count(*) FILTER (WHERE resolved_by = 'auto') AS auto,
                 count(*) FILTER (WHERE resolved_by = 'agent') AS agent,
                 count(*) FILTER (WHERE resolved_by = 'user') AS "user",
+                count(*) FILTER (WHERE resolved_by = 'local_model') AS local_model,
                 count(*) FILTER (WHERE resolved_by IS NULL) AS unresolved
             FROM disambiguation_log
             """
@@ -606,6 +616,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for r in preference_rows
             ],
         )
+
+    @app.get(
+        "/disambiguations/export",
+        response_model=list[DisambiguationExportRow],
+        dependencies=[Depends(require_auth)],
+    )
+    async def export_disambiguations(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        resolved_only: bool = False,
+    ):
+        """Vuelca `disambiguation_log` completo (o solo lo resuelto con
+        `resolved_only=true`) como {query, candidates, chosen_context, resolved_by,
+        created_at} -- el dataset crudo que `knowledgeos export-disambiguations`
+        (CLI) convierte a JSONL para un futuro fine-tuning local (Fase 4,
+        plan_v2.md SS8). No filtra por agente ni pagina: es un export completo,
+        pensado para correr una vez que hay volumen real.
+        """
+        import json
+
+        where = "WHERE chosen_context IS NOT NULL" if resolved_only else ""
+        rows = await pool.fetch(
+            f"""
+            SELECT query, candidates, chosen_context, resolved_by, created_at
+            FROM disambiguation_log
+            {where}
+            ORDER BY created_at
+            """
+        )
+        out = []
+        for r in rows:
+            d = dict(r)
+            raw_candidates = d["candidates"]
+            d["candidates"] = json.loads(raw_candidates) if isinstance(raw_candidates, str) else raw_candidates
+            out.append(d)
+        return out
 
     @app.patch("/memories/{memory_id}", response_model=MemoryOut, dependencies=[Depends(require_auth)])
     async def update_memory(

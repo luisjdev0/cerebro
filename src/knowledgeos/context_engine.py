@@ -26,17 +26,22 @@ next time - the "learning" half of the Context Engine.
 
 from __future__ import annotations
 
+import abc
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
 import asyncpg
+import httpx
 
 from knowledgeos.config import Settings
 from knowledgeos.embeddings import EmbeddingProvider
 from knowledgeos.retrieval import UnknownContextError, hybrid_search
+
+logger = logging.getLogger("knowledgeos.context_engine")
 
 # ----------------------------------------------------------------------------- tokens
 
@@ -91,6 +96,116 @@ class ContextCandidate:
             "description": self.description,
             "score": round(self.score, 4),
         }
+
+
+# ----------------------------------------------------------------- Fase 4: resolver
+# Punto de enchufe para un clasificador local opcional (plan_v2.md SS8, Fase 4). El
+# plan es honesto: hoy NO existe el dataset (~500 desambiguaciones reales) para
+# entrenar/evaluar nada, asi que esto es solo la INFRAESTRUCTURA -- el resolver por
+# defecto (NullResolver) no cambia el comportamiento actual en absoluto: sigue
+# devolviendo la ambiguedad al agente que llama (Fase 2, SS7). Ver README "Clasificador
+# local opcional" para la condicion de activacion en serio.
+
+
+class AmbiguityResolver(abc.ABC):
+    """Interfaz para resolver una ambiguedad de contexto sin devolverla al agente que
+    llama. `decide_scope` la invoca SOLO cuando el scoring determinista ya decidio que
+    el caso es ambiguo (nunca reemplaza el scoring barato de la Fase 2, solo actua
+    despues de que este ya fallo en decidir)."""
+
+    @abc.abstractmethod
+    async def resolve(self, query: str, candidates: list[ContextCandidate]) -> str | None:
+        """Devuelve el slug del candidato elegido, o None si no hay respuesta
+        confiable (en cuyo caso el flujo cae de vuelta a `mode == "ambiguous"`, sin
+        ningun cambio respecto a hoy)."""
+
+
+class NullResolver(AmbiguityResolver):
+    """Default. Nunca resuelve nada -> el flujo actual (ambiguedad al agente) queda
+    exactamente igual. Activar cualquier otro resolver es opt-in explicito via
+    CONTEXT_ENGINE_RESOLVER."""
+
+    async def resolve(self, query: str, candidates: list[ContextCandidate]) -> str | None:
+        return None
+
+
+class OllamaResolver(AmbiguityResolver):
+    """OPCIONAL: clasificador local vía Ollama (`/api/generate`), activado solo con
+    `CONTEXT_ENGINE_RESOLVER=ollama` (+ `OLLAMA_URL`, `OLLAMA_MODEL`).
+
+    No es un fine-tune (eso es exactamente lo que la Fase 4 condiciona a tener ~500
+    ejemplos reales, ver plan_v2.md SS8) -- es un modelo generico con un prompt corto
+    de clasificacion. Por eso nunca debe tratarse como mas confiable que devolver la
+    ambiguedad al agente: cualquier fallo (Ollama caido, timeout, respuesta no
+    parseable, slug que no está entre los candidatos) cae en silencio a `None`, que es
+    exactamente lo que hace NullResolver -- esto JAMAS debe poder romper una búsqueda.
+    """
+
+    def __init__(self, url: str, model: str, timeout: float = 2.0) -> None:
+        self._url = url.rstrip("/")
+        self._model = model
+        self._timeout = timeout
+
+    async def resolve(self, query: str, candidates: list[ContextCandidate]) -> str | None:
+        if not candidates:
+            return None
+        prompt = self._build_prompt(query, candidates)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._url}/api/generate",
+                    json={"model": self._model, "prompt": prompt, "stream": False},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:  # noqa: BLE001 - nunca romper la busqueda por un modelo local
+            logger.debug("OllamaResolver: fallo la llamada a Ollama, fallback a None", exc_info=True)
+            return None
+
+        raw_response = data.get("response") if isinstance(data, dict) else None
+        if not isinstance(raw_response, str):
+            return None
+        return self._parse_slug(raw_response, candidates)
+
+    @staticmethod
+    def _build_prompt(query: str, candidates: list[ContextCandidate]) -> str:
+        lines = [
+            "Elige a que contexto pertenece la consulta de un usuario. Responde SOLO "
+            "con el slug exacto de un contexto de la lista, sin explicacion ni "
+            "puntuacion. Si ninguno encaja con confianza, responde exactamente: none",
+            "",
+            f'Consulta: "{query}"',
+            "",
+            "Contextos posibles:",
+        ]
+        for c in candidates:
+            lines.append(f"- {c.slug}: {c.description or c.name}")
+        lines.append("")
+        lines.append("Slug elegido:")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_slug(raw: str, candidates: list[ContextCandidate]) -> str | None:
+        cleaned = raw.strip().strip(".").strip('"').strip("'").lower()
+        if not cleaned or cleaned == "none":
+            return None
+        by_slug = {c.slug.lower(): c.slug for c in candidates}
+        if cleaned in by_slug:
+            return by_slug[cleaned]
+        # tolera una respuesta corta que solo menciona el slug dentro de mas texto
+        for slug_lower, slug in by_slug.items():
+            if slug_lower in cleaned:
+                return slug
+        return None
+
+
+def build_ambiguity_resolver(settings: Settings) -> AmbiguityResolver:
+    """Factory leída por `decide_scope`. `settings.context_engine_resolver` es
+    `"none"` por defecto (NullResolver) -- ver README, "Clasificador local opcional"."""
+    kind = (settings.context_engine_resolver or "none").strip().lower()
+    if kind == "ollama":
+        return OllamaResolver(url=settings.ollama_url, model=settings.ollama_model)
+    return NullResolver()
 
 
 @dataclass
@@ -253,9 +368,14 @@ async def decide_scope(
     settings: Settings,
     agent: str,
     limit: int,
+    resolver: AmbiguityResolver | None = None,
 ) -> ScopeDecision:
     """Full decision: preliminary retrieval -> score -> threshold -> log -> (ambiguous:
-    fetch per-candidate evidence). Writes one row to `disambiguation_log` always.
+    fetch per-candidate evidence, then optionally hand off to `resolver` - Fase 4,
+    OFF by default). Writes one row to `disambiguation_log` always.
+
+    `resolver` defaults to `build_ambiguity_resolver(settings)` when omitted (mainly
+    so callers/tests can inject a fake one directly).
     """
     preliminary = await hybrid_search(
         pool,
@@ -348,6 +468,32 @@ async def decide_scope(
         resolved_by=None,
         agent=agent,
     )
+
+    # Fase 4 (OFF por defecto): solo se llega aqui si el scoring determinista de la
+    # Fase 2 ya decidio que es ambiguo. resolver es NullResolver a menos que
+    # CONTEXT_ENGINE_RESOLVER=ollama este seteado -- en ese caso siempre devuelve None
+    # y este bloque es un no-op exacto (mismo comportamiento que sin esta tarea).
+    resolver = resolver if resolver is not None else build_ambiguity_resolver(settings)
+    if not isinstance(resolver, NullResolver):
+        try:
+            resolved_slug = await resolver.resolve(query, candidates)
+        except Exception:  # noqa: BLE001 - un resolver roto nunca debe tumbar la busqueda
+            logger.warning("ambiguity resolver raised, falling back to ambiguous", exc_info=True)
+            resolved_slug = None
+
+        if resolved_slug is not None and resolved_slug in top_slugs:
+            resolved = await resolve_disambiguation(
+                pool,
+                disambiguation_id=disambiguation_id,
+                context_slug=resolved_slug,
+                resolved_by="local_model",
+                agent=agent,
+            )
+            return ScopeDecision(
+                mode="auto",
+                context=resolved["chosen_context"],
+                disambiguation_id=disambiguation_id,
+            )
 
     return ScopeDecision(
         mode="ambiguous",

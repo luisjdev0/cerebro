@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     # para que el agente decida con evidencia (plan_v2 SS7 punto 3).
     context_engine_results_per_candidate: int = 3
 
+    # --- Fase 4: clasificador local opcional (plan_v2.md SS8, condicionada) -------
+    # OFF por defecto ("none" -> NullResolver, cero cambio de comportamiento). Solo
+    # tiene sentido activarlo en serio cuando se cumplan las dos condiciones del plan:
+    # (a) >= ~500 desambiguaciones registradas (ver `knowledgeos export-disambiguations`)
+    # y (b) una razon medida (latencia/costo/privacidad estricta) - ver README.
+    context_engine_resolver: str = "none"  # "none" | "ollama"
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:1.5b"
+
 
 @lru_cache
 def get_settings() -> Settings:
