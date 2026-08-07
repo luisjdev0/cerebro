@@ -13,11 +13,13 @@ Para añadir un adaptador nuevo:
 
 from __future__ import annotations
 
+from .knowledgeos_adapter import KnowledgeOSAdapter
 from .naive_keyword import NaiveKeywordAdapter
 
 # Nombre usado en `--adapter <nombre>` -> clase del adaptador (no instancia).
 ADAPTERS = {
     "naive": NaiveKeywordAdapter,
+    "knowledgeos": KnowledgeOSAdapter,
 }
 
-__all__ = ["ADAPTERS", "NaiveKeywordAdapter"]
+__all__ = ["ADAPTERS", "NaiveKeywordAdapter", "KnowledgeOSAdapter"]

@@ -1,0 +1,9 @@
+INFO:     Started server process [46028]
+INFO:     Waiting for application startup.
+D:\dev\jobs\luisjdev\cerebro\src\knowledgeos\embeddings.py:41: UserWarning: The model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 now uses mean pooling instead of CLS embedding. In order to preserve the previous behaviour, consider either pinning fastembed version to 0.5.1 or using `add_custom_model` functionality.
+  self._model = TextEmbedding(model_name=model_name)
+2026-08-06 23:40:32,942 INFO knowledgeos.embeddings: using fastembed provider (sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:8743 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:8745 - "GET /memories/search?q=cu%C3%A1nto%20gast%C3%A9%20este%20mes&limit=3 HTTP/1.1" 200 OK

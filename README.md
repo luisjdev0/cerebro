@@ -82,6 +82,86 @@ pytest
 `tests/test_supersedence.py` es de integracion: se salta automaticamente si
 `DATABASE_URL` no es alcanzable (arranca `docker compose up -d` primero).
 
+## Conectar a Claude (servidor MCP)
+
+`src/knowledgeos/mcp_server.py` expone la API como un servidor MCP por stdio (SDK
+oficial `mcp`, `FastMCP`). Es un adaptador delgado: cada tool llama a la API HTTP con
+`httpx`, no hay lógica de negocio propia. Tools disponibles: `memory_search`,
+`memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
+`memory_create_context`.
+
+Tras `pip install -e ".[dev]"` queda instalado el entry point de consola
+`knowledgeos-mcp` (ver `[project.scripts]` en `pyproject.toml`). Requiere que la API
+esté corriendo (`python -m knowledgeos.main`).
+
+Variables de entorno que lee el servidor MCP:
+
+| Variable | Default | Uso |
+|---|---|---|
+| `KNOWLEDGEOS_API_URL` | `http://localhost:8000` | base URL de la API HTTP |
+| `KNOWLEDGEOS_API_TOKEN` | *(vacío)* | debe coincidir con `API_TOKEN` del `.env` de la API |
+| `KNOWLEDGEOS_AGENT_NAME` | `mcp-client` | identidad enviada como `X-Agent-Name` (audit log, `memory.source`) |
+
+### Claude Code
+
+```bash
+claude mcp add knowledgeos --scope user \
+  -e KNOWLEDGEOS_API_URL=http://localhost:8000 \
+  -e KNOWLEDGEOS_API_TOKEN=change-me-dev-token \
+  -e KNOWLEDGEOS_AGENT_NAME=claude-code \
+  -- knowledgeos-mcp
+```
+
+### Claude Desktop
+
+Agrega esto a `claude_desktop_config.json` (menú Claude > Settings > Developer > Edit
+Config):
+
+```json
+{
+  "mcpServers": {
+    "knowledgeos": {
+      "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\knowledgeos-mcp.exe",
+      "env": {
+        "KNOWLEDGEOS_API_URL": "http://localhost:8000",
+        "KNOWLEDGEOS_API_TOKEN": "change-me-dev-token",
+        "KNOWLEDGEOS_AGENT_NAME": "claude-desktop"
+      }
+    }
+  }
+}
+```
+
+Si `knowledgeos-mcp` no está en el `PATH` que ve Claude Desktop, usa la ruta absoluta
+al ejecutable del venv, p.ej. en Windows:
+`"command": "D:\\ruta\\al\\repo\\.venv\\Scripts\\knowledgeos-mcp.exe"`.
+
+## Evaluación
+
+La suite de evaluación de retrieval (`evals/`, ver `evals/README.md` para el detalle
+completo de métricas y corpus) mide precision@k, recall@k y tasa de contaminación
+entre contextos, con un corpus sintético de ~40 memorias en 6 contextos y 30 casos de
+prueba en español.
+
+```bash
+# baseline: overlap de palabras clave, sin nocion de contexto
+python evals/harness/run_eval.py --adapter naive
+
+# KnowledgeOS real, vía la API HTTP (requiere la API corriendo y Postgres arriba)
+python -m knowledgeos.main &   # o en otra terminal
+python evals/harness/run_eval.py --adapter knowledgeos
+```
+
+`evals/harness/adapters/knowledgeos_adapter.py` habla con la API real por HTTP (igual
+que lo haría el servidor MCP): en `setup()` verifica `/health`, crea los contextos del
+corpus que falten y purga memorias de corridas anteriores; `search()` busca **sin**
+pasar `context` a propósito -- la Fase 1 no hace scoping automático (eso es la Fase 2,
+plan_v2.md §7), así que el benchmark mide el retrieval híbrido tal como lo vería hoy
+un agente que aún no sabe a qué contexto pertenece la pregunta.
+
+Lee `evals/README.md` para cómo agregar casos o corpus propios, y `--include-superseded`
+para que la categoría `temporal` sea significativa.
+
 ## Estructura
 
 ```
@@ -96,5 +176,8 @@ src/knowledgeos/
     retrieval.py               # busqueda hibrida (vector + full-text) fusionada con RRF
     api.py                     # FastAPI app (auth, CRUD, audit log)
     main.py                    # uvicorn entrypoint
+    mcp_server.py              # servidor MCP (FastMCP, stdio) - adaptador delgado sobre la API
+evals/
+    harness/adapters/knowledgeos_adapter.py   # adaptador del harness contra la API real
 tests/
 ```
