@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: knowledgeos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: knowledgeos
+      POSTGRES_PASSWORD: knowledgeos
+      POSTGRES_DB: knowledgeos
+    ports:
+      # bind to localhost only - this database is not meant to be reachable from outside the host
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - knowledgeos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledgeos -d knowledgeos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  knowledgeos-pgdata:
