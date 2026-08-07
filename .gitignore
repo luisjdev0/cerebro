@@ -5,3 +5,5 @@ evals/results/
 *.pyc
 src/knowledgeos.egg-info/
 api.log
+api_local.log
+*.log
