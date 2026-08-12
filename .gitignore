@@ -4,7 +4,7 @@ __pycache__/
 .env.production
 evals/results/
 *.pyc
-src/knowledgeos.egg-info/
+*.egg-info/
 api.log
 api_local.log
 *.log

@@ -1,7 +1,13 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
-    container_name: knowledgeos-postgres
+    # Nombre de contenedor actualizado al rebrand, pero el volumen y las credenciales
+    # de abajo (knowledgeos-pgdata, POSTGRES_USER/PASSWORD/DB) se dejan EXACTAMENTE
+    # como estaban a propósito: son datos reales ya persistidos en ese volumen desde
+    # antes del monorepo (packages/cerebro-memory). Renombrarlos aqui no migra los
+    # datos - solo los deja huerfanos (Postgres/Docker no reconoceria el volumen
+    # "nuevo" como el mismo, y un `docker compose up` crearia uno vacio).
+    container_name: cerebro-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: knowledgeos
@@ -20,16 +26,16 @@ services:
 
   # Dockerized API (plan_v2.md SS10). Behind the `full` profile on purpose: plain
   # `docker compose up -d` (default, no --profile flag) still only starts postgres -
-  # the day-to-day dev workflow (`python -m knowledgeos.main` against it) is unchanged.
+  # the day-to-day dev workflow (`python -m cerebro_memory.main` against it) is unchanged.
   # `docker compose --profile full up -d` starts BOTH: postgres + this container.
   api:
     build:
-      context: .
+      context: ./packages/cerebro-memory
       args:
         EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
         EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
-    image: knowledgeos-api
-    container_name: knowledgeos-api
+    image: cerebro-memory-api
+    container_name: cerebro-memory-api
     restart: unless-stopped
     profiles: ["full"]
     depends_on:

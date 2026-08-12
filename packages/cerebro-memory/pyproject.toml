@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cerebro-memory"
+version = "1.0.0"
+description = "cerebro-memory - self-hosted persistent memory service for AI agents (parte del ecosistema cerebro)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "asyncpg>=0.29",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "fastembed>=0.4",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+    "mcp>=1.2.0,<2.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+cerebro-memory-mcp = "cerebro_memory.mcp_server:main"
+cerebro-memory = "cerebro_memory.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
