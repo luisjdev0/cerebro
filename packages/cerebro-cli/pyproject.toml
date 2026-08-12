@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cerebro-cli"
+version = "0.1.0"
+description = "cerebro-cli - CLI unico del ecosistema cerebro (memory, docs, backup/restore, tokens transversales)"
+requires-python = ">=3.11"
+dependencies = [
+    "cerebro-clients",
+    # `cerebro memory import-markdown` reusa el parser puro de cerebro-memory
+    # (cerebro_memory.markdown_importer) - no su mcp_server.py/cli.py, que se
+    # eliminan (ecosistema-cerebro.md SS4/SS14: cerebro-memory queda como servicio
+    # API puro).
+    "cerebro-memory",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+cerebro = "cerebro_cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
