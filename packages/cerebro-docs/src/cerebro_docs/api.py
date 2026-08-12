@@ -19,7 +19,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from cerebro_docs.auth import (
     DuplicateTokenNameError,
@@ -50,13 +50,24 @@ logger = logging.getLogger("cerebro_docs.api")
 # --------------------------------------------------------------------------- models
 
 
-class CategoryCreate(BaseModel):
+class StrictIn(BaseModel):
+    """Base de los modelos de ENTRADA: un campo desconocido es 422, nunca se ignora.
+
+    Sin esto, un typo del cliente (p.ej. mandar `content` en vez de `body` en un
+    parche de seccion) caeria en silencio al default del campo real y podria vaciar
+    contenido - mismo criterio conservador que headings ambiguos: error explicito,
+    nunca adivinar (ecosistema-cerebro.md SS12)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CategoryCreate(StrictIn):
     slug: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1)
     description: str | None = None
 
 
-class CategoryUpdate(BaseModel):
+class CategoryUpdate(StrictIn):
     slug: str | None = Field(default=None, min_length=1, max_length=100)
     name: str | None = Field(default=None, min_length=1)
     description: str | None = None
@@ -77,14 +88,14 @@ class CategoryDeleteOut(BaseModel):
     documents_deleted: int
 
 
-class DocumentCreate(BaseModel):
+class DocumentCreate(StrictIn):
     title: str = Field(min_length=1)
     content: str = Field(min_length=1)
     category: str = Field(min_length=1)
     slug: str | None = None
 
 
-class DocumentReplace(BaseModel):
+class DocumentReplace(StrictIn):
     title: str = Field(min_length=1)
     content: str = Field(min_length=1)
     category: str = Field(min_length=1)
@@ -103,7 +114,7 @@ class DocumentOut(BaseModel):
     score: float | None = None  # solo poblado por GET /documents?q=...
 
 
-class SectionPatchIn(BaseModel):
+class SectionPatchIn(StrictIn):
     heading: str = Field(min_length=1)
     operation: Operation
     body: str = ""
@@ -111,7 +122,7 @@ class SectionPatchIn(BaseModel):
     new_heading_level: int = Field(default=2, ge=1, le=6)
 
 
-class TokenCreate(BaseModel):
+class TokenCreate(StrictIn):
     name: str = Field(min_length=1, max_length=100)
     scopes: list[str] = Field(min_length=1)
     allowed_categories: list[str] | None = None
