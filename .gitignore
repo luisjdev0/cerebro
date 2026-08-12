@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 .env
+.env.production
 evals/results/
 *.pyc
 src/knowledgeos.egg-info/
