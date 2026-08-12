@@ -449,3 +449,64 @@ class TestSearch:
         ids_page1 = {d["id"] for d in page1.json()}
         ids_page2 = {d["id"] for d in page2.json()}
         assert ids_page1.isdisjoint(ids_page2)
+
+
+# --------------------------------------------------------------------------- GET /stats
+
+
+class TestStats:
+    """Mirror minimo de GET /stats de cerebro-memory (ecosistema-cerebro.md SS11)."""
+
+    def test_stats_counts_increase_after_creating_category_and_documents(self, client, auth_headers):
+        before = client.get("/stats", headers=auth_headers)
+        assert before.status_code == 200, before.text
+        before_data = before.json()
+
+        cat = _make_category(client, auth_headers)
+        _make_document(client, auth_headers, cat, title="Uno", slug="uno")
+        _make_document(client, auth_headers, cat, title="Dos", slug="dos")
+
+        after = client.get("/stats", headers=auth_headers)
+        assert after.status_code == 200, after.text
+        after_data = after.json()
+
+        assert after_data["categories"] == before_data["categories"] + 1
+        assert after_data["documents"] == before_data["documents"] + 2
+
+    def test_stats_versions_increase_after_update(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat)
+
+        before = client.get("/stats", headers=auth_headers).json()
+        resp = client.patch(
+            f"/documents/{doc['id']}",
+            json={"title": doc["title"], "content": "contenido editado", "category": cat},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        after = client.get("/stats", headers=auth_headers).json()
+
+        assert after["versions"] == before["versions"] + 1
+
+    def test_stats_filters_by_allowed_categories(self, client, auth_headers):
+        allowed = _make_category(client, auth_headers)
+        other = _make_category(client, auth_headers)
+        _make_document(client, auth_headers, allowed, title="Doc en permitida", slug="doc-permitida")
+        _make_document(client, auth_headers, other, title="Doc en ajena", slug="doc-ajena")
+
+        name = f"test-token-stats-{uuid.uuid4().hex[:8]}"
+        token_resp = client.post(
+            "/tokens",
+            json={"name": name, "scopes": ["read"], "allowed_categories": [allowed]},
+            headers=auth_headers,
+        )
+        assert token_resp.status_code == 201, token_resp.text
+        headers = {"Authorization": f"Bearer {token_resp.json()['token']}"}
+
+        resp = client.get("/stats", headers=headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        # `allowed` is a fresh category created in this test with exactly 1 document
+        # and no versions - a token restricted to it must see exactly that, never
+        # anything belonging to `other`.
+        assert data == {"categories": 1, "documents": 1, "versions": 0}

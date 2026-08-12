@@ -219,6 +219,58 @@ class TestTokenLifecycle:
         assert client.delete(f"/tokens/{name}", headers=headers).status_code == 403
 
 
+class TestTokenValueField:
+    """`value` (ecosistema-cerebro.md SS13, tokens transversales): admin puede pasar
+    el secreto en claro para que el servidor lo hashee, en vez de generar uno -
+    permite registrar el MISMO token en cerebro-memory y cerebro-docs. Idempotente
+    por nombre: reintentar con el mismo `value` no duplica ni falla."""
+
+    def test_create_with_value_uses_that_exact_secret(self, client, root_headers):
+        name = f"test-token-value-{uuid.uuid4().hex[:8]}"
+        provided = f"kos_transversal-{uuid.uuid4().hex}"
+        resp = client.post(
+            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["token"] == provided
+
+        auth = client.get("/contexts", headers={"Authorization": f"Bearer {provided}"})
+        assert auth.status_code == 200, auth.text
+
+    def test_recreating_same_name_and_value_is_idempotent_not_409(self, client, root_headers):
+        name = f"test-token-idem-{uuid.uuid4().hex[:8]}"
+        provided = f"kos_idempotent-{uuid.uuid4().hex}"
+        first = client.post(
+            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
+        )
+        assert first.status_code == 201, first.text
+
+        second = client.post(
+            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
+        )
+        assert second.status_code == 201, second.text
+        assert second.json()["token"] == provided
+        assert second.json()["id"] == first.json()["id"]
+
+        listed = client.get("/tokens", headers=root_headers)
+        names = [t["name"] for t in listed.json()]
+        assert names.count(name) == 1  # no duplicate row
+
+    def test_recreating_same_name_with_different_value_is_still_409(self, client, root_headers):
+        name = f"test-token-conflict-{uuid.uuid4().hex[:8]}"
+        client.post(
+            "/tokens",
+            json={"name": name, "scopes": ["read"], "value": f"kos_a-{uuid.uuid4().hex}"},
+            headers=root_headers,
+        )
+        resp = client.post(
+            "/tokens",
+            json={"name": name, "scopes": ["read"], "value": f"kos_b-{uuid.uuid4().hex}"},
+            headers=root_headers,
+        )
+        assert resp.status_code == 409, resp.text
+
+
 class TestScopeEnforcement:
     def test_read_only_token_cannot_write(self, client, root_headers):
         slug = _make_context(client, root_headers)

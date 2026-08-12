@@ -126,6 +126,11 @@ class TokenCreate(StrictIn):
     name: str = Field(min_length=1, max_length=100)
     scopes: list[str] = Field(min_length=1)
     allowed_categories: list[str] | None = None
+    # admin-only (este endpoint ya requiere scope admin): si se pasa, el servidor
+    # hashea ESTE valor en vez de generar uno -- usado por `cerebro token create`
+    # para registrar el MISMO secreto tambien en cerebro-memory (ecosistema-cerebro.md
+    # SS13, tokens transversales).
+    value: str | None = Field(default=None, min_length=1)
 
 
 class TokenOut(BaseModel):
@@ -139,6 +144,16 @@ class TokenOut(BaseModel):
 
 class TokenCreateOut(TokenOut):
     token: str  # plaintext - solo en ESTA respuesta, nunca de nuevo
+
+
+class StatsOut(BaseModel):
+    """Mirror minimo de GET /stats de cerebro-memory (ecosistema-cerebro.md SS11):
+    cerebro-docs no tiene desambiguaciones ni preferencias aprendidas, asi que solo
+    son los tres conteos que tienen sentido aqui."""
+
+    categories: int
+    documents: int
+    versions: int
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -201,6 +216,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unreachable")
         return {"status": "ok"}
 
+    # ---------------------------------------------------------------- stats
+
+    @app.get("/stats", response_model=StatsOut)
+    async def get_stats(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """Conteos de categorias/documentos/versiones (mirror minimo de GET /stats de
+        cerebro-memory). Con `allowed_categories` restringido, cuenta solo lo visible
+        para ese token -- mismo criterio de filtrado silencioso que el resto de
+        listados de cerebro-docs (nunca 403 en un agregado, se acota)."""
+        if principal.allowed_categories is None:
+            categories = await pool.fetchval("SELECT count(*) FROM categories")
+            documents = await pool.fetchval("SELECT count(*) FROM documents")
+            versions = await pool.fetchval("SELECT count(*) FROM document_versions")
+        else:
+            allowed = list(principal.allowed_categories)
+            categories = await pool.fetchval(
+                "SELECT count(*) FROM categories WHERE slug = ANY($1::text[])", allowed
+            )
+            documents = await pool.fetchval(
+                """
+                SELECT count(*) FROM documents d JOIN categories c ON c.id = d.category_id
+                WHERE c.slug = ANY($1::text[])
+                """,
+                allowed,
+            )
+            versions = await pool.fetchval(
+                """
+                SELECT count(*) FROM document_versions dv
+                JOIN documents d ON d.id = dv.document_id
+                JOIN categories c ON c.id = d.category_id
+                WHERE c.slug = ANY($1::text[])
+                """,
+                allowed,
+            )
+        return StatsOut(categories=categories, documents=documents, versions=versions)
+
     # ---------------------------------------------------------------- tokens
 
     @app.post(
@@ -212,7 +265,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         try:
             created = await create_api_token(
-                pool, name=body.name, scopes=body.scopes, allowed_categories=body.allowed_categories
+                pool,
+                name=body.name,
+                scopes=body.scopes,
+                allowed_categories=body.allowed_categories,
+                value=body.value,
             )
         except InvalidScopesError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

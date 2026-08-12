@@ -171,7 +171,23 @@ async def create_api_token(
     name: str,
     scopes: list[str],
     allowed_contexts: list[str] | None,
+    value: str | None = None,
 ) -> dict[str, Any]:
+    """Crea (o, con `value`, re-registra de forma idempotente) un token con nombre.
+
+    `value` (ecosistema-cerebro.md SS13, "tokens transversales"): si se pasa, el
+    servidor hashea ESE valor en vez de generar uno nuevo -- permite que
+    `cerebro token create` registre el MISMO secreto en cerebro-memory y cerebro-docs
+    en la misma operacion. Este endpoint ya es `admin`-only (ver api.py), asi que no
+    hace falta una comprobacion extra de permisos aqui.
+
+    Idempotencia por nombre: si ya existe un token ACTIVO con `name` y se paso `value`
+    que hashea igual que el suyo, esta llamada no falla ni duplica la fila -- devuelve
+    la fila existente (con `token` = el valor recibido, para que el caller pueda
+    seguir mostrandolo). Reintentar `cerebro token create` tras un fallo parcial debe
+    ser seguro (SS13); si `value` es None (flujo normal de un solo servicio) el
+    comportamiento no cambia: un nombre activo duplicado sigue siendo 409.
+    """
     invalid = sorted(set(scopes) - set(VALID_SCOPES))
     if invalid or not scopes:
         raise InvalidScopesError(
@@ -180,7 +196,8 @@ async def create_api_token(
             else "at least one scope is required"
         )
 
-    plaintext = generate_token()
+    plaintext = value if value else generate_token()
+    token_hash = hash_token(plaintext)
     try:
         row = await pool.fetchrow(
             """
@@ -188,12 +205,24 @@ async def create_api_token(
             VALUES ($1, $2, $3, $4)
             RETURNING id, name, scopes, allowed_contexts, created_at, revoked_at
             """,
-            hash_token(plaintext),
+            token_hash,
             name,
             scopes,
             allowed_contexts,
         )
     except asyncpg.UniqueViolationError as exc:
+        if value is not None:
+            existing = await pool.fetchrow(
+                """
+                SELECT id, name, scopes, allowed_contexts, created_at, revoked_at, token_hash
+                FROM api_tokens WHERE name = $1 AND revoked_at IS NULL
+                """,
+                name,
+            )
+            if existing is not None and existing["token_hash"] == token_hash:
+                data = dict(existing)
+                data.pop("token_hash")
+                return {**data, "token": plaintext}
         raise DuplicateTokenNameError(name) from exc
 
     return {**dict(row), "token": plaintext}

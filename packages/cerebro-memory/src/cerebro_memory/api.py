@@ -185,6 +185,11 @@ class TokenCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     scopes: list[str] = Field(min_length=1)
     allowed_contexts: list[str] | None = None
+    # admin-only (este endpoint ya requiere scope admin): si se pasa, el servidor
+    # hashea ESTE valor en vez de generar uno -- usado por `cerebro token create`
+    # para registrar el MISMO secreto tambien en cerebro-docs (ecosistema-cerebro.md
+    # SS13, tokens transversales).
+    value: str | None = Field(default=None, min_length=1)
 
 
 class TokenOut(BaseModel):
@@ -357,7 +362,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         try:
             created = await create_api_token(
-                pool, name=body.name, scopes=body.scopes, allowed_contexts=body.allowed_contexts
+                pool,
+                name=body.name,
+                scopes=body.scopes,
+                allowed_contexts=body.allowed_contexts,
+                value=body.value,
             )
         except InvalidScopesError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
