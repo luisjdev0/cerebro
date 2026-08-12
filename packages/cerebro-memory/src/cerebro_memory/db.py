@@ -22,7 +22,17 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 async def create_pool(settings: Settings) -> asyncpg.Pool:
-    return await asyncpg.create_pool(dsn=settings.database_url, min_size=1, max_size=10)
+    # cerebro_memory primero (donde viven las tablas del servicio desde la migracion
+    # 005), public despues (donde vive la extension `vector` de pgvector y sus
+    # operadores, compartida con el futuro schema hermano `cerebro_docs`). En una DB
+    # fresca donde `cerebro_memory` todavia no existe, Postgres ignora el schema
+    # inexistente en el search_path y cae a `public` sin error.
+    return await asyncpg.create_pool(
+        dsn=settings.database_url,
+        min_size=1,
+        max_size=10,
+        server_settings={"search_path": "cerebro_memory, public"},
+    )
 
 
 async def apply_migrations(pool: asyncpg.Pool, settings: Settings) -> list[str]:
