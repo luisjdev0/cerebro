@@ -1,13 +1,30 @@
-# KnowledgeOS
+# cerebro
 
-Memoria persistente self-hosted y agnóstica al modelo para agentes de IA (Claude,
-GPT, Gemini, agentes propios). PostgreSQL + pgvector, retrieval híbrido (vector +
-full-text en español, fusionado con RRF), ciclo de vida por supersedencia, audit log,
-Context Engine (desambiguación de contexto sin LLM), grafo ligero de relaciones +
-timeline, y autorización por token con scopes. v1.0 = Fases 1-3 sólidas +
-evaluación pasando + dogfooding sostenido (plan_v2.md SS8); el clasificador local, el
-grafo y los conectores externos son mejoras encima de esa base, no requisitos. Ver
-`plan_v2.md` (secciones 4-10) para la arquitectura y el modelo de datos completos.
+Ecosistema self-hosted y agnóstico al modelo de memoria persistente y documentación
+para agentes de IA (Claude, GPT, Gemini, agentes propios). Nació como un único paquete
+(`knowledgeos`) y hoy es un monorepo de cinco paquetes bajo `packages/`:
+
+| Paquete | Qué es | Entry point |
+|---|---|---|
+| [`cerebro-memory`](packages/cerebro-memory) | Servicio API de memoria persistente: PostgreSQL + pgvector, retrieval híbrido (vector + full-text en español, fusionado con RRF), ciclo de vida por supersedencia, audit log, Context Engine (desambiguación de contexto sin LLM), grafo ligero de relaciones + timeline, tokens con scopes | *(ninguno — servicio API puro, sin CLI ni MCP propios)* |
+| [`cerebro-docs`](packages/cerebro-docs) | Servicio API hermano: repositorio de documentos Markdown completos, categorizables, versionados, con parches parciales por sección y búsqueda full-text | *(ninguno — servicio API puro)* |
+| [`cerebro-clients`](packages/cerebro-clients) | SDK delgado `httpx` compartido (`MemoryClient`, `DocsClient`) que habla con ambas APIs | *(librería, no ejecutable)* |
+| [`cerebro-mcp`](packages/cerebro-mcp) | Servidor MCP único por stdio que expone ambos servicios como tools (`memory_*` + `docs_*`) | `cerebro-mcp` |
+| [`cerebro-cli`](packages/cerebro-cli) | CLI único (`cerebro memory ...`, `cerebro docs ...`, más comandos transversales) | `cerebro` |
+
+`cerebro-memory` y `cerebro-docs` no tienen lógica de negocio duplicada entre sí: cada
+uno es dueño de su propio schema en el mismo Postgres (`cerebro_memory` /
+`cerebro_docs`) y su propia auth. Todo cliente (`cerebro-mcp`, `cerebro-cli`, o
+cualquier integración futura) pasa por `cerebro-clients` y por el mismo camino HTTP de
+auth + scopes + audit log de cada API — no hay atajos ni lógica de negocio duplicada
+en la capa de cliente.
+
+v1.0 de `cerebro-memory` = Fases 1-3 sólidas + evaluación pasando + dogfooding
+sostenido (ver `plan_v2.md` SS8, en la raíz del repo, para la arquitectura y el
+modelo de datos completos de ese servicio); el clasificador local, el grafo y los
+conectores externos son mejoras encima de esa base, no requisitos. `cerebro-docs` es
+más reciente y más simple: sin retrieval semántico, sin Context Engine, solo full-text
+simple sobre contenido versionado.
 
 ## Quickstart
 
@@ -15,8 +32,8 @@ Tres caminos según lo que quieras hacer - elige uno:
 
 ### A. Desarrollo local (recomendado para dogfooding / seguir desarrollando)
 
-API corriendo directo con Python, solo Postgres en Docker. Es el modo más rápido para
-iterar (recarga instantánea, logs en tu propia terminal).
+Ambas APIs corriendo directo con Python, solo Postgres en Docker. Es el modo más
+rápido para iterar (recarga instantánea, logs en tu propia terminal).
 
 Requisitos: Docker Desktop corriendo, Python 3.11+.
 
@@ -29,57 +46,84 @@ docker compose ps   # espera a que este "healthy"
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # Linux/Mac
-pip install -e ".[dev]"
 
-# 3. Configuracion
+# instala los 5 paquetes en un solo comando (necesario: cerebro-cli y cerebro-mcp
+# dependen de cerebro-clients/cerebro-memory por nombre, no estan en PyPI, asi que
+# pip los resuelve entre si solo si se le pasan todos juntos)
+pip install -e "packages/cerebro-clients[dev]" -e "packages/cerebro-memory[dev]" ^
+            -e "packages/cerebro-docs[dev]" -e "packages/cerebro-mcp[dev]" ^
+            -e "packages/cerebro-cli[dev]"
+# Linux/Mac: mismo comando pero con \ en vez de ^ como continuador de linea
+
+# 3. Configuracion (variables compartidas: DATABASE_URL, API_TOKEN, APP_PORT, etc.)
 cp .env.example .env
 # los valores por defecto ya funcionan contra el compose.yaml de este repo;
-# cambia API_TOKEN antes de exponer el servicio fuera de tu maquina (ver "Seguridad").
+# cambia API_TOKEN antes de exponer cualquier servicio fuera de tu maquina (ver "Seguridad").
 
-# 4. Arrancar la API (aplica migraciones automaticamente al iniciar)
-python -m knowledgeos.main
-# o: uvicorn knowledgeos.main:app --reload
+# 4. Arrancar cerebro-memory (aplica migraciones automaticamente al iniciar, puerto 8000)
+python -m cerebro_memory.main
+# o: uvicorn cerebro_memory.main:app --reload
+
+# 5. Arrancar cerebro-docs en OTRA terminal, con su propio puerto/token (comparte
+# DATABASE_URL/POSTGRES_PASSWORD via el mismo .env, pero necesita su propio APP_PORT/
+# API_TOKEN para no pisar los de cerebro-memory - ver seccion "cerebro-docs" del
+# .env.example):
+$env:APP_PORT=8010; $env:API_TOKEN="change-me-dev-token-docs"; python -m cerebro_docs.main   # PowerShell
+# APP_PORT=8010 API_TOKEN=change-me-dev-token-docs python -m cerebro_docs.main               # bash
 ```
 
-La primera vez que arranca, descarga el modelo de embeddings
+La primera vez que arranca `cerebro-memory`, descarga el modelo de embeddings
 (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` vía `fastembed`, ~9s,
-luego queda cacheado localmente por `fastembed`/`huggingface_hub`).
+luego queda cacheado localmente por `fastembed`/`huggingface_hub`). `cerebro-docs` no
+usa embeddings (full-text simple), arranca al instante.
 
 ### B. Todo en Docker (producción / probar el deploy real)
 
-Postgres **y** la API en contenedores, sin instalar Python en el host. La API se
-sirve desde una imagen multi-stage (`Dockerfile`) que pre-descarga el modelo de
+Postgres **y** ambas APIs en contenedores, sin instalar Python en el host. Cada API se
+sirve desde su propia imagen multi-stage (`packages/cerebro-memory/Dockerfile`,
+`packages/cerebro-docs/Dockerfile`); la de `cerebro-memory` pre-descarga el modelo de
 embeddings *en build*, así el contenedor arranca en segundos, no minutos.
 
 ```bash
 cp .env.example .env   # y cambia API_TOKEN
 
-# levanta AMBOS servicios (el profile "full" es lo que agrega la API; sin el flag,
+# levanta LOS TRES servicios (el profile "full" agrega ambas APIs; sin el flag,
 # `docker compose up -d` sigue levantando solo postgres, modo dev de arriba)
 docker compose --profile full up -d
-docker compose --profile full ps   # espera a que "api" este "healthy"
+docker compose --profile full ps   # espera a que "cerebro-memory-api" y "cerebro-docs-api" esten "healthy"
 
-curl http://localhost:8000/health
+curl http://localhost:8005/health   # cerebro-memory (host 8005 -> contenedor 8000)
+curl http://localhost:8006/health   # cerebro-docs   (host 8006 -> contenedor 8000)
 ```
 
-Para reconstruir la imagen tras un cambio de código: `docker compose --profile full build api`.
+Para reconstruir una imagen tras un cambio de código:
+`docker compose --profile full build cerebro-memory-api` (o `cerebro-docs-api`).
 
-### C. Solo quiero conectar Claude/un agente vía MCP (ya tengo la API corriendo en otro lado)
+### C. Solo quiero conectar Claude/un agente vía MCP o CLI (ya tengo las APIs corriendo en otro lado)
 
-No necesitas clonar nada del backend - solo el cliente MCP. Ve directo a "Conectar a
-Claude (servidor MCP)" más abajo, con `KNOWLEDGEOS_API_URL` apuntando a la API ya
-desplegada (modo A o B, tuya o de un tercero) y `KNOWLEDGEOS_API_TOKEN` con un token
-de scope apropiado (ver "Seguridad" - normalmente no querrás darle el token root a
-cada agente).
+No necesitas clonar el backend - solo la capa de cliente:
+
+```bash
+pip install -e "packages/cerebro-clients[dev]" -e "packages/cerebro-mcp[dev]"
+# o, para el CLI en vez del servidor MCP (cerebro-cli tambien necesita cerebro-memory
+# instalado, solo para reusar su parser de Markdown - ver "CLI" abajo):
+pip install -e "packages/cerebro-clients[dev]" -e "packages/cerebro-memory[dev]" -e "packages/cerebro-cli[dev]"
+```
+
+Ve directo a "Conectar a Claude (servidor MCP)" más abajo, apuntando
+`CEREBRO_MEMORY_URL`/`CEREBRO_DOCS_URL` a las APIs ya desplegadas (modo A o B, tuyas o
+de un tercero) y `CEREBRO_TOKEN` con un token de scope apropiado (ver "Seguridad" - normalmente
+no querrás darle el token root a cada agente).
 
 ---
 
-`GET /health` no requiere auth; el resto de endpoints requieren
-`Authorization: Bearer <token>` (ver "Seguridad").
+`GET /health` no requiere auth en ninguna de las dos APIs; el resto de endpoints
+requieren `Authorization: Bearer <token>` (ver "Seguridad").
 
 ## Uso rapido
 
 ```bash
+# --- cerebro-memory (modo A, puerto 8000 local) ---
 TOKEN=change-me-dev-token
 
 curl -s -X POST localhost:8000/contexts \
@@ -92,48 +136,67 @@ curl -s -X POST localhost:8000/memories \
 
 curl -s "localhost:8000/memories/search?q=cuanto+gaste+este+mes&context=finanzas-personales" \
   -H "Authorization: Bearer $TOKEN"
+
+# --- cerebro-docs (modo A, puerto 8010 local) ---
+DOCS_TOKEN=change-me-dev-token-docs
+
+curl -s -X POST localhost:8010/categories \
+  -H "Authorization: Bearer $DOCS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"slug":"infraestructura","name":"Infraestructura","description":"Runbooks y notas de infra"}'
+
+curl -s -X POST localhost:8010/documents \
+  -H "Authorization: Bearer $DOCS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"category":"infraestructura","title":"Runbook: restore de Postgres","content":"# Runbook\n\n## Pasos\n1. ..."}'
+
+curl -s "localhost:8010/documents?q=restore+postgres" -H "Authorization: Bearer $DOCS_TOKEN"
 ```
 
-## Arquitectura
+En Docker (modo B), reemplaza `localhost:8000` por `localhost:8005` y
+`localhost:8010` por `localhost:8006`.
 
-Estado real del sistema (plan_v2.md SS4, adaptado: todas las capas de abajo estan
-implementadas y en uso, no son plan a futuro):
+## Arquitectura
 
 ```
 Agente (Claude / GPT / Gemini / custom)
         |
         v
-   MCP Server (stdio)  ---------------------  src/knowledgeos/mcp_server.py
-        |                                     adaptador delgado, sin logica propia
-        v
-  API HTTP (FastAPI)  ----------------------  src/knowledgeos/api.py
-        |                                     auth + scopes, audit log, CRUD
+   MCP Server (stdio)  -----------------------  packages/cerebro-mcp/src/cerebro_mcp/server.py
+   o CLI                -----------------------  packages/cerebro-cli/src/cerebro_cli/main.py
+        |                                        ambos son adaptadores delgados, sin logica
+        v                                        propia (salvo import-markdown / backup-restore)
+  cerebro-clients (SDK httpx compartido)  -----  packages/cerebro-clients/src/cerebro_clients/
         |
-        +--> Retrieval hibrido: vector + full-text + RRF     retrieval.py
-        +--> Context Engine: scoping y desambiguacion        context_engine.py
-        +--> Relaciones / grafo ligero (aristas + timeline)  graph.py
-        +--> Clasificador local opcional (OFF por defecto)   context_engine.py (Fase 4)
-        |
-        v
-  PostgreSQL + pgvector   ------------------  db/migrations/*.sql
-  (unica base de datos; contexts, memories, audit_log, disambiguation_log,
-   context_preferences, memory_edges, api_tokens)
+        +----------------------------+----------------------------+
+        v                                                         v
+  cerebro-memory API (FastAPI)                          cerebro-docs API (FastAPI)
+  packages/cerebro-memory/src/cerebro_memory/api.py      packages/cerebro-docs/src/cerebro_docs/api.py
+        |                                                         |
+        +--> Retrieval hibrido: vector+full-text+RRF    retrieval.py
+        +--> Context Engine: scoping y desambiguacion    context_engine.py
+        +--> Relaciones / grafo ligero (aristas+timeline) graph.py
+        +--> Clasificador local opcional (OFF x defecto)  context_engine.py (Fase 4)
+        |                                                         |
+        |                                                +--> categorias + documentos
+        |                                                +--> versionado (document_versions)
+        |                                                +--> parches parciales por seccion
+        v                                                         v
+  PostgreSQL + pgvector, schema `cerebro_memory`         mismo Postgres, schema `cerebro_docs`
+  (contexts, memories, audit_log, disambiguation_log,    (categories, documents, document_versions,
+   context_preferences, memory_edges, api_tokens)         api_tokens)
 ```
 
-Un CLI (`src/knowledgeos/cli.py`) es otro cliente delgado sobre la misma API HTTP,
-igual que el servidor MCP -- ninguno tiene lógica de negocio propia (salvo la
-orquestación del importador de Markdown y de `backup`/`restore`, que hablan directo
-con `docker compose` porque Postgres no expone su puerto fuera de `localhost`). Todo
-cliente (MCP, CLI, o cualquier integración futura) pasa por el mismo camino de auth,
-scopes y audit log de la API -- no hay atajos.
-
 Qdrant, Redis y un modelo auxiliar local corriendo por defecto **no aparecen** en el
-compose a propósito (plan_v2.md SS4.2, "earn your complexity"): pgvector cubre el
-volumen de memoria de un usuario individual con latencias de un dígito de ms, y el
-punto de enchufe para un clasificador local (Ollama) existe pero está apagado hasta
-que haya dataset real que lo justifique (ver "Clasificador local opcional" abajo).
+compose a propósito ("earn your complexity"): pgvector cubre el volumen de memoria de
+un usuario individual con latencias de un dígito de ms, y el punto de enchufe para un
+clasificador local (Ollama) existe pero está apagado hasta que haya dataset real que
+lo justifique (ver "Clasificador local opcional" abajo).
 
-## Endpoints
+`cerebro-memory` y `cerebro-docs` comparten la misma instancia de Postgres (mismo
+`DATABASE_URL`/`POSTGRES_PASSWORD`) pero cada uno vive en su propio schema y aplica
+sus propias migraciones al arrancar — son servicios stateless independientes, no un
+monolito partido en dos procesos que se coordinan en runtime.
+
+## Endpoints de `cerebro-memory`
 
 | Metodo | Ruta | Scope | Descripcion |
 |---|---|---|---|
@@ -149,7 +212,7 @@ que haya dataset real que lo justifique (ver "Clasificador local opcional" abajo
 | `GET` | `/memories/{id}/related` | read | vecinos a 1 salto (ambas direcciones) + cadena de supersedencia virtual; filtro `relation?` |
 | `GET` | `/timeline` | read | memorias `episodic`/`decision` ordenadas por fecha efectiva; filtros `context?`, `from?`, `to?`, `limit?=50` |
 | `POST` | `/disambiguations/{id}/resolve` | write | resuelve una desambiguacion pendiente (`{"context": "<slug>"}`); hace crecer `context_preferences` |
-| `GET` | `/disambiguations/export` | admin | dataset crudo para `knowledgeos export-disambiguations` |
+| `GET` | `/disambiguations/export` | admin | dataset crudo para `cerebro memory export-disambiguations` |
 | `GET` | `/stats` | read | memorias por contexto/estado (filtrado por `allowed_contexts`), desambiguaciones (total/auto/agent/user), preferencias aprendidas |
 | `POST` | `/tokens` | admin | crea un token con scopes (`{name, scopes, allowed_contexts?}`); el valor en claro solo se devuelve en ESTA respuesta |
 | `GET` | `/tokens` | admin | lista tokens (sin hashes ni valores en claro) |
@@ -163,52 +226,61 @@ autodeclarada). Detalle completo de scopes y `allowed_contexts` en "Seguridad" a
 
 ## Seguridad
 
-Cuatro piezas (plan_v2.md SS9): tokens con identidad propia, scopes, restricción por
-contexto, y backups. Todo excepto `GET /health` requiere
-`Authorization: Bearer <token>`.
+Cuatro piezas: tokens con identidad propia, scopes, restricción por contexto (o
+categoría en `cerebro-docs`), y backups. Todo excepto `GET /health` requiere
+`Authorization: Bearer <token>`, en ambas APIs.
 
 ### Tokens y scopes
 
-Dos tipos de credencial válidos en el mismo header:
+Dos tipos de credencial válidos en el mismo header, en cada API:
 
-- **Token root** (`API_TOKEN` del `.env`): comparado byte a byte
+- **Token root** (`API_TOKEN` del `.env` de cada servicio): comparado byte a byte
   (`secrets.compare_digest`), tiene los tres scopes (`read`, `write`, `admin`) sobre
-  todos los contextos, sin restricción. Pensado para ti mismo / el bootstrap inicial
-  -- no lo repartas a agentes individuales.
-- **Tokens con nombre**, creados con `knowledgeos token create` (o `POST /tokens`
-  directamente, requiere scope `admin`). Se guardan en la tabla `api_tokens` como su
-  hash SHA-256 -- **el valor en claro se muestra una sola vez, al crearlo**, y no se
-  puede volver a recuperar (solo revocar y crear uno nuevo).
+  todos los contextos/categorías, sin restricción. Pensado para ti mismo / el
+  bootstrap inicial -- no lo repartas a agentes individuales. `cerebro-memory` y
+  `cerebro-docs` tienen cada uno su propio `API_TOKEN` (ver sección "cerebro-docs" del
+  `.env.example`) -- **no es el mismo valor por defecto**.
+- **Tokens con nombre**, creados con `cerebro memory token create` (solo
+  cerebro-memory), `cerebro docs` no tiene aún un subcomando `token` propio -- usa
+  `POST /tokens` directo o el comando transversal de abajo --, o el comando
+  **transversal** `cerebro token create` (registra el mismo secreto en ambos
+  servicios a la vez, ver más abajo). Se guardan como su hash SHA-256 -- **el valor en
+  claro se muestra una sola vez, al crearlo**, y no se puede volver a recuperar (solo
+  revocar y crear uno nuevo).
 
 ```bash
-# token de lectura/escritura sin restriccion de contexto
-knowledgeos token create claude-desktop --scopes read,write
+# token escopado SOLO a cerebro-memory
+cerebro memory token create claude-desktop --scopes read,write
+cerebro memory token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
+cerebro memory token list      # sin hashes ni valores en claro
+cerebro memory token revoke agente-trabajo
 
-# token de solo lectura, restringido a un contexto (un agente de trabajo que no debe
-# ver finanzas-personales)
-knowledgeos token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
-
-knowledgeos token list      # sin hashes ni valores en claro
-knowledgeos token revoke agente-trabajo
+# token TRANSVERSAL: un solo secreto, registrado en cerebro-memory Y cerebro-docs
+cerebro token create claude-desktop --scopes read,write --contexts cliente-acme --categories infraestructura
+cerebro token revoke claude-desktop
 ```
 
-Tres scopes:
+Tres scopes (mismo vocabulario en ambas APIs):
 
-| Scope | Cubre |
-|---|---|
-| `read` | todo `GET` (excepto `/health`, que no necesita auth) |
-| `write` | `POST`/`PATCH`/`DELETE` de memorias, contextos (crear), aristas y `POST /disambiguations/{id}/resolve` |
-| `admin` | gestión de tokens (`/tokens/*`), `GET /disambiguations/export`, `DELETE /contexts/{slug}` |
+| Scope | Cubre en `cerebro-memory` | Cubre en `cerebro-docs` |
+|---|---|---|
+| `read` | todo `GET` (excepto `/health`) | todo `GET` (excepto `/health`) |
+| `write` | `POST`/`PATCH`/`DELETE` de memorias, contextos (crear), aristas y `POST /disambiguations/{id}/resolve` | `POST`/`PATCH`/`DELETE` de documentos, categorías (crear/editar) |
+| `admin` | gestión de tokens (`/tokens/*`), `GET /disambiguations/export`, `DELETE /contexts/{slug}` | gestión de tokens (`/tokens/*`), `DELETE /categories/{slug}` |
 
 Un token puede tener varios scopes a la vez (`--scopes read,write`); `admin` **no**
-implica `read`/`write` automáticamente -- un token solo-`admin` puede gestionar
-tokens pero no leer ni escribir memorias.
+implica `read`/`write` automáticamente.
 
-### Restricción por contexto (`allowed_contexts`)
+### Restricción por contexto / categoría
 
-`--contexts a,b` (o `allowed_contexts` en `POST /tokens`) limita un token a un
-subconjunto de contextos; sin la opción, ve todos (equivalente a `NULL` en la
-columna). Se aplica en tres sitios distintos:
+`--contexts a,b` (cerebro-memory) o `--categories a,b` (cerebro-docs) limita un token
+a un subconjunto; sin la opción, ve todos. En `cerebro-memory` se aplica en tres
+sitios (búsqueda, escritura, `/stats`/`/timeline` -- ver detalle abajo). En
+`cerebro-docs`, `allowed_categories` filtra `GET /categories`/`GET /documents` en
+silencio y devuelve `403` en escritura o lectura directa (`GET
+/documents/{categoria}/{slug}`) fuera de la lista.
+
+Detalle de `cerebro-memory` (`allowed_contexts`):
 
 - **Búsqueda** (`GET /memories/search`): un `context`/`scope=<slug>` explícito fuera
   de la lista es `403`. Sin contexto explícito, `scope=all` narrows silenciosamente
@@ -220,47 +292,72 @@ columna). Se aplica en tres sitios distintos:
 - **`GET /stats` / `GET /timeline`**: filas de contextos no permitidos se omiten en
   vez de listarse; un `context` explícito fuera de la lista en `/timeline` es `403`.
 
+### Tokens transversales
+
+`cerebro token create <name> --scopes ... [--contexts ...] [--categories ...]`
+genera **un solo secreto** y lo registra por separado en ambas APIs (`POST /tokens`
+de cada una, con `value` fijado al mismo valor). Si una de las dos llamadas falla, el
+secreto generado queda persistido localmente
+(`packages/cerebro-cli/src/cerebro_cli/tokens.py`) hasta que ambos servicios
+confirman éxito -- reintentar el mismo comando reusa el mismo secreto en vez de
+generar uno nuevo, y el registro es idempotente por nombre en cada API. `cerebro
+token revoke <name>` revoca en ambos servicios; un `404` en alguno (ya revocado o
+nunca existió ahí) cuenta como éxito.
+
 ### Identidad de agente
 
 El `name` de un token con nombre **pisa** cualquier `X-Agent-Name` que el cliente
-mande -- queda como `memory.source` y como `audit_log.agent` la identidad real
-verificada por el token, no lo que el propio cliente diga ser. El token root no tiene
-identidad fija propia, así que sigue usando `X-Agent-Name` (default `"unknown"`),
-igual que en Fase 1.
+mande -- queda como `memory.source`/`documents.created_by` y como `audit_log.agent`
+(solo cerebro-memory) la identidad real verificada por el token, no lo que el propio
+cliente diga ser. El token root no tiene identidad fija propia, así que sigue usando
+`X-Agent-Name` (default `"unknown"`), en ambas APIs.
 
 ### Secretos
 
-`POST /memories` y `PATCH /memories/{id}` rechazan (422) contenido que matchee
-patrones de credenciales reales (claves AWS, tokens de GitHub/Slack, API keys estilo
-`sk-...`, cadenas de conexión con password embebido, asignaciones `password=...`) --
-ver `src/knowledgeos/security.py`. El mensaje de rechazo sugiere el formato de
-referencia sancionado: `secret://<entorno>/<nombre>` (nunca se almacena el valor).
+`POST /memories` y `PATCH /memories/{id}` (**solo en cerebro-memory**) rechazan (422)
+contenido que matchee patrones de credenciales reales (claves AWS, tokens de
+GitHub/Slack, API keys estilo `sk-...`, cadenas de conexión con password embebido,
+asignaciones `password=...`) -- ver
+`packages/cerebro-memory/src/cerebro_memory/security.py`. El mensaje de rechazo
+sugiere el formato de referencia sancionado: `secret://<entorno>/<nombre>` (nunca se
+almacena el valor). **`cerebro-docs` NO filtra credenciales** -- decisión explícita
+(un runbook o una nota de infra a veces necesita mostrar un ejemplo de connection
+string o un placeholder), ver `packages/cerebro-docs/src/cerebro_docs/api.py:8-11`.
+
+### Validación de entrada estricta
+
+`cerebro-docs` rechaza (422) cualquier campo desconocido en el body de sus modelos de
+entrada (`StrictIn`, `extra="forbid"` -- ver
+`packages/cerebro-docs/src/cerebro_docs/api.py:53-61`): un typo del cliente (p.ej.
+mandar `content` en vez de `body` en un parche de sección) nunca cae en silencio al
+default del campo real.
 
 ### Cifrado y backups
 
-TLS en tránsito (termínalo con un reverse proxy delante si expones la API fuera de tu
-red -- KnowledgeOS mismo no hace TLS); en reposo, cifrado de disco a nivel de VPS
-como línea base (plan_v2.md SS9 deja cifrado a nivel de aplicación explícitamente
-fuera de alcance hasta que haya multiusuario).
+TLS en tránsito (termínalo con un reverse proxy delante si expones cualquier API fuera
+de tu red); en reposo, cifrado de disco a nivel de VPS como línea base.
 
-`knowledgeos backup` (`pg_dump` vía `docker compose`) es la pieza que falta para que
-"memoria persistente" no sea una promesa vacía. Automatízalo:
+`cerebro backup` (`pg_dump` vía `docker compose`) es la pieza que falta para que
+"memoria persistente" no sea una promesa vacía. Un solo Postgres compartido significa
+que un solo dump cubre **ambos** schemas (`cerebro_memory` y `cerebro_docs`) en una
+operación. Automatízalo:
 
 ```bash
 # Windows: Task Scheduler, diario a las 3am
-schtasks /create /tn "KnowledgeOS backup" /tr "D:\ruta\al\repo\.venv\Scripts\knowledgeos.exe backup" /sc daily /st 03:00
+schtasks /create /tn "cerebro backup" /tr "D:\ruta\al\repo\.venv\Scripts\cerebro.exe backup" /sc daily /st 03:00
 
 # Linux/Mac: cron, diario a las 3am
-0 3 * * * cd /ruta/al/repo && .venv/bin/knowledgeos backup >> backups/backup.log 2>&1
+0 3 * * * cd /ruta/al/repo && .venv/bin/cerebro backup >> backups/backup.log 2>&1
 ```
 
-Prueba el restore de verdad de vez en cuando (`knowledgeos restore <archivo.sql>`) --
-un backup nunca verificado no cuenta como backup.
+Prueba el restore de verdad de vez en cuando (`cerebro restore <archivo.sql>`) -- un
+backup nunca verificado no cuenta como backup. `cerebro restore` sobreescribe **ambos**
+schemas y pide confirmación explícita (`--yes` para omitirla en scripts).
 
-## Context Engine (Fase 2)
+## Context Engine (Fase 2, `cerebro-memory`)
 
 `GET /memories/search` decide el *scope* de la búsqueda antes de aplicar el retrieval
-final (plan_v2.md SS7). Tres modos, vía el parámetro `scope`:
+final. Tres modos, vía el parámetro `scope`:
 
 - **`scope=auto`** (default): corre el Context Engine. Es determinista y barato -- **sin
   llamadas a LLM** -- y decide en dos pasos:
@@ -289,30 +386,31 @@ hace crecer `context_preferences`: los tokens significativos de la query (normal
 sin stopwords ES) suman peso hacia el contexto elegido. Preguntas parecidas en el
 futuro se inclinan hacia ese contexto -- y, con suficiente refuerzo, terminan
 resolviéndose solas en modo `auto` en vez de volver a ser ambiguas. El boost por
-preferencia es deliberadamente pequeño por unidad de peso (`CONTEXT_ENGINE_PREFERENCE_BOOST_PER_WEIGHT`,
-default `0.008`): un solo término genérico que colisiona legítimamente entre contextos
-(p.ej. "mes", "costos") no debe poder tumbar la señal real de retrieval por una sola
-resolución; hace falta refuerzo consistente.
+preferencia es deliberadamente pequeño por unidad de peso
+(`CONTEXT_ENGINE_PREFERENCE_BOOST_PER_WEIGHT`, default `0.008`): un solo término
+genérico que colisiona legítimamente entre contextos (p.ej. "mes", "costos") no debe
+poder tumbar la señal real de retrieval por una sola resolución; hace falta refuerzo
+consistente.
 
 Umbrales configurables por entorno (nombres `CONTEXT_ENGINE_*`, ver
-`src/knowledgeos/config.py` para la lista completa y los defaults calibrados contra
-`evals/`).
+`packages/cerebro-memory/src/cerebro_memory/config.py` para la lista completa y los
+defaults calibrados contra `packages/cerebro-memory/evals/`).
 
 `GET /stats` expone `disambiguations` (total, cuántas se resolvieron `auto`, `agent`,
 `user` o `local_model` -- Fase 4, ver abajo) y `preferences_learned` (términos
 aprendidos por contexto) -- es la forma más directa de ver al sistema aprender con el
-uso; el MCP server lo expone como `memory_stats()`, y `knowledgeos stats` (CLI) lo
-formatea para consola.
+uso; el servidor MCP lo expone como `memory_stats()`, y `cerebro memory stats` (CLI)
+lo formatea para consola.
 
-## Clasificador local opcional (Fase 4)
+## Clasificador local opcional (Fase 4, `cerebro-memory`)
 
-**OFF por defecto.** plan_v2.md SS8 (Fase 4) es explícito: no tiene sentido entrenar
-ni activar un modelo local de desambiguación mientras no exista un dataset real de
-ambigüedades resueltas -- hoy no existe. Lo que esta fase construye no es el modelo,
-es el **punto de enchufe**: la interfaz `AmbiguityResolver`
-(`src/knowledgeos/context_engine.py`) que `decide_scope` invoca *después* de que el
-scoring determinista de la Fase 2 ya decidió que un caso es ambiguo, para intentar
-resolverlo localmente en vez de devolverlo al agente que llama.
+**OFF por defecto.** No tiene sentido entrenar ni activar un modelo local de
+desambiguación mientras no exista un dataset real de ambigüedades resueltas -- hoy no
+existe. Lo que esta fase construye no es el modelo, es el **punto de enchufe**: la
+interfaz `AmbiguityResolver`
+(`packages/cerebro-memory/src/cerebro_memory/context_engine.py`) que `decide_scope`
+invoca *después* de que el scoring determinista de la Fase 2 ya decidió que un caso es
+ambiguo, para intentar resolverlo localmente en vez de devolverlo al agente que llama.
 
 Dos implementaciones:
 
@@ -332,17 +430,16 @@ Cuando el resolver sí devuelve un slug válido, la ambigüedad se resuelve como
 propio Context Engine hubiera dominado desde el principio (`scope_decision.mode ==
 "auto"`, resultados ya filtrados a ese contexto), pero queda registrada en
 `disambiguation_log` con `resolved_by = 'local_model'` -- distinguible en `GET /stats`
-/ `knowledgeos stats` de las resoluciones `auto` (scoring determinista) y `agent`
+/ `cerebro memory stats` de las resoluciones `auto` (scoring determinista) y `agent`
 (agente/MCP eligiendo con el contexto de la conversación).
 
-**Cuándo activarlo en serio** (condición del plan, plan_v2.md SS8): (a) hay **≥ ~500
-desambiguaciones registradas** -- usa `knowledgeos export-disambiguations` para ver
-cuántas hay y exportar el dataset -- **y** (b) hay una razón medida para hacerlo
-(latencia, costo, o una política de privacidad estricta de "ni la query sale del
-VPS"). Sin ambas condiciones, esto es infraestructura sin usar a propósito -- earn
-your complexity (plan_v2.md SS4.2).
+**Cuándo activarlo en serio**: (a) hay **≥ ~500 desambiguaciones registradas** -- usa
+`cerebro memory export-disambiguations` para ver cuántas hay y exportar el dataset --
+**y** (b) hay una razón medida para hacerlo (latencia, costo, o una política de
+privacidad estricta de "ni la query sale del VPS"). Sin ambas condiciones, esto es
+infraestructura sin usar a propósito -- earn your complexity.
 
-Variables de entorno (`src/knowledgeos/config.py`):
+Variables de entorno (`packages/cerebro-memory/src/cerebro_memory/config.py`):
 
 | Variable | Default | Uso |
 |---|---|---|
@@ -350,11 +447,12 @@ Variables de entorno (`src/knowledgeos/config.py`):
 | `OLLAMA_URL` | `http://localhost:11434` | base URL de la API de Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:1.5b` | modelo a pedirle a Ollama |
 
-## Relaciones y timeline (Fase 3)
+## Relaciones y timeline (Fase 3, `cerebro-memory`)
 
-Grafo ligero **en Postgres** (`memory_edges`, `db/migrations/003_edges.sql`) -- nada de
-base de grafos dedicada (plan_v2.md SS8, Fase 3). Dos piezas: aristas explícitas entre
-memorias, y una línea de tiempo sobre `occurred_at`.
+Grafo ligero **en Postgres** (`memory_edges`,
+`packages/cerebro-memory/db/migrations/003_edges.sql`) -- nada de base de grafos
+dedicada. Dos piezas: aristas explícitas entre memorias, y una línea de tiempo sobre
+`occurred_at`.
 
 **Vocabulario de relaciones** (controlado, `CHECK` en la tabla -- no es texto libre):
 `relates_to` (asociación genérica), `caused_by` (`from` fue causado por `to` --
@@ -379,11 +477,11 @@ curl -s -X DELETE localhost:8000/memories/$DECISION_ID/edges/$EDGE_ID -H "Author
 `GET /memories/{id}/related` devuelve, para cada vecino, `relation`, `direction`
 (`"outgoing"` si `id` es el origen de la relación, `"incoming"` si es el destino),
 `note`, `created_by`, y la memoria vecina completa. Además, **automáticamente**,
-incluye la cadena de supersedencia (`memories.superseded_by`, ya existente desde Fase
-1) como una relación **virtual** `"supersedes"` (`virtual: true`, `edge_id: null`) --
-nunca se escribe a `memory_edges`, se deriva en lectura. `relation=supersedes` como
-filtro devuelve solo esa cadena; cualquier otro valor del vocabulario filtra solo
-aristas reales.
+incluye la cadena de supersedencia (`memories.superseded_by`, desde Fase 1) como una
+relación **virtual** `"supersedes"` (`virtual: true`, `edge_id: null`) -- nunca se
+escribe a `memory_edges`, se deriva en lectura. `relation=supersedes` como filtro
+devuelve solo esa cadena; cualquier otro valor del vocabulario filtra solo aristas
+reales.
 
 Borrar una memoria en duro (`DELETE /memories/{id}?hard=true`) borra en cascada
 (`ON DELETE CASCADE`) todas sus aristas, en ambas direcciones -- no quedan aristas
@@ -401,8 +499,7 @@ explícito o `auto` con un contexto claro), un vecino de **otro** contexto solo 
 incluye si la arista es **explícita** (`virtual: false`) -- se marca `cross_context:
 true`. La lógica es que una arista explícita es un puente intencional que el
 usuario/agente creó a propósito con `POST /memories/{id}/edges`, no una colisión
-accidental de vocabulario entre contextos -- por eso no cuenta como la contaminación
-que Fase 2 combate.
+accidental de vocabulario entre contextos.
 
 ```bash
 curl -s "localhost:8000/memories/search?q=por+que+migramos+de+proveedor&context=infraestructura&expand=true" \
@@ -423,31 +520,93 @@ curl -s "localhost:8000/timeline?context=infraestructura&from=2026-07-01T00:00:0
 `add_edge`/`delete_edge` quedan registrados en `audit_log` (acciones `add_edge` /
 `delete_edge`), igual que el resto de operaciones de escritura.
 
+## `cerebro-docs`: documentos Markdown versionados
+
+Servicio hermano de `cerebro-memory`, para el otro extremo del espectro: no memorias
+cortas y atómicas, sino documentos Markdown completos (runbooks, especificaciones,
+notas largas) organizados en categorías, con historial de versiones y la posibilidad
+de parchear una sección concreta sin reenviar el documento entero.
+
+| Metodo | Ruta | Scope | Descripcion |
+|---|---|---|---|
+| `POST` | `/categories` | write | crea una categoría (`slug`, `name`, `description?`) |
+| `GET` | `/categories` | read | lista categorías (filtrado a `allowed_categories` del token, si tiene) |
+| `PATCH` | `/categories/{slug}` | write | renombra/edita una categoría; sus documentos no cambian de ruta lógica (el FK es `category_id`, no texto copiado) |
+| `DELETE` | `/categories/{slug}` | admin | 409 si tiene documentos, salvo `?force=true` (cascada a documentos y su historial de versiones) |
+| `POST` | `/documents` | write | crea un documento (`title`, `content`, `category`, `slug?`); 409 si el slug ya existe en esa categoría |
+| `GET` | `/documents/{category}/{slug}` | read | lee un documento por su ruta exacta |
+| `GET` | `/documents` | read | lista documentos, `updated_at desc`; filtros `category?`, `q?` (full-text simple), `limit?=20`, `offset?=0` |
+| `PATCH` | `/documents/{id}` | write | reemplazo completo (incluye mover de categoría); snapshotea la versión anterior en `document_versions` antes de escribir |
+| `PATCH` | `/documents/{id}/section` | write | parche parcial por heading: `operation` en `replace`\|`append`\|`insert_after`\|`insert_before`\|`delete`; snapshotea igual que el reemplazo completo |
+| `DELETE` | `/documents/{id}` | write | borra el documento (cascada a `document_versions`) |
+| `POST` | `/tokens` | admin | crea un token con scopes (`{name, scopes, allowed_categories?}`) |
+| `GET` | `/tokens` | admin | lista tokens |
+| `DELETE` | `/tokens/{name}` | admin | revoca un token por nombre |
+| `GET` | `/stats` | read | conteos de categorías/documentos/versiones (mirror mínimo del `/stats` de cerebro-memory, sin desambiguaciones ni preferencias) |
+| `GET` | `/health` | ninguno | sin auth; chequea conexion a la base de datos |
+
+**Sección = desde un heading hasta el siguiente del mismo nivel o superior.** Si el
+heading buscado aparece más de una vez, `PATCH /documents/{id}/section` devuelve `409`
+(ambiguo, nunca adivina cuál); si no existe, `404` a menos que se pase
+`create_if_missing=true` (crea la sección al final, con `new_heading_level`, default
+`2`).
+
+```bash
+curl -s -X PATCH localhost:8010/documents/$DOC_ID/section \
+  -H "Authorization: Bearer $DOCS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"heading":"## Pasos","operation":"append","body":"4. Verificar healthcheck"}'
+```
+
+`cerebro-docs` **no filtra credenciales** en el contenido (a diferencia de
+`POST /memories` en cerebro-memory) y **rechaza campos desconocidos** en cualquier
+body de entrada (`422`, ver "Validación de entrada estricta" arriba). No tiene
+retrieval semántico ni Context Engine -- la búsqueda (`GET /documents?q=...`) es
+full-text simple (`websearch_to_tsquery('simple', ...)` + `ts_rank`), siempre
+parametrizada.
+
 ## Tests
 
 ```bash
-pytest
+# cada paquete tiene su propia suite (testpaths = ["tests"] en su pyproject.toml)
+cd packages/cerebro-memory && pytest
+cd packages/cerebro-docs && pytest
+cd packages/cerebro-clients && pytest
+cd packages/cerebro-mcp && pytest
+cd packages/cerebro-cli && pytest
 ```
 
-`tests/test_rrf.py`, `tests/test_security.py`, `tests/test_context_engine.py`, la
-parte unitaria de `tests/test_auth.py` (`Principal`, `hash_token`/`generate_token`) y
-la parte unitaria de `tests/test_graph.py` (vocabulario de relaciones) son unitarios
-(sin base de datos). `tests/test_supersedence.py`, la parte de integracion de
-`tests/test_auth.py` (ciclo de vida de tokens, enforcement de scopes y de
-`allowed_contexts`, `DELETE /contexts/{slug}`) y la parte de integracion de
-`tests/test_graph.py` (aristas, no-duplicados, direccion en `related`, cascada de
-hard-delete, ordering de `timeline`) se saltan automaticamente si `DATABASE_URL` no es
-alcanzable (arranca `docker compose up -d` primero).
+En `cerebro-memory`: `tests/test_rrf.py`, `tests/test_security.py`,
+`tests/test_context_engine.py`, la parte unitaria de `tests/test_auth.py`
+(`Principal`, `hash_token`/`generate_token`) y la parte unitaria de
+`tests/test_graph.py` (vocabulario de relaciones) son unitarios (sin base de datos).
+`tests/test_supersedence.py`, la parte de integracion de `tests/test_auth.py` (ciclo
+de vida de tokens, enforcement de scopes y de `allowed_contexts`, `DELETE
+/contexts/{slug}`) y la parte de integracion de `tests/test_graph.py` (aristas,
+no-duplicados, direccion en `related`, cascada de hard-delete, ordering de
+`timeline`) se saltan automaticamente si `DATABASE_URL` no es alcanzable (arranca
+`docker compose up -d` primero desde la raíz del repo).
 
-## Conectar a Claude (servidor MCP)
+En `cerebro-docs`: `tests/test_auth.py`, `tests/test_documents.py`,
+`tests/test_sections.py`, `tests/test_slugs.py`, `tests/test_strict_input.py` -- mismo
+criterio, la parte de integración necesita `DATABASE_URL` alcanzable.
 
-`src/knowledgeos/mcp_server.py` expone la API como un servidor MCP por stdio (SDK
-oficial `mcp`, `FastMCP`). Es un adaptador delgado: cada tool llama a la API HTTP con
-`httpx`, no hay lógica de negocio propia (salvo el pequeño estado de proceso descrito
-abajo para el aprendizaje de desambiguaciones). Tools disponibles: `memory_search`,
-`memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
-`memory_create_context`, `memory_stats`, `memory_link`, `memory_related`,
-`memory_timeline` (las últimas tres, Fase 3).
+## Conectar a Claude (servidor MCP: `cerebro-mcp`)
+
+`packages/cerebro-mcp/src/cerebro_mcp/server.py` expone **ambas** APIs como un único
+servidor MCP por stdio (SDK oficial `mcp`, `FastMCP`). Es un adaptador delgado: cada
+tool llama a la API HTTP correspondiente vía `cerebro_clients` (`MemoryClient` /
+`DocsClient`), sin lógica de negocio propia -- toda vive en las APIs, así
+`cerebro-cli` comparte exactamente el mismo camino.
+
+19 tools disponibles:
+
+- **`memory_*`** (10, hablan con `cerebro-memory`): `memory_search`,
+  `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
+  `memory_create_context`, `memory_stats`, `memory_link`, `memory_related`,
+  `memory_timeline`.
+- **`docs_*`** (9, hablan con `cerebro-docs`): `docs_create_category`,
+  `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`,
+  `docs_update`, `docs_patch_section`, `docs_delete`.
 
 `memory_search` usa `scope=auto` por defecto (Context Engine). Si la respuesta es
 ambigua, `message` trae el texto ya formateado para decidir o mostrar al usuario, y
@@ -461,7 +620,7 @@ solas la próxima vez. `memory_stats()` expone conteos de memorias, desambiguaci
 (auto vs agent) y preferencias aprendidas -- útil para ver el aprendizaje en acción.
 `memory_search` también acepta `expand=True` (Fase 3, default `False`) para recibir un
 bloque `related` con los vecinos directos de los resultados -- ver "Relaciones y
-timeline (Fase 3)" arriba.
+timeline" arriba.
 
 `memory_link(from_memory_id, to_memory_id, relation, note?)` crea una arista explícita
 entre dos memorias (vocabulario: `relates_to`, `caused_by`, `part_of`, `contradicts`,
@@ -471,26 +630,44 @@ relation?)` lista los vecinos a 1 salto, incluida la cadena de supersedencia vir
 `memory_timeline(context?, from_date?, to_date?, limit?)` responde preguntas tipo
 "¿qué pasó en X las últimas semanas?".
 
-Tras `pip install -e ".[dev]"` queda instalado el entry point de consola
-`knowledgeos-mcp` (ver `[project.scripts]` en `pyproject.toml`). Requiere que la API
-esté corriendo (`python -m knowledgeos.main`).
+`docs_save(category, title, content, slug?)` crea un documento nuevo.
+`docs_patch_section(document_id, heading, operation, body?, create_if_missing?,
+new_heading_level?)` parchea una sección puntual sin reenviar el documento completo --
+el uso previsto para que un agente actualice, p.ej., un runbook línea por línea en vez
+de reescribirlo entero cada vez. `docs_search(query, category?, limit?, offset?)` hace
+full-text simple; `docs_list`/`docs_categories` listan sin query.
 
-Variables de entorno que lee el servidor MCP:
+Tras instalar `cerebro-mcp` (`pip install -e packages/cerebro-mcp`) queda disponible
+el entry point de consola `cerebro-mcp` (ver `[project.scripts]` en su
+`pyproject.toml`). Requiere que **ambas** APIs estén corriendo
+(`python -m cerebro_memory.main` y `python -m cerebro_docs.main`, o el equivalente en
+Docker).
+
+Variables de entorno que lee el servidor MCP (vía `cerebro_clients.config`):
 
 | Variable | Default | Uso |
 |---|---|---|
-| `KNOWLEDGEOS_API_URL` | `http://localhost:8000` | base URL de la API HTTP |
-| `KNOWLEDGEOS_API_TOKEN` | *(vacío)* | debe coincidir con `API_TOKEN` del `.env` de la API |
-| `KNOWLEDGEOS_AGENT_NAME` | `mcp-client` | identidad enviada como `X-Agent-Name` (audit log, `memory.source`) |
+| `CEREBRO_MEMORY_URL` | `http://localhost:8005` | base URL de `cerebro-memory` |
+| `CEREBRO_DOCS_URL` | `http://localhost:8010` | base URL de `cerebro-docs` |
+| `CEREBRO_TOKEN` | *(vacío)* | token compartido para ambas APIs |
+| `CEREBRO_AGENT_NAME` | `cerebro-client` | identidad enviada como `X-Agent-Name` (audit log, `memory.source`/`documents.created_by`) |
+| `KNOWLEDGEOS_API_URL` / `KNOWLEDGEOS_API_TOKEN` / `KNOWLEDGEOS_AGENT_NAME` | *(fallback)* | legado, **solo aplica a `cerebro-memory`**; si ya los tenías configurados de antes de la migración siguen funcionando |
+
+Nota sobre los defaults: `CEREBRO_MEMORY_URL` por defecto asume el puerto de Docker
+(`8005`), mientras que `CEREBRO_DOCS_URL` por defecto asume el puerto de desarrollo
+local sin Docker (`8010`, no `8006`). Si corres ambas APIs con el mismo modo (A o B),
+exporta explícitamente las dos variables para que apunten al mismo lado -- ver
+"Quickstart" arriba para los pares de puertos de cada modo.
 
 ### Claude Code
 
 ```bash
-claude mcp add knowledgeos --scope user \
-  -e KNOWLEDGEOS_API_URL=http://localhost:8000 \
-  -e KNOWLEDGEOS_API_TOKEN=change-me-dev-token \
-  -e KNOWLEDGEOS_AGENT_NAME=claude-code \
-  -- knowledgeos-mcp
+claude mcp add cerebro --scope user \
+  -e CEREBRO_MEMORY_URL=http://localhost:8005 \
+  -e CEREBRO_DOCS_URL=http://localhost:8006 \
+  -e CEREBRO_TOKEN=change-me-dev-token \
+  -e CEREBRO_AGENT_NAME=claude-code \
+  -- cerebro-mcp
 ```
 
 ### Claude Desktop
@@ -501,72 +678,72 @@ Config):
 ```json
 {
   "mcpServers": {
-    "knowledgeos": {
-      "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\knowledgeos-mcp.exe",
+    "cerebro": {
+      "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
       "env": {
-        "KNOWLEDGEOS_API_URL": "http://localhost:8000",
-        "KNOWLEDGEOS_API_TOKEN": "change-me-dev-token",
-        "KNOWLEDGEOS_AGENT_NAME": "claude-desktop"
+        "CEREBRO_MEMORY_URL": "http://localhost:8005",
+        "CEREBRO_DOCS_URL": "http://localhost:8006",
+        "CEREBRO_TOKEN": "change-me-dev-token",
+        "CEREBRO_AGENT_NAME": "claude-desktop"
       }
     }
   }
 }
 ```
 
-Si `knowledgeos-mcp` no está en el `PATH` que ve Claude Desktop, usa la ruta absoluta
-al ejecutable del venv, p.ej. en Windows:
-`"command": "D:\\ruta\\al\\repo\\.venv\\Scripts\\knowledgeos-mcp.exe"`.
+Si `cerebro-mcp` no está en el `PATH` que ve Claude Desktop, usa la ruta absoluta al
+ejecutable del venv, p.ej. en Windows:
+`"command": "D:\\ruta\\al\\repo\\.venv\\Scripts\\cerebro-mcp.exe"`.
 
-## CLI
+## CLI (`cerebro`)
 
-`src/knowledgeos/cli.py` (entry point de consola `knowledgeos`, instalado por
-`pip install -e ".[dev]"`) es un cliente delgado de la API HTTP -- igual que el
-servidor MCP, no tiene lógica de negocio propia (salvo la orquestación del importador
-de Markdown, ver abajo). Lee `.env` (vía `knowledgeos.config.get_settings`) para el
-token; por defecto asume la API en `http://localhost:<APP_PORT>` y puede
-sobreescribirse con las mismas variables que el servidor MCP:
-`KNOWLEDGEOS_API_URL` / `KNOWLEDGEOS_API_TOKEN`. `backup`/`restore` son la excepción:
-hablan directo con `docker compose` (Postgres solo expone su puerto en `localhost`, y
-un dump no tiene sentido como llamada HTTP).
+`packages/cerebro-cli/src/cerebro_cli/main.py` (entry point de consola `cerebro`,
+instalado por `pip install -e packages/cerebro-cli`) es un cliente delgado de ambas
+APIs HTTP vía `cerebro_clients` -- igual que el servidor MCP, no tiene lógica de
+negocio propia (salvo la orquestación del importador de Markdown, heredada de
+`cerebro_memory`, y el manejo de fallo parcial de los tokens transversales, ver
+"Seguridad" arriba). Antes de despachar cualquier subcomando, `main()` carga
+`.env.production`/`.env` de la raíz del monorepo sin pisar variables ya presentes en
+el entorno (`packages/cerebro-cli/src/cerebro_cli/dotenv.py`) -- así `cerebro memory
+stats` sigue hablando con el VPS de producción por defecto si ese archivo apunta ahí,
+sin depender de un wrapper de shell hecho a mano.
 
 ```bash
-knowledgeos --help
-
-# tokens con scopes (ver "Seguridad" arriba) - requiere auth admin (el token root sirve)
-knowledgeos token create claude-desktop --scopes read,write
-knowledgeos token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
-knowledgeos token list
-knowledgeos token revoke agente-trabajo
-
-# dataset de disambiguation_log para un futuro fine-tuning local (Fase 4)
-knowledgeos export-disambiguations --output disambiguations.jsonl
-knowledgeos export-disambiguations --resolved-only
-
-# estadisticas del sistema (igual que GET /stats), formateadas para consola
-knowledgeos stats
-
-# backup / restore (pg_dump / psql via docker compose)
-knowledgeos backup --output backups/
-knowledgeos restore backups/knowledgeos-20260807-010359.sql   # pide confirmacion
-knowledgeos restore backups/knowledgeos-20260807-010359.sql --yes   # sin confirmar
+cerebro --help
 ```
 
-`knowledgeos token create` imprime el token en claro **una sola vez** -- guárdalo de
-inmediato (p.ej. como `KNOWLEDGEOS_API_TOKEN` del cliente MCP correspondiente).
+Tres grupos de subcomandos: `cerebro memory ...`, `cerebro docs ...`, y comandos
+transversales sin prefijo.
+
+### `cerebro memory ...`
+
+```bash
+cerebro memory stats                                              # igual que GET /stats de cerebro-memory
+cerebro memory export-disambiguations --output disambiguations.jsonl
+cerebro memory export-disambiguations --resolved-only
+
+# tokens ESCOPADOS solo a cerebro-memory - requiere auth admin
+cerebro memory token create claude-desktop --scopes read,write
+cerebro memory token create agente-trabajo --scopes read --contexts cliente-acme,infraestructura
+cerebro memory token list
+cerebro memory token revoke agente-trabajo
+```
 
 `export-disambiguations` siempre imprime cuántos ejemplos hay frente al umbral del
-plan (`~500`, ver "Clasificador local opcional (Fase 4)" arriba) para que sea fácil
-saber si ya vale la pena considerar el fine-tuning.
+plan (`~500`, ver "Clasificador local opcional" arriba) para que sea fácil saber si ya
+vale la pena considerar el fine-tuning.
 
-### Importar memorias existentes (Fase 5)
+#### Importar memorias existentes (Fase 5)
 
-`knowledgeos import-markdown` es el **primer conector de Fase 5** (plan_v2.md SS8):
-importa archivos Markdown de memoria ya existentes (`MEMORY.md`/`CLAUDE.md` estilo
-Claude Code, o notas sueltas) como memorias de KnowledgeOS. Se eligió como conector #1
+`cerebro memory import-markdown` es el **primer conector de Fase 5**: importa
+archivos Markdown de memoria ya existentes (`MEMORY.md`/`CLAUDE.md` estilo Claude
+Code, o notas sueltas) como memorias de `cerebro-memory`. Se eligió como conector #1
 a propósito porque resuelve la migración desde el statu quo del usuario, no porque sea
-técnicamente lo más interesante (plan_v2.md SS11: "sin dogfooding no hay dataset").
+técnicamente lo más interesante.
 
-El parsing (`src/knowledgeos/markdown_importer.py`) reconoce tres formatos, en este
+El parsing (`packages/cerebro-memory/src/cerebro_memory/markdown_importer.py`, un
+parser puro que `cerebro-cli` reusa sin depender del `cli.py`/`mcp_server.py`
+originales -- ya eliminados de `cerebro-memory`) reconoce tres formatos, en este
 orden:
 
 1. **Frontmatter YAML estilo memoria de Claude Code** (`name`, `description`,
@@ -584,19 +761,19 @@ orden:
 
 En cualquiera de los tres casos, bloques de código de más de 30 líneas se truncan a
 `[código truncado]` antes de procesar -- una memoria es un resumen destilado, no un
-volcado de código fuente (plan_v2.md SS4.1, "memory over conversation").
+volcado de código fuente.
 
 ```bash
 # vista previa: que se importaria, sin escribir nada
-knowledgeos import-markdown ./mis-notas --context notas-personales --dry-run
+cerebro memory import-markdown ./mis-notas --context notas-personales --dry-run
 
 # import real; crea el contexto si no existe
-knowledgeos import-markdown ./mis-notas \
+cerebro memory import-markdown ./mis-notas \
   --context notas-personales --create-context \
   --context-description "Notas migradas desde Markdown"
 
 # un solo archivo, tipo forzado
-knowledgeos import-markdown ./MEMORY.md --context notas-personales --type semantic
+cerebro memory import-markdown ./MEMORY.md --context notas-personales --type semantic
 ```
 
 Antes de insertar cada memoria, el importador busca por similitud (`GET
@@ -605,39 +782,82 @@ si el resultado top tiene un score de RRF alto **y** el mismo título exacto, la
 y la reporta como "duplicada" en vez de reinsertarla -- así una segunda corrida sobre
 el mismo directorio (o un `MEMORY.md` que enlaza archivos que el glob recursivo ya
 recorrió por separado) no duplica memorias. Credenciales detectadas por la API
-(`POST /memories` -> 422, ver `src/knowledgeos/security.py`) se capturan y reportan
-como "rechazada" sin interrumpir el resto del import. Al final imprime un resumen:
-`N importadas, M duplicadas (saltadas), K rechazadas`.
+(`POST /memories` -> 422) se capturan y reportan como "rechazada" sin interrumpir el
+resto del import. Al final imprime un resumen: `N importadas, M duplicadas
+(saltadas), K rechazadas`.
+
+### `cerebro docs ...`
+
+```bash
+cerebro docs category create infraestructura --name "Infraestructura" --description "Runbooks y notas de infra"
+cerebro docs category list
+cerebro docs category rename infraestructura infra --name "Infra"
+cerebro docs category delete infra --force
+
+cerebro docs save infraestructura "Runbook: restore de Postgres" --content-file runbook.md
+cerebro docs get infraestructura runbook-restore-de-postgres
+cerebro docs list --category infraestructura --limit 10
+cerebro docs search "restore postgres"
+
+cerebro docs update $DOC_ID "Runbook: restore de Postgres (v2)" infraestructura --content-file runbook-v2.md
+cerebro docs patch-section $DOC_ID "## Pasos" append --body "4. Verificar healthcheck" --create-if-missing
+
+cerebro docs delete $DOC_ID --yes
+cerebro docs stats
+```
+
+`--content-file` es opcional en `save`/`update` -- si se omite, el CLI lee el
+contenido de stdin (útil para pipear la salida de otro comando o un heredoc).
+
+### Comandos transversales (sin prefijo)
+
+```bash
+# backup / restore (pg_dump / psql via docker compose) - cubre AMBOS schemas
+cerebro backup --output backups/
+cerebro restore backups/cerebro-20260812-030000.sql   # pide confirmacion (DESTRUCTIVO)
+cerebro restore backups/cerebro-20260812-030000.sql --yes   # sin confirmar
+
+# tokens TRANSVERSALES (un secreto, registrado en cerebro-memory y cerebro-docs)
+cerebro token create claude-desktop --scopes read,write --contexts cliente-acme --categories infraestructura
+cerebro token revoke claude-desktop
+```
+
+`cerebro token create` imprime el token en claro **una sola vez** -- guárdalo de
+inmediato (p.ej. como `CEREBRO_TOKEN` del cliente MCP correspondiente). Ver "Tokens
+transversales" en la sección "Seguridad" arriba para el comportamiento ante
+fallo parcial.
 
 ## Evaluación
 
-La suite de evaluación de retrieval (`evals/`, ver `evals/README.md` para el detalle
-completo de métricas y corpus) mide precision@k, recall@k y tasa de contaminación
-entre contextos, con un corpus sintético de ~40 memorias en 6 contextos y 30 casos de
-prueba en español.
+La suite de evaluación de retrieval de `cerebro-memory`
+(`packages/cerebro-memory/evals/`, ver `packages/cerebro-memory/evals/README.md` para
+el detalle completo de métricas y corpus) mide precision@k, recall@k y tasa de
+contaminación entre contextos, con un corpus sintético de ~40 memorias en 6 contextos
+y 30 casos de prueba en español. `cerebro-docs` no tiene una suite de evaluación
+equivalente (no hace retrieval semántico ni scoping, solo full-text simple).
 
 ```bash
+cd packages/cerebro-memory
+
 # baseline: overlap de palabras clave, sin nocion de contexto
 python evals/harness/run_eval.py --adapter naive
 
-# KnowledgeOS real, vía la API HTTP (requiere la API corriendo y Postgres arriba)
-python -m knowledgeos.main &   # o en otra terminal
+# cerebro-memory real, vía la API HTTP (requiere la API corriendo y Postgres arriba)
+python -m cerebro_memory.main &   # o en otra terminal
 
 # control (Fase 1): retrieval hibrido sin Context Engine
-KNOWLEDGEOS_SEARCH_SCOPE=all python evals/harness/run_eval.py --adapter knowledgeos --include-superseded
+KNOWLEDGEOS_SEARCH_SCOPE=all python evals/harness/run_eval.py --adapter cerebro-memory --include-superseded
 
 # Context Engine (Fase 2): scope=auto
-KNOWLEDGEOS_SEARCH_SCOPE=auto python evals/harness/run_eval.py --adapter knowledgeos --include-superseded
+KNOWLEDGEOS_SEARCH_SCOPE=auto python evals/harness/run_eval.py --adapter cerebro-memory --include-superseded
 ```
 
-`evals/harness/adapters/knowledgeos_adapter.py` habla con la API real por HTTP (igual
-que lo haría el servidor MCP): en `setup()` verifica `/health`, crea los contextos del
-corpus que falten y purga memorias de corridas anteriores. `KNOWLEDGEOS_SEARCH_SCOPE`
-(default `all`) elige el modo: `all` es el retrieval híbrido puro de Fase 1 (sin
-scoping); `auto` activa el Context Engine -- si la API responde `ambiguous`, el
-adaptador simula un agente razonable (sin leer `contexto_esperado`: elige el
-candidato cuyo resultado individual top tenga mejor score, usando el score agregado
-del propio candidato como desempate) y llama `resolve` como haría el servidor MCP.
+(la variable de entorno conserva su nombre legado `KNOWLEDGEOS_SEARCH_SCOPE` -- el
+harness de `evals/` no se tocó en la migración al monorepo, solo se movió de sitio.)
+
+`evals/harness/adapters/` habla con la API real por HTTP (igual que lo haría el
+servidor MCP): en `setup()` verifica `/health`, crea los contextos del corpus que
+falten y purga memorias de corridas anteriores.
 
 Los 3 pares `superseded`→`active` del corpus (`evals/memories.yaml`,
 `superseded_by_id`) se insertan como cadena de supersedencia real cuando se usa
@@ -656,67 +876,76 @@ insertar ambas como filas activas independientes.
 | `scope=auto` (Context Engine) | directo | 20% | 100% | 0% |
 | `scope=auto` (Context Engine) | temporal | 20% | 100% | 0% |
 
-Umbrales calibrados en `src/knowledgeos/config.py` (`CONTEXT_ENGINE_*`); entre corridas
-del benchmark, trunca `disambiguation_log` y `context_preferences` para medir
-`scope=auto` en frío (sin aprendizaje acumulado de una corrida anterior).
+Umbrales calibrados en `packages/cerebro-memory/src/cerebro_memory/config.py`
+(`CONTEXT_ENGINE_*`); entre corridas del benchmark, trunca `disambiguation_log` y
+`context_preferences` para medir `scope=auto` en frío (sin aprendizaje acumulado de
+una corrida anterior).
 
-Lee `evals/README.md` para cómo agregar casos o corpus propios, y `--include-superseded`
-para que la categoría `temporal` sea significativa.
+Lee `packages/cerebro-memory/evals/README.md` para cómo agregar casos o corpus
+propios, y `--include-superseded` para que la categoría `temporal` sea significativa.
 
-**Fase 3 (grafo/timeline) re-verificada sin regresión:** el harness no pasa `expand`
-en sus búsquedas y `memory_edges`/`/timeline` son endpoints nuevos que el corpus de
-`evals/` no toca, así que la tabla de arriba se re-corrió tal cual tras Fase 3 y dio
-exactamente los mismos números (`scope=auto`: 0% contaminación en los 3 categorías,
-100% recall; `scope=all` control: 25% contaminación en ambiguo, igual que antes).
-
-**Fase 4/5 (resolver opcional + importador de Markdown) re-verificada sin regresión:**
-`CONTEXT_ENGINE_RESOLVER` no está seteado en el entorno de evaluación (`NullResolver`,
-default), así que el hook de la Fase 4 es un no-op garantizado; `import-markdown` es
-un comando de CLI que el harness nunca invoca. Se re-corrió la tabla de arriba
-(`scope=auto`) tras ambas tareas y dio los mismos números: 0% contaminación en las 3
-categorías, 100% recall.
-
-**v1.0 (tokens con scopes + Docker + limpieza de datos) re-verificada sin regresión:**
-el harness usa el token root (todos los scopes, sin `allowed_contexts`), así que la
-autorización de la Tarea de v1.0 es transparente a estas corridas -- no hay ningún
-camino nuevo que module el retrieval en sí. Se re-corrieron las tres corridas
-completas (`naive`, `scope=all`, `scope=auto`, las tres con `--include-superseded`,
-truncando `disambiguation_log`/`context_preferences` antes de `scope=auto` para medir
-en frío) contra un Postgres ya limpiado de residuos de smoke tests (solo los 6
-contextos del corpus): mismos números exactos que la tabla de arriba - `scope=auto`
-en 0% de contaminación y 100% de recall en las 3 categorías.
+Estos números vienen de antes de la migración al monorepo y de la separación de
+`cerebro-docs`; ninguno de los dos cambios toca `cerebro-memory/retrieval.py`,
+`context_engine.py` ni el corpus de `evals/`, así que se mantienen como línea base
+hasta la próxima recalibración.
 
 ## Estructura
 
 ```
-Dockerfile                    # imagen multi-stage de la API, no-root, pre-descarga el modelo en build
-.dockerignore
-compose.yaml                  # postgres (siempre) + api (servicio "api", profile "full")
-.env.example                  # DATABASE_URL, API_TOKEN, EMBEDDING_MODEL, CONTEXT_ENGINE_*, RESOLVER/OLLAMA
-db/migrations/001_init.sql    # schema base (contexts, memories, audit_log)
-db/migrations/002_context_engine.sql   # Context Engine (disambiguation_log, context_preferences)
-db/migrations/003_edges.sql   # memory_edges: grafo ligero de relaciones
-db/migrations/004_api_tokens.sql   # api_tokens: tokens con nombre, scopes, allowed_contexts
-src/knowledgeos/
-    config.py                 # settings desde env (pydantic-settings), incluye CONTEXT_ENGINE_*
-    db.py                     # pool asyncpg + aplicacion de migraciones al arrancar
-    embeddings.py             # EmbeddingProvider (fastembed local, con fallback a sentence-transformers)
-    security.py                # deteccion de credenciales en remember()
-    auth.py                    # Principal, scopes, hash de tokens, CRUD de api_tokens
-    retrieval.py               # busqueda hibrida (vector + full-text) fusionada con RRF
-    context_engine.py          # Context Engine + AmbiguityResolver/NullResolver/OllamaResolver (opcional)
-    graph.py                   # aristas (memory_edges), related() 1-hop, timeline, expand de search
-    api.py                     # FastAPI app (auth, scopes, CRUD, search con scoping, disambiguations, stats, edges, timeline, tokens)
-    markdown_importer.py       # parsing puro (frontmatter / indice MEMORY.md / generico por headings)
-    cli.py                     # entry point `knowledgeos`: token, export-disambiguations, stats, import-markdown, backup/restore
-    main.py                    # uvicorn entrypoint
-    mcp_server.py              # servidor MCP (FastMCP, stdio) - adaptador delgado sobre la API
-evals/
-    harness/adapters/knowledgeos_adapter.py   # adaptador del harness contra la API real
-tests/
-    test_context_engine.py    # unitarios: dominancia, empate->ambiguo, boost por preferencias
-    test_ambiguity_resolver.py # NullResolver, OllamaResolver mockeado (valida/invalida/timeout)
-    test_markdown_importer.py # frontmatter, indice MEMORY.md, genérico por headings (fixtures en tests/fixtures/)
-    test_graph.py              # vocabulario (unitario) + aristas/related/timeline (integracion)
-    test_auth.py                # Principal/hash (unitario) + scopes/allowed_contexts/tokens/delete-context (integracion)
+compose.yaml                  # postgres (siempre) + cerebro-memory-api + cerebro-docs-api (profile "full")
+.env.example                  # variables compartidas: DATABASE_URL, API_TOKEN, APP_PORT, EMBEDDING_*, CONTEXT_ENGINE_*, seccion cerebro-docs
+.env.production                # (no versionado) config de produccion que cerebro-cli carga automaticamente
+plan_v2.md                     # arquitectura y modelo de datos original de cerebro-memory (Fases 1-4)
+packages/
+    cerebro-memory/            # servicio API puro: memoria persistente
+        Dockerfile              # imagen multi-stage, no-root, pre-descarga el modelo en build
+        pyproject.toml          # sin [project.scripts]: no expone CLI ni MCP propios
+        db/migrations/           # 001_init .. 005_schema_cerebro_memory
+        evals/                    # suite de evaluacion de retrieval (ver "Evaluacion")
+        src/cerebro_memory/
+            config.py             # settings desde env, incluye CONTEXT_ENGINE_*
+            db.py                 # pool asyncpg + aplicacion de migraciones al arrancar
+            embeddings.py         # EmbeddingProvider (fastembed local)
+            security.py           # deteccion de credenciales en remember()
+            auth.py                # Principal, scopes, hash de tokens, CRUD de api_tokens
+            retrieval.py           # busqueda hibrida (vector + full-text) fusionada con RRF
+            context_engine.py      # Context Engine + AmbiguityResolver/NullResolver/OllamaResolver
+            graph.py                # aristas (memory_edges), related() 1-hop, timeline, expand de search
+            api.py                  # FastAPI app (auth, scopes, CRUD, search, disambiguations, stats, edges, timeline, tokens)
+            markdown_importer.py    # parsing puro, reusado por cerebro-cli (Fase 5)
+            main.py                  # uvicorn entrypoint
+        tests/
+    cerebro-docs/               # servicio API puro: documentos Markdown versionados
+        Dockerfile
+        pyproject.toml            # [project.scripts]: cerebro-docs (uvicorn entrypoint, no CLI de usuario)
+        db/migrations/001_init.sql
+        src/cerebro_docs/
+            config.py               # espejo minimo de cerebro_memory.config, sin embeddings/Context Engine
+            db.py / auth.py
+            slugs.py                 # slugify() para documentos/categorias
+            sections.py               # apply_section_patch(): replace/append/insert_after/insert_before/delete
+            api.py                     # FastAPI app: categorias, documentos versionados, tokens, stats
+            main.py                     # uvicorn entrypoint
+        tests/
+    cerebro-clients/             # SDK httpx compartido, sin entry points (libreria)
+        src/cerebro_clients/
+            base.py                   # excepciones + cliente HTTP base
+            config.py                  # resolucion de CEREBRO_MEMORY_URL/CEREBRO_DOCS_URL/CEREBRO_TOKEN/CEREBRO_AGENT_NAME
+            memory_client.py             # MemoryClient
+            docs_client.py                # DocsClient
+        tests/
+    cerebro-mcp/                  # servidor MCP stdio unico (FastMCP): memory_* + docs_*
+        pyproject.toml              # [project.scripts]: cerebro-mcp
+        src/cerebro_mcp/server.py
+        tests/
+    cerebro-cli/                   # CLI unico: cerebro memory / cerebro docs / backup|restore|token transversal
+        pyproject.toml               # [project.scripts]: cerebro
+        src/cerebro_cli/
+            main.py                    # build_parser(), carga .env.production/.env antes de despachar
+            dotenv.py                    # parser minimo de .env, sin pisar el entorno ya presente
+            tokens.py                     # generacion/persistencia local de secretos transversales pendientes
+            memory_commands.py             # cerebro memory ...
+            docs_commands.py                # cerebro docs ...
+            shared_commands.py               # backup, restore, token create/revoke transversal
+        tests/
 ```
