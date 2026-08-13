@@ -28,7 +28,16 @@ services:
   # `docker compose up -d` (default, no --profile flag) still only starts postgres -
   # the day-to-day dev workflow (`python -m cerebro_memory.main` against it) is unchanged.
   # `docker compose --profile full up -d` starts BOTH: postgres + this container.
-  api:
+  #
+  # Service key renamed from `api` -> `cerebro-memory-api` (ecosistema-cerebro.md SS8)
+  # to match container_name/image, now that a second API service (cerebro-docs-api,
+  # below) shares this file. This is a service RENAME, not just an image rename: on
+  # the VPS, `docker compose --profile full up -d` will see the old `api` service is
+  # gone from the file and treat its existing container as an orphan - it keeps
+  # running untouched unless you pass --remove-orphans. Update the VPS with
+  # `docker compose --profile full up -d --remove-orphans` to actually remove it
+  # (safe: it's stateless, postgres holds the data).
+  cerebro-memory-api:
     build:
       context: ./packages/cerebro-memory
       args:
@@ -48,12 +57,47 @@ services:
       # localhost (which .env points at for local, non-docker dev) - override it here
       # so the same .env works for both modes without editing it.
       DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
-      # .env sets APP_PORT=8005 (the host-side port Caddy proxies to); inside the
-      # container the app must listen on 8000, which is what the port mapping and
-      # healthcheck below expect.
+      # .env sets APP_PORT (host-side port Caddy proxies to, for local non-docker dev);
+      # inside the container the app must listen on 8000, which is what the port
+      # mapping and healthcheck below expect.
       APP_PORT: 8000
     ports:
       - "127.0.0.1:8005:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # cerebro-docs API (ecosistema-cerebro.md SS7/SS8): same Postgres instance as
+  # cerebro-memory-api, separate schema (cerebro_docs), separate stateless container.
+  # Mirrors cerebro-memory-api's pattern exactly (profile, healthcheck, depends_on).
+  cerebro-docs-api:
+    build:
+      context: ./packages/cerebro-docs
+    image: cerebro-docs-api
+    container_name: cerebro-docs-api
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Shared .env: both services load the same file, but its APP_PORT/API_TOKEN were
+    # written with cerebro-memory-api in mind. APP_PORT is overridden below to the
+    # in-container port this service actually expects (config.py defaults app_port to
+    # 8010, but we standardize the in-container port to 8000 for both services here,
+    # same as cerebro-memory-api, so the healthcheck/port-mapping pattern matches
+    # exactly). API_TOKEN is intentionally left shared: it's the root token for the
+    # whole ecosystem (ecosistema-cerebro.md SS13) - named, scoped tokens are minted
+    # per-service via `cerebro token create`, not this one.
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
+      APP_PORT: 8000
+    ports:
+      - "127.0.0.1:8006:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
       interval: 10s
