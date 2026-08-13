@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -26,6 +27,13 @@ from cerebro_cli.tokens import clear_pending_value, generate_transversal_token, 
 # original de cerebro-memory, solo que este archivo esta un nivel mas adentro.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
+# Directorio de salida por defecto de `cerebro backup`: DELIBERADAMENTE fuera del
+# arbol del repo (hermano de el, no dentro) -- ecosistema-cerebro.md SS15, criterio de
+# auditoria: un dump completo (incluye contenido de documentos, que SS2/SS9 aclaran
+# que puede llevar secretos pegados por error) no debe poder terminar commiteado por
+# accidente ni vivir bajo un directorio versionado.
+DEFAULT_BACKUP_DIR = REPO_ROOT.parent / "cerebro-backups"
+
 POSTGRES_USER = "knowledgeos"  # nombre del servicio/usuario/DB en compose.yaml - sin cambios (SS5)
 POSTGRES_DB = "knowledgeos"
 
@@ -34,7 +42,7 @@ POSTGRES_DB = "knowledgeos"
 
 
 def cmd_backup(args: argparse.Namespace) -> None:
-    out_dir = Path(args.output) if args.output else (REPO_ROOT / "backups")
+    out_dir = Path(args.output) if args.output else DEFAULT_BACKUP_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_file = out_dir / f"cerebro-{timestamp}.sql"
@@ -52,6 +60,15 @@ def cmd_backup(args: argparse.Namespace) -> None:
         out_file.unlink(missing_ok=True)
         print(f"Error en pg_dump (exit {result.returncode}): {result.stderr.decode(errors='replace')}", file=sys.stderr)
         sys.exit(1)
+
+    # El dump contiene todo el contenido de ambos schemas (incluye documentos de
+    # cerebro-docs, que por diseno pueden llevar secretos pegados por error - ver
+    # ecosistema-cerebro.md SS9) - nunca debe quedar con permisos de lectura para
+    # otros usuarios del sistema. Best-effort: no-op en Windows.
+    try:
+        os.chmod(out_file, 0o600)
+    except OSError:
+        pass
 
     size = out_file.stat().st_size
     print(f"Backup guardado en {out_file} ({size} bytes) - cubre cerebro_memory y cerebro_docs (un solo Postgres compartido).")

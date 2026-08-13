@@ -19,6 +19,7 @@ import argparse
 
 from cerebro_cli import docs_commands, memory_commands, shared_commands
 from cerebro_cli.dotenv import load_repo_dotenv
+from cerebro_cli.tokens import warn_stale_pending_tokens
 
 
 def _add_memory_subparser(sub: argparse._SubParsersAction) -> None:
@@ -186,6 +187,10 @@ def main(argv: list[str] | None = None) -> None:
     # porque (reemplaza al viejo wrapper .venv\Scripts\cerebro.cmd que hacia esto a
     # mano y que el entry point instalado por pip ahora opaca en el PATH).
     load_repo_dotenv()
+    # Best-effort: un registro de token transversal pendiente muy viejo (fallo
+    # parcial nunca reintentado) no debe quedar en disco para siempre sin aviso
+    # (ver cerebro_cli.tokens.warn_stale_pending_tokens).
+    warn_stale_pending_tokens()
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)

@@ -1,4 +1,4 @@
--- KnowledgeOS - Migracion al schema propio `cerebro_memory` (deja `public` libre para
+-- cerebro-memory - Migracion al schema propio `cerebro_memory` (deja `public` libre para
 -- convivir con un futuro schema hermano `cerebro_docs` en la misma instancia Postgres).
 --
 -- Mueve TODAS las tablas del servicio (incluida schema_migrations, la tabla de control
