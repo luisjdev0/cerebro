@@ -9,6 +9,8 @@ fallo parcial de `cerebro token create/revoke` (ver `shared_commands.py`).
 
 Config: `cerebro_clients.config` -- CEREBRO_MEMORY_URL/CEREBRO_DOCS_URL/CEREBRO_TOKEN,
 con fallback KNOWLEDGEOS_API_URL/KNOWLEDGEOS_API_TOKEN para memory (compatibilidad).
+`main()` ademas carga `.env.production`/`.env` de la raiz del monorepo antes de
+despachar cualquier subcomando -- ver `dotenv.py`.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 
 from cerebro_cli import docs_commands, memory_commands, shared_commands
+from cerebro_cli.dotenv import load_repo_dotenv
 
 
 def _add_memory_subparser(sub: argparse._SubParsersAction) -> None:
@@ -177,6 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # ANTES de construir cualquier cliente (los subcomandos los crean via
+    # cerebro_clients, que lee os.environ en cada llamada): carga .env.production/.env
+    # de la raiz del monorepo sin pisar nada ya presente -- ver dotenv.py para el
+    # porque (reemplaza al viejo wrapper .venv\Scripts\cerebro.cmd que hacia esto a
+    # mano y que el entry point instalado por pip ahora opaca en el PATH).
+    load_repo_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)
