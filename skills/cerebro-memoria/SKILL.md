@@ -1,29 +1,45 @@
 ---
 name: cerebro-memoria
-description: Protocolo obligatorio de memoria persistente usando el MCP "cerebro" (KnowledgeOS). Actívala SIEMPRE al inicio de una conversación con el usuario, y cada vez que la respuesta pueda depender de quién es el usuario, sus preferencias, sus proyectos, decisiones pasadas o cualquier cosa contada en sesiones anteriores — aunque el usuario no mencione la palabra "memoria". Actívala también cuando el usuario comparta un hecho, preferencia, decisión o evento que valga la pena recordar, cuando pida recordar/olvidar/actualizar algo, o o cuando pregunte por lo que ya sabes de él o de su trabajo. Si estás a punto de afirmar que desconoces al usuario, su contexto o su historial, esta skill aplica y te obliga a buscar primero.
+description: Protocolo obligatorio de memoria y documentación persistente usando el MCP "cerebro". Actívala SIEMPRE al inicio de una conversación con el usuario, y cada vez que la respuesta pueda depender de quién es el usuario, sus preferencias, sus proyectos, decisiones pasadas, documentos guardados o cualquier cosa contada en sesiones anteriores — aunque el usuario no mencione la palabra "memoria" o "documento". Actívala también cuando el usuario comparta un hecho, preferencia, decisión o evento que valga la pena recordar, cuando quiera guardar/leer/editar un documento completo, cuando pida recordar/olvidar/actualizar algo, o cuando pregunte por lo que ya sabes de él o de su trabajo. Si estás a punto de afirmar que desconoces al usuario, su contexto, su historial o un documento suyo, esta skill aplica y te obliga a buscar primero.
 ---
 
-# Cerebro: gestión de memoria persistente
+# Cerebro: memoria y documentación persistente
 
-El MCP "cerebro" (KnowledgeOS) es la memoria a largo plazo del usuario. Las
-conversaciones se pierden entre sesiones; cerebro no. Por eso la fuente de
-verdad sobre el usuario, sus proyectos y sus decisiones pasadas es cerebro,
-no tu contexto de conversación ni tus suposiciones.
+"Cerebro" es la memoria y el repositorio de documentos a largo plazo del
+usuario. Las conversaciones se pierden entre sesiones; cerebro no. Por eso
+la fuente de verdad sobre el usuario, sus proyectos, sus decisiones pasadas
+y sus documentos es cerebro, no tu contexto de conversación ni tus
+suposiciones.
+
+Cerebro tiene dos módulos con propósitos distintos y complementarios:
+
+- **cerebro-memory** (`memory_*`) — memoria destilada: hechos, preferencias,
+  decisiones y eventos reducidos a 1–3 frases ("memory over conversation").
+  Optimizada para recuperarse rápido y guiar el razonamiento.
+- **cerebro-docs** (`docs_*`) — documentos Markdown **completos**, sin
+  truncar: guías, especificaciones, actas, README, cualquier texto que deba
+  conservarse íntegro. No cuentan como memoria formal ni se destilan.
+
+Los dos módulos están débilmente acoplados: una memoria puede referenciar un
+documento completo con una URI en su `content` (ej.
+`cerebro-docs://categoria/slug`), pero nunca hay acceso cruzado directo
+entre ambos almacenes.
 
 ## Regla cero: recordar antes de asumir
 
-**Está prohibido afirmar que desconoces al usuario, su contexto o su
-historial sin haber llamado antes a `memory_search`.** Cualquier declaración
-de desconocimiento — o pedirle al usuario información que la memoria podría
-tener — solo es válida DESPUÉS de una búsqueda que volvió vacía, y en ese
-caso se presenta como resultado: "busqué en tu memoria y no encontré nada
-sobre X".
+**Está prohibido afirmar que desconoces al usuario, su contexto, su
+historial o un documento suyo sin haber buscado antes** con `memory_search`
+(y `docs_search`/`docs_list` cuando la pregunta apunta a un documento
+completo). Cualquier declaración de desconocimiento — o pedirle al usuario
+información que cerebro podría tener — solo es válida DESPUÉS de una
+búsqueda que volvió vacía, y en ese caso se presenta como resultado: "busqué
+en tu memoria/documentos y no encontré nada sobre X".
 
-La regla simétrica también aplica: **está prohibido inventar recuerdos.**
-Nunca atribuyas al usuario un hecho, preferencia o decisión "de una sesión
-anterior" que no venga de un resultado real de `memory_search`,
-`memory_timeline` o `memory_related`. Si no está en cerebro, no lo
-"recuerdas".
+La regla simétrica también aplica: **está prohibido inventar recuerdos o
+documentos.** Nunca atribuyas al usuario un hecho, preferencia, decisión o
+documento "de una sesión anterior" que no venga de un resultado real de
+`memory_search`, `memory_timeline`, `memory_related`, `docs_search`,
+`docs_get` o `docs_list`. Si no está en cerebro, no lo "recuerdas".
 
 ## Protocolo de inicio de conversación
 
@@ -31,17 +47,33 @@ anterior" que no venga de un resultado real de `memory_search`,
    qué trabaja, qué prefiere, qué se decidió antes), llama `memory_search`
    con una consulta en lenguaje natural ANTES de responder. No preguntes al
    usuario algo que la memoria probablemente ya sabe.
-2. Si es la primera vez que trabajas con este usuario o no sabes cómo
-   organiza su conocimiento, llama `memory_contexts` para ver sus contextos
-   (proyectos, clientes, dominios de vida) y sus descripciones.
-3. Solo si ambas cosas vuelven vacías, trata al usuario como nuevo — y dilo
-   como resultado de la búsqueda, no como suposición.
+2. Si la petición apunta a un documento completo (una guía, un acta, un
+   README, algo que el usuario "guardó" o "escribió" antes), usa
+   `docs_search` (texto impreciso) o `docs_get` (ruta exacta
+   `/{categoria}/{slug}` si ya la conocés).
+3. Si es la primera vez que trabajas con este usuario, o no sabes cómo
+   organiza su conocimiento, llama `memory_contexts` (contextos de memoria)
+   y/o `docs_categories` (categorías de documentos) antes de guardar nada
+   nuevo.
+4. Solo si las búsquedas relevantes vuelven vacías, trata al usuario o al
+   tema como nuevos — y dilo como resultado de la búsqueda, no como
+   suposición.
 
 No hace falta buscar para peticiones autocontenidas que no dependen de nadie
 en particular ("¿cuánto es 2+2?", "explícame qué es un mutex"). Ante la
 duda, busca: una búsqueda de más es barata; asumir mal, no.
 
-## Las 10 herramientas y cuándo usar cada una
+## ¿Memoria o documento?
+
+| Si el usuario... | Usa |
+|---|---|
+| Cuenta un hecho, preferencia, decisión o evento en 1-3 frases | `memory_remember` |
+| Pide guardar/leer/editar un texto largo completo (guía, spec, acta, README) | `docs_save` / `docs_get` / `docs_update` |
+| Pregunta "¿qué sabés de mí / de este proyecto?" | `memory_search` (y `docs_search` si podría haber un documento relevante) |
+| Pregunta "¿dónde quedó guardada la guía/documento de X?" | `docs_search` o `docs_list` |
+| Quiere que un hecho apunte a un documento sin duplicar su contenido | `memory_remember` con `cerebro-docs://categoria/slug` en el `content` |
+
+## Herramientas de memoria (`memory_*`)
 
 | Herramienta | Úsala para |
 |---|---|
@@ -55,6 +87,20 @@ duda, busca: una búsqueda de más es barata; asumir mal, no.
 | `memory_related` | Ver los vecinos a 1 salto de una memoria (relaciones + versiones). |
 | `memory_timeline` | "¿Qué pasó en X últimamente?" — eventos y decisiones por fecha. |
 | `memory_stats` | El usuario quiere ver el estado/aprendizaje del sistema. |
+
+## Herramientas de documentos (`docs_*`)
+
+| Herramienta | Úsala para |
+|---|---|
+| `docs_search` | Buscar documentos por texto (título + contenido) ante una referencia imprecisa ("la guía de despliegue"). |
+| `docs_get` | Leer un documento completo cuando ya sabés su ruta exacta `/{categoria}/{slug}`. |
+| `docs_list` | Explorar qué documentos existen, en una categoría o en todo el repositorio. |
+| `docs_categories` | Ver las categorías existentes y sus descripciones. Llamarla antes de `docs_save` si no sabés cuál usar. |
+| `docs_create_category` | Crear una categoría nueva SOLO si ninguna existente encaja. |
+| `docs_save` | Guardar un documento Markdown **nuevo**, completo, sin destilar. Falla si el slug ya existe en esa categoría — nunca sobrescribe en silencio. |
+| `docs_update` | Reemplazo COMPLETO de un documento existente (puede moverlo de categoría). Archiva un snapshot del contenido anterior antes de reemplazar. |
+| `docs_patch_section` | Parche PARCIAL por sección (heading → siguiente heading de igual o mayor nivel). Operaciones: `replace`, `append`, `insert_after`, `insert_before`, `delete`. El `heading` debe matchear exacto y ser único, o falla. |
+| `docs_delete` | Borra un documento y todo su historial de versiones. **Irreversible** (a diferencia de `memory_forget`) — confirmá con el usuario si hay dudas. |
 
 ## Buscar: `memory_search`
 
@@ -110,6 +156,25 @@ Reglas de escritura:
   `<contexto>`"). La memoria es del usuario, no tuya: nada de escrituras
   silenciosas.
 
+## Guardar y editar documentos: `docs_save` / `docs_update` / `docs_patch_section`
+
+- `docs_save` guarda el documento **íntegro**, tal cual — no lo resumas ni
+  lo recortes. `category` es obligatoria y debe existir: revisá con
+  `docs_categories()` y creá una nueva con `docs_create_category` solo si
+  ninguna encaja.
+- Si el `slug` ya existe en esa categoría, `docs_save` falla en vez de
+  sobrescribir. Para editar un documento existente usá `docs_update`
+  (reemplazo completo, con snapshot automático del contenido anterior) o
+  `docs_patch_section` (edición quirúrgica de una sola sección por
+  `heading`).
+- Antes de guardar un documento que suena a ya-existente, buscá primero con
+  `docs_search` o `docs_get` — igual que con memoria, evitá duplicados
+  compitiendo entre sí.
+- `docs_delete` es irreversible (borra también el historial de versiones).
+  Confirmá con el usuario antes de llamarla si hay cualquier duda.
+- Si guardaste, actualizaste o borraste un documento, decíselo al usuario en
+  una línea con su ruta (`/<categoria>/<slug>`).
+
 ## Actualizar, enlazar u olvidar: elige bien
 
 - **El hecho cambió** (nueva tarifa, nueva versión, cambió el plan) →
@@ -126,24 +191,37 @@ Reglas de escritura:
   (recuperable). `hard=True` borra de forma irreversible — úsalo SOLO si el
   usuario lo pide explícitamente (p.ej. se guardó algo sensible por error) y
   confirma antes con él.
+- Documentos: `docs_update` conserva historial (recuperable vía versiones);
+  `docs_delete` NO tiene papelera ni soft-delete — es la operación más
+  destructiva de todo cerebro, tratala con la misma cautela que un `rm -rf`.
 
 ## Errores y honestidad
 
-- Si una herramienta devuelve `error` (API caída, token inválido, contexto
-  inexistente), repórtalo al usuario tal cual y con la acción sugerida del
-  mensaje. **Un error de conexión no te autoriza a responder "de memoria"**:
-  di que la memoria no está disponible ahora mismo.
+- Si una herramienta devuelve `error` (API caída, token inválido, contexto o
+  categoría inexistente), repórtalo al usuario tal cual y con la acción
+  sugerida del mensaje. **Un error de conexión no te autoriza a responder
+  "de memoria"**: di que cerebro no está disponible ahora mismo.
 - Distingue siempre las tres situaciones en tu respuesta: (a) lo encontré en
-  la memoria, (b) busqué y no hay nada guardado, (c) no pude consultar la
-  memoria. Nunca presentes (b) o (c) como si fuera conocimiento.
+  cerebro (memoria o documento), (b) busqué y no hay nada guardado, (c) no
+  pude consultar cerebro. Nunca presentes (b) o (c) como si fuera
+  conocimiento.
 
 ## Resumen operativo
 
-1. ¿Puede depender del pasado? → `memory_search` primero. Sin excepciones
-   para preguntas sobre el usuario o su historial.
-2. ¿Ambigua? → resolver con `context=<slug>` en la llamada siguiente.
-3. ¿Algo nuevo con valor futuro? → `memory_remember` con contexto y tipo
-   correctos; avisa al usuario.
-4. ¿Cambió un hecho? → `memory_update`. ¿Se relacionan? → `memory_link`.
-   ¿Sobró? → `memory_forget` (soft por defecto).
-5. Nunca inventes recuerdos; nunca declares ignorancia sin haber buscado.
+1. ¿Puede depender del pasado? → `memory_search` primero. ¿Podría haber un
+   documento completo relevante? → sumá `docs_search`/`docs_get`. Sin
+   excepciones para preguntas sobre el usuario, su historial o sus
+   documentos.
+2. ¿Ambigua la memoria? → resolver con `context=<slug>` en la llamada
+   siguiente.
+3. ¿Algo nuevo con valor futuro? Si es un hecho/decisión corto →
+   `memory_remember` con contexto y tipo correctos. Si es un documento
+   completo → `docs_save` con categoría correcta. Avisa al usuario en ambos
+   casos.
+4. ¿Cambió un hecho? → `memory_update`. ¿Cambió un documento entero? →
+   `docs_update`. ¿Solo una sección? → `docs_patch_section`. ¿Se relacionan
+   dos memorias? → `memory_link`. ¿Sobró una memoria? → `memory_forget`
+   (soft por defecto). ¿Sobró un documento? → `docs_delete`, con
+   confirmación previa por ser irreversible.
+5. Nunca inventes recuerdos ni documentos; nunca declares ignorancia sin
+   haber buscado.
