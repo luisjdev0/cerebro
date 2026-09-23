@@ -260,7 +260,7 @@ class TestExecutionEngine:
         assert state.status_code == 200, state.text
         assert state.json()["status"] == "aborted"
 
-        again = client.post(f"/runs/{run_id}/abort", headers=auth_headers)
+        again = client.post(f"/runs/{run_id}/abort", json={}, headers=auth_headers)
         assert again.status_code == 409, again.text
 
     def test_get_run_state_reflects_current_step(self, client, auth_headers):

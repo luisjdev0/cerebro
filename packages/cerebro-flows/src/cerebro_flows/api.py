@@ -6,8 +6,6 @@ mismo mecanismo exacto que cerebro-docs (`auth.py`, token root + tokens con scop
 `allowed_categories`).
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from contextlib import asynccontextmanager
