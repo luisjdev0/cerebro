@@ -1,93 +1,94 @@
-# Despliegue en VPS
+# VPS Deployment
 
-Guía para el despliegue recomendado de plan_v2 §10: VPS de 4 vCPU / 8 GB RAM / 100 GB
-SSD con Ubuntu 24.04 (funciona igual en Debian 12). El stack completo son 3 contenedores
-(Postgres+pgvector, `cerebro-memory-api` y `cerebro-docs-api`, ecosistema-cerebro.md §8)
-y consume < 1.5 GB de RAM en reposo.
+Guide for the recommended deployment from plan_v2 §10: VPS with 4 vCPU / 8 GB RAM / 100 GB
+SSD running Ubuntu 24.04 (works the same on Debian 12). The full stack is 3 containers
+(Postgres+pgvector, `cerebro-memory-api` and `cerebro-docs-api`, ecosistema-cerebro.md §8)
+and uses < 1.5 GB of RAM at rest.
 
-## 1. Preparar el VPS (una sola vez)
+## 1. Prepare the VPS (one time only)
 
 ```bash
 # Docker + compose plugin
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER
-# cierra sesión y vuelve a entrar para que el grupo aplique
+# log out and back in for the group change to take effect
 
-# Firewall: solo SSH y HTTPS expuestos
+# Firewall: only SSH and HTTPS exposed
 sudo ufw allow 22/tcp
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
 sudo ufw enable
 ```
 
-Los puertos de Postgres (5432), `cerebro-memory-api` (8005) y `cerebro-docs-api` (8006)
-**no se abren**: `compose.yaml` ya los ata a `127.0.0.1` — solo el reverse proxy los
-alcanza. Estos tres son los valores por defecto; si el host ya tiene algo ocupando
-alguno de esos puertos (ej. un servidor compartido con su propio Postgres en 5432),
-se sobreescriben sin tocar `compose.yaml` con `POSTGRES_HOST_PORT`,
-`CEREBRO_MEMORY_HOST_PORT`, `CEREBRO_DOCS_HOST_PORT` en el `.env` de ese host (ver
-`.env.example`) — ajusta el reverse proxy más abajo si cambias alguno.
+The Postgres (5432), `cerebro-memory-api` (8005), and `cerebro-docs-api` (8006) ports
+are **not opened**: `compose.yaml` already binds them to `127.0.0.1` — only the reverse
+proxy reaches them. These three are the default values; if the host already has
+something occupying one of those ports (e.g. a shared server with its own Postgres on
+5432), override them without touching `compose.yaml` via `POSTGRES_HOST_PORT`,
+`CEREBRO_MEMORY_HOST_PORT`, `CEREBRO_DOCS_HOST_PORT` in that host's `.env` (see
+`.env.example`) — adjust the reverse proxy below if you change any of them.
 
-## 2. Clonar el repo (es privado)
+## 2. Clone the repo (it's private)
 
-Opción simple con deploy key de solo lectura:
+Simple option with a read-only deploy key:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/cerebro_deploy -N ""
 cat ~/.ssh/cerebro_deploy.pub
-# pega esa clave en GitHub: repo cerebro → Settings → Deploy keys → Add (sin write access)
+# paste that key into GitHub: cerebro repo → Settings → Deploy keys → Add (without write access)
 
 git clone git@github.com:luisjdev0/cerebro.git -c core.sshCommand="ssh -i ~/.ssh/cerebro_deploy"
 cd cerebro
 git config core.sshCommand "ssh -i ~/.ssh/cerebro_deploy"
 ```
 
-## 3. Configurar secretos
+## 3. Configure secrets
 
 ```bash
 cp .env.example .env
-# Genera un token root fuerte y ponlo en .env (root para AMBOS servicios — §6):
+# Generate a strong root token and put it in .env (root for BOTH services — §6):
 sed -i "s/^API_TOKEN=.*/API_TOKEN=$(openssl rand -hex 32)/" .env
-grep API_TOKEN .env   # guárdalo en tu gestor de contraseñas
+grep API_TOKEN .env   # save it in your password manager
 ```
 
-**Cambia también la contraseña de Postgres.** A diferencia de antes, ya **no** se edita
-en `compose.yaml`: se define una sola vez como `POSTGRES_PASSWORD` en `.env` y
-`compose.yaml` la interpola en los tres sitios que la necesitan (el propio servicio
-`postgres` y el `DATABASE_URL` que se le inyecta a cada API dentro de la red compose —
-commit "Despliegue VPS: password de Postgres via .env y puerto host 8005"):
+**Also change the Postgres password.** Unlike before, it is **no longer** edited in
+`compose.yaml`: it's defined once as `POSTGRES_PASSWORD` in `.env`, and `compose.yaml`
+interpolates it in the three places that need it (the `postgres` service itself and the
+`DATABASE_URL` injected into each API within the compose network — commit "Despliegue
+VPS: password de Postgres via .env y puerto host 8005"):
 
 ```bash
 sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 32)/" .env
 ```
 
-Si omites `POSTGRES_PASSWORD` en `.env`, `docker compose` falla al arrancar con un
-error explícito (`define POSTGRES_PASSWORD en .env`) en vez de arrancar con un default
-inseguro.
+If you omit `POSTGRES_PASSWORD` in `.env`, `docker compose` fails to start with an
+explicit error (`define POSTGRES_PASSWORD in .env`) instead of starting with an
+insecure default.
 
-Nota: si ya inicializaste el volumen con la contraseña vieja, cambiarla en `.env` no la
-cambia en la base — hazlo antes del primer arranque, o usa `ALTER USER` en psql.
+Note: if you already initialized the volume with the old password, changing it in
+`.env` does not change it in the database — do it before the first startup, or use
+`ALTER USER` in psql.
 
-## 4. Levantar el stack
+## 4. Start the stack
 
 ```bash
-docker compose --profile full build   # descarga el modelo de embeddings en el build (~5 min la primera vez)
+docker compose --profile full build   # downloads the embeddings model during the build (~5 min the first time)
 docker compose --profile full up -d
-docker compose ps                     # los tres "healthy" (postgres, cerebro-memory-api, cerebro-docs-api)
+docker compose ps                     # all three "healthy" (postgres, cerebro-memory-api, cerebro-docs-api)
 curl -s localhost:8005/health         # {"status":"ok"}  (cerebro-memory-api)
 curl -s localhost:8006/health         # {"status":"ok"}  (cerebro-docs-api)
 ```
 
-`docker compose up -d` (sin `--profile full`) sigue levantando solo `postgres` — flujo
-de día a día sin cambios si corres las APIs fuera de Docker.
+`docker compose up -d` (without `--profile full`) still only starts `postgres` — no
+change to the day-to-day flow if you run the APIs outside Docker.
 
-## 5. HTTPS con Caddy (reverse proxy)
+## 5. HTTPS with Caddy (reverse proxy)
 
-**Recomendado: un solo subdominio, vía el gateway interno.** `compose.yaml` ya trae un
-contenedor `gateway` (Caddy, perfil `full`, ver `gateway/Caddyfile`) que rutea
-`/memory`, `/docs` y `/flows` por prefijo a cada API interna y expone todo en un solo
-puerto (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`) -- así tu Caddy del VPS solo
-necesita un bloque, sin importar cuántos módulos tenga el ecosistema:
+**Recommended: a single subdomain, via the internal gateway.** `compose.yaml` already
+includes a `gateway` container (Caddy, `full` profile, see `gateway/Caddyfile`) that
+routes `/memory`, `/docs`, and `/flows` by prefix to each internal API and exposes
+everything on a single port (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`) -- so your
+VPS's Caddy only needs one block, no matter how many modules the ecosystem has:
 
 ```bash
 sudo apt install -y caddy
@@ -102,15 +103,15 @@ curl -s https://cerebro.luisjdev.com/docs/health
 curl -s https://cerebro.luisjdev.com/flows/health
 ```
 
-Con esto, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory` (mismo patrón para
-`_DOCS_`/`_FLOWS_`) — `MemoryClient`/`DocsClient`/`FlowsClient` no necesitan ningún
-cambio de código, ya arman la URL final concatenando `base_url` + ruta relativa.
+With this, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory` (same pattern for
+`_DOCS_`/`_FLOWS_`) — `MemoryClient`/`DocsClient`/`FlowsClient` need no code changes,
+since they already build the final URL by concatenating `base_url` + relative path.
 
 <details>
-<summary>Alternativa: un subdominio por servicio (sin el gateway)</summary>
+<summary>Alternative: one subdomain per service (without the gateway)</summary>
 
-Si preferís mantener cada servicio en su propio subdominio (como estaba antes de que
-existiera el gateway), apuntá cada uno directo a su puerto de host:
+If you prefer to keep each service on its own subdomain (as it was before the
+gateway existed), point each one directly to its host port:
 
 ```bash
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
@@ -129,26 +130,27 @@ EOF
 sudo systemctl reload caddy
 ```
 
-En ese caso no hace falta correr el contenedor `gateway` en absoluto.
+In that case there's no need to run the `gateway` container at all.
 </details>
 
-> **¿Sin dominio?** Alternativa privada: instala [Tailscale](https://tailscale.com) en
-> el VPS y en tus máquinas; el gateway queda accesible solo dentro de tu tailnet vía
-> `http://<ip-tailscale>:8080` sin exponer nada a internet (en ese caso atá el puerto
-> del gateway a la IP de tailscale o usá `tailscale serve`).
+> **No domain?** Private alternative: install [Tailscale](https://tailscale.com) on
+> the VPS and on your machines; the gateway becomes accessible only within your
+> tailnet via `http://<ip-tailscale>:8080` without exposing anything to the internet
+> (in that case bind the gateway port to the tailscale IP or use `tailscale serve`).
 
-## 6. Actualizar un VPS existente a esta versión (monorepo + schemas)
+## 6. Update an existing VPS to this version (monorepo + schemas)
 
-**Solo aplica si tu VPS corre una versión anterior al monorepo** (un único contenedor
-`api` sobre el schema `public`). Si es una instalación nueva, sáltate esta sección.
+**Only applies if your VPS is running a version prior to the monorepo** (a single
+`api` container on the `public` schema). If this is a new installation, skip this
+section.
 
-El arranque de `cerebro-memory-api` aplica la migración `005_schema_cerebro_memory.sql`,
-que mueve todas sus tablas (`contexts`, `memories`, `audit_log`, `disambiguation_log`,
-`context_preferences`, `memory_edges`, `api_tokens`, `schema_migrations`) de `public` al
-schema propio `cerebro_memory` (`ALTER TABLE ... SET SCHEMA`, no una copia). Además, el
-servicio compose se renombró de `api` a `cerebro-memory-api`. Sigue este orden:
+Starting `cerebro-memory-api` applies the `005_schema_cerebro_memory.sql` migration,
+which moves all of its tables (`contexts`, `memories`, `audit_log`, `disambiguation_log`,
+`context_preferences`, `memory_edges`, `api_tokens`, `schema_migrations`) from `public`
+to its own `cerebro_memory` schema (`ALTER TABLE ... SET SCHEMA`, not a copy). Also, the
+compose service was renamed from `api` to `cerebro-memory-api`. Follow this order:
 
-**a) Backup completo obligatorio, antes de tocar nada:**
+**a) Mandatory full backup, before touching anything:**
 
 ```bash
 cd ~/cerebro
@@ -157,13 +159,13 @@ docker compose exec -T postgres pg_dump -U knowledgeos knowledgeos \
   | gzip > ~/cerebro-backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).sql.gz
 ```
 
-No sigas si este comando falla o produce un archivo vacío.
+Do not continue if this command fails or produces an empty file.
 
-**b) `git pull` y levantar con `--remove-orphans`:**
+**b) `git pull` and start with `--remove-orphans`:**
 
-El rename de servicio (`api` → `cerebro-memory-api`) hace que Docker Compose ya no
-reconozca el contenedor viejo `api` como parte del stack — queda huérfano, corriendo
-sin que `docker compose up` lo toque, salvo que se lo indiques explícitamente:
+The service rename (`api` → `cerebro-memory-api`) means Docker Compose no longer
+recognizes the old `api` container as part of the stack — it becomes orphaned, running
+without `docker compose up` touching it, unless you explicitly tell it to:
 
 ```bash
 git pull
@@ -171,18 +173,18 @@ docker compose --profile full build
 docker compose --profile full up -d --remove-orphans
 ```
 
-Es seguro: el contenedor `api` viejo es stateless (los datos viven en el volumen de
-Postgres, no en el contenedor), así que eliminarlo no pierde nada.
+This is safe: the old `api` container is stateless (the data lives in the Postgres
+volume, not in the container), so removing it loses nothing.
 
-**c) Verificación post-arranque:**
+**c) Post-startup verification:**
 
 ```bash
-docker compose ps                     # postgres, cerebro-memory-api, cerebro-docs-api: "healthy"; ningún "api" viejo
+docker compose ps                     # postgres, cerebro-memory-api, cerebro-docs-api: "healthy"; no old "api"
 curl -s localhost:8005/health         # {"status":"ok"}
 curl -s localhost:8006/health         # {"status":"ok"}
 
-# Conteos de filas movidas al schema nuevo — deben coincidir con lo que tenías antes
-# del upgrade (compáralos contra el backup si tienes dudas):
+# Row counts moved to the new schema — should match what you had before
+# the upgrade (compare them against the backup if you have doubts):
 docker compose exec -T postgres psql -U knowledgeos -d knowledgeos -c "
   SELECT 'memories' AS tabla, count(*) FROM cerebro_memory.memories
   UNION ALL SELECT 'contexts', count(*) FROM cerebro_memory.contexts
@@ -191,47 +193,48 @@ docker compose exec -T postgres psql -U knowledgeos -d knowledgeos -c "
 "
 ```
 
-Si algo falla o los conteos no cuadran, restaura desde el backup del paso (a) antes de
-seguir usando el sistema.
+If something fails or the counts don't match, restore from the backup in step (a)
+before continuing to use the system.
 
-## 7. Tokens (no uses el root para el día a día)
+## 7. Tokens (don't use root for day-to-day work)
 
-Desde tu máquina local (el CLI habla con las APIs remotas):
+From your local machine (the CLI talks to the remote APIs):
 
 ```bash
 set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory
 set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/docs
 set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/flows
-set CEREBRO_TOKEN=<tu token root, el API_TOKEN de .env>
+set CEREBRO_TOKEN=<your root token, the API_TOKEN from .env>
 
-# Token ESCOPADO a un solo servicio (cerebro-memory):
+# Token SCOPED to a single service (cerebro-memory):
 cerebro memory token create claude-desktop --scopes read,write
 
-# Token TRANSVERSAL: un solo secreto (prefijo cbr_), registrado en los servicios que
-# lo soporten en la misma operación (ecosistema-cerebro.md SS13):
+# CROSS-SERVICE token: a single secret (prefix cbr_), registered across the services
+# that support it in the same operation (ecosistema-cerebro.md SS13):
 cerebro token create automatizacion-x --scopes read --contexts infraestructura
 ```
 
-(URLs de arriba: con el gateway del paso 5. Si desplegaste con subdominios separados en
-su lugar, usá esos -- ver la alternativa en ese mismo paso.)
+(URLs above: with the gateway from step 5. If you deployed with separate subdomains
+instead, use those -- see the alternative in that same step.)
 
-`cerebro token create` (transversal) imprime el secreto **una sola vez**; úsalo como
-`CEREBRO_TOKEN`. `cerebro memory token create` genera en cambio un token válido solo
-para cerebro-memory. Ambos son revocables: `cerebro token revoke <nombre>` (transversal)
-o `cerebro memory token revoke <nombre>` (solo memory).
+`cerebro token create` (cross-service) prints the secret **only once**; use it as
+`CEREBRO_TOKEN`. `cerebro memory token create`, on the other hand, generates a token
+valid only for cerebro-memory. Both are revocable: `cerebro token revoke <name>`
+(cross-service) or `cerebro memory token revoke <name>` (memory only).
 
-Si `cerebro token create` falla en un servicio y tiene éxito en el otro (fallo
-parcial), el CLI lo reporta explícitamente por servicio y termina con error; reintenta
-el mismo comando — reutiliza el mismo secreto de forma segura (no duplica el registro).
+If `cerebro token create` fails on one service and succeeds on the other (partial
+failure), the CLI reports it explicitly per service and exits with an error; retry
+the same command — it safely reuses the same secret (it doesn't duplicate the
+registration).
 
-**Compatibilidad**: `KNOWLEDGEOS_API_URL`/`KNOWLEDGEOS_API_TOKEN` siguen soportadas
-como legado, solo para cerebro-memory, si algún script viejo todavía las usa.
+**Compatibility**: `KNOWLEDGEOS_API_URL`/`KNOWLEDGEOS_API_TOKEN` are still supported
+as legacy variables, for cerebro-memory only, if some old script still uses them.
 
-## 8. Conectar tus agentes (MCP local → APIs remotas)
+## 8. Connect your agents (local MCP → remote APIs)
 
-El servidor MCP corre en TU máquina (stdio) y habla con el VPS. Es un único binario
-(`cerebro-mcp`, paquete `cerebro-mcp`) que expone las 36 tools de los tres servicios
-(`memory_*`, `docs_*`, `flow_*`). En `claude_desktop_config.json`:
+The MCP server runs on YOUR machine (stdio) and talks to the VPS. It's a single
+binary (`cerebro-mcp`, package `cerebro-mcp`) that exposes the 36 tools from the three
+services (`memory_*`, `docs_*`, `flow_*`). In `claude_desktop_config.json`:
 
 ```json
 "cerebro": {
@@ -240,66 +243,67 @@ El servidor MCP corre en TU máquina (stdio) y habla con el VPS. Es un único bi
     "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/memory",
     "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/docs",
     "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/flows",
-    "CEREBRO_TOKEN": "<token transversal del agente, no el root>",
+    "CEREBRO_TOKEN": "<cross-service token for the agent, not the root one>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }
 }
 ```
 
-Ninguna de las tres URL tiene fallback a un valor útil para un VPS remoto (a lo sumo
-caen al default de desarrollo local) — inclúyelas siempre las tres explícitamente.
+None of the three URLs falls back to a useful value for a remote VPS (at most they
+fall back to the local development default) — always include all three explicitly.
 
-## 9. Backups automáticos (plan_v2 §9 / ecosistema-cerebro.md §9: restore probado o no es backup)
+## 9. Automatic backups (plan_v2 §9 / ecosistema-cerebro.md §9: an untested restore isn't a backup)
 
-Un solo Postgres compartido significa que un solo `pg_dump` de la instancia cubre
-**ambos** schemas (`cerebro_memory` y `cerebro_docs`) completos en una operación — no
-hace falta tratamiento especial por servicio.
+A single shared Postgres instance means that one `pg_dump` of the instance covers
+**both** schemas (`cerebro_memory` and `cerebro_docs`) completely in a single
+operation — no special per-service handling is needed.
 
 ```bash
 mkdir -p ~/cerebro/backups
 crontab -e
 ```
 
-Añade (backup diario 03:15, conserva 14 días; el nombre ya no lleva "knowledgeos" — es
-un backup del ecosistema completo):
+Add (daily backup at 03:15, keeps 14 days; the name no longer includes "knowledgeos"
+— it's a backup of the full ecosystem):
 
 ```
 15 3 * * * cd ~/cerebro && docker compose exec -T postgres pg_dump -U knowledgeos knowledgeos | gzip > backups/cerebro-$(date +\%Y\%m\%d).sql.gz && find backups -name '*.sql.gz' -mtime +14 -delete
 ```
 
-Copia los backups FUERA del VPS (rclone a un bucket/Drive, o un `scp` programado desde
-tu máquina). Prueba el restore al menos una vez:
+Copy the backups OFF the VPS (rclone to a bucket/Drive, or a scheduled `scp` from
+your machine). Test the restore at least once:
 
 ```bash
 gunzip -c backups/cerebro-XXXXXXXX.sql.gz | docker compose exec -T postgres psql -U knowledgeos -d knowledgeos_restore_test
 ```
 
-**Alternativa local**: `cerebro backup` (sin argumentos) hace lo mismo vía el CLI, pero
-escribe **fuera del árbol del repo** (`../cerebro-backups/`, hermano de `cerebro/`) con
-permisos `0600` en el archivo — pensado para no terminar commiteado por accidente ni
-legible por otros usuarios del sistema (los documentos de cerebro-docs no filtran
-contenido, así que un dump puede llevar secretos pegados por error). `cerebro restore
-<archivo>` hace el restore inverso, con confirmación interactiva salvo `--yes`.
+**Local alternative**: `cerebro backup` (with no arguments) does the same thing via
+the CLI, but writes **outside the repo tree** (`../cerebro-backups/`, a sibling of
+`cerebro/`) with `0600` permissions on the file — designed to avoid it accidentally
+getting committed or being readable by other users on the system (cerebro-docs
+documents don't filter content, so a dump could carry secrets pasted in by mistake).
+`cerebro restore <file>` performs the reverse restore, with an interactive confirmation
+unless `--yes` is passed.
 
-## 10. Actualizar a una versión nueva
+## 10. Update to a new version
 
 ```bash
 cd ~/cerebro
 git pull
 docker compose --profile full build
-docker compose --profile full up -d --remove-orphans   # las migraciones se aplican solas al arrancar
+docker compose --profile full up -d --remove-orphans   # migrations apply automatically on startup
 ```
 
-`--remove-orphans` es seguro dejarlo siempre: solo actúa si un `git pull` trajo un
-rename o eliminación de servicio en `compose.yaml` (como pasó una vez, §6); si no,
-no hace nada.
+It's safe to always leave `--remove-orphans` in: it only acts if a `git pull`
+brought in a service rename or removal in `compose.yaml` (as happened once, §6);
+otherwise it does nothing.
 
-## Checklist de seguridad final
+## Final security checklist
 
-- [ ] `API_TOKEN` root aleatorio y fuera del repo (solo en `.env` del VPS) — es el root
-      de **ambos** servicios
-- [ ] `POSTGRES_PASSWORD` cambiado en `.env` (no en `compose.yaml`)
-- [ ] `ufw` activo; 5432/8005/8006 NO expuestos (verifica: `ss -tlnp | grep -E '5432|8005|8006'` debe mostrar solo 127.0.0.1)
-- [ ] HTTPS funcionando en ambos subdominios (o Tailscale)
-- [ ] Agentes usando tokens con scope (transversales o escopados a un servicio), no el root
-- [ ] Cron de backup activo y un restore probado
+- [ ] Random root `API_TOKEN`, kept out of the repo (only in the VPS's `.env`) — it's
+      the root for **both** services
+- [ ] `POSTGRES_PASSWORD` changed in `.env` (not in `compose.yaml`)
+- [ ] `ufw` active; 5432/8005/8006 NOT exposed (verify: `ss -tlnp | grep -E '5432|8005|8006'` should show only 127.0.0.1)
+- [ ] HTTPS working on both subdomains (or Tailscale)
+- [ ] Agents using scoped tokens (cross-service or scoped to a single service), not root
+- [ ] Backup cron active and a restore tested
