@@ -22,7 +22,11 @@ sudo ufw enable
 
 Los puertos de Postgres (5432), `cerebro-memory-api` (8005) y `cerebro-docs-api` (8006)
 **no se abren**: `compose.yaml` ya los ata a `127.0.0.1` — solo el reverse proxy los
-alcanza.
+alcanza. Estos tres son los valores por defecto; si el host ya tiene algo ocupando
+alguno de esos puertos (ej. un servidor compartido con su propio Postgres en 5432),
+se sobreescriben sin tocar `compose.yaml` con `POSTGRES_HOST_PORT`,
+`CEREBRO_MEMORY_HOST_PORT`, `CEREBRO_DOCS_HOST_PORT` en el `.env` de ese host (ver
+`.env.example`) — ajusta el reverse proxy más abajo si cambias alguno.
 
 ## 2. Clonar el repo (es privado)
 

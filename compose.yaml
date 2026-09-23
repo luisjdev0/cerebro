@@ -14,8 +14,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
       POSTGRES_DB: knowledgeos
     ports:
-      # bind to localhost only - this database is not meant to be reachable from outside the host
-      - "127.0.0.1:5432:5432"
+      # bind to localhost only - this database is not meant to be reachable from outside the host.
+      # Host-side port parametrizado via POSTGRES_HOST_PORT (default 5432, igual que antes) -
+      # en un host que ya tiene otro Postgres ocupando 5432 (ej. el servidor de pruebas
+      # compartido 192.168.0.101, con su propio contenedor "pgdb" en ese puerto), basta con
+      # poner POSTGRES_HOST_PORT=5433 (o el que este libre) en el .env de ESE servidor - el
+      # puerto interno del contenedor (5432, el lado derecho) no cambia, y la DSN que usan
+      # cerebro-memory-api/cerebro-docs-api tampoco (se conectan por nombre de servicio
+      # "postgres" dentro de la red de compose, no por este puerto de host).
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - knowledgeos-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -62,7 +69,9 @@ services:
       # mapping and healthcheck below expect.
       APP_PORT: 8000
     ports:
-      - "127.0.0.1:8005:8000"
+      # Host-side port parametrizado via CEREBRO_MEMORY_HOST_PORT (default 8005, igual que
+      # antes) - mismo motivo que POSTGRES_HOST_PORT arriba: el interno (8000) no cambia.
+      - "127.0.0.1:${CEREBRO_MEMORY_HOST_PORT:-8005}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
       interval: 10s
@@ -97,7 +106,9 @@ services:
       DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
       APP_PORT: 8000
     ports:
-      - "127.0.0.1:8006:8000"
+      # Host-side port parametrizado via CEREBRO_DOCS_HOST_PORT (default 8006, igual que
+      # antes) - mismo motivo que POSTGRES_HOST_PORT arriba: el interno (8000) no cambia.
+      - "127.0.0.1:${CEREBRO_DOCS_HOST_PORT:-8006}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
       interval: 10s
