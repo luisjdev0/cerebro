@@ -1,8 +1,8 @@
-"""Unitarios del parser de Markdown (Fase 5, conector 1, plan_v2.md SS8).
+"""Unit tests for the Markdown parser (Phase 5, connector 1, plan_v2.md SS8).
 
-Todo `cerebro_memory.markdown_importer` es parsing puro (solo lee archivos de
-`tests/fixtures/`, no toca la API ni Postgres), asi que corre sin base de datos -
-mismo espiritu que tests/test_rrf.py y tests/test_context_engine.py.
+All of `cerebro_memory.markdown_importer` is pure parsing (it only reads files from
+`tests/fixtures/`, it does not touch the API or Postgres), so it runs without a
+database - same spirit as tests/test_rrf.py and tests/test_context_engine.py.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def test_frontmatter_user_type_maps_to_semantic_no_importance_override():
     assert mem.type == "semantic"
     assert mem.importance is None
     assert "Neovim" in mem.content
-    # el frontmatter no debe filtrarse al contenido
+    # the frontmatter must not leak into the content
     assert "metadata" not in mem.content
     assert "---" not in mem.content
 
@@ -51,8 +51,8 @@ def test_frontmatter_without_name_key_is_not_a_claude_code_memory():
 
 
 def test_frontmatter_without_name_falls_back_to_generic_parsing():
-    # dispatch completo (parse_markdown_file): al no ser frontmatter válido, debe
-    # caer en el parser genérico y aun así producir la sección con heading real.
+    # full dispatch (parse_markdown_file): since it's not valid frontmatter, it must
+    # fall through to the generic parser and still produce the section with the real heading.
     memories = parse_markdown_file(FIXTURES / "frontmatter_no_name.md")
     titles = [m.title for m in memories]
     assert "Solo un heading" in titles
@@ -77,13 +77,13 @@ def test_memory_index_follows_existing_link_and_falls_back_for_missing_one():
     memories = parse_markdown_file(FIXTURES / "memory_index" / "MEMORY.md")
     titles = [m.title for m in memories]
 
-    # El link existente (linked_pref.md) se sigue y se parsea (genérico, sin
-    # headings -> memoria unica con el nombre del archivo).
+    # The existing link (linked_pref.md) is followed and parsed (generic, no
+    # headings -> a single memory named after the file).
     assert "linked_pref" in titles
     followed = next(m for m in memories if m.title == "linked_pref")
     assert "Neovim" in followed.content
 
-    # El link roto (no-existe.md) se degrada al propio bullet como memoria chica.
+    # The broken link (no-existe.md) degrades to the bullet itself as a small memory.
     assert "Nota suelta sin archivo" in titles
     fallback = next(m for m in memories if m.title == "Nota suelta sin archivo")
     assert fallback.content == "Le gusta el cafe negro"
@@ -96,13 +96,13 @@ def test_generic_markdown_splits_by_headings_and_merges_small_sections():
     memories = parse_markdown_file(FIXTURES / "generic_headings.md")
     titles = [m.title for m in memories]
 
-    # "Nota corta" (1 linea real) debe fusionarse con la seccion anterior
-    # ("Preferencias"), no aparecer como memoria propia.
+    # "Nota corta" (1 real line) must merge into the previous section
+    # ("Preferencias"), not appear as its own memory.
     assert "Nota corta" not in titles
     assert "Preferencias" in titles
     prefs = next(m for m in memories if m.title == "Preferencias")
     assert "cafe" in prefs.content
-    assert "Solo una linea." in prefs.content  # el contenido fusionado sigue presente
+    assert "Solo una linea." in prefs.content  # the merged content is still present
 
     assert "Codigo de ejemplo" in titles
 

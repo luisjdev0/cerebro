@@ -1,27 +1,27 @@
-"""Token auth with scopes - espejo de `cerebro_memory.auth`, con `allowed_categories`
-en vez de `allowed_contexts` (ecosistema-cerebro.md SS13).
+"""Token auth with scopes - mirrors `cerebro_memory.auth`, with `allowed_categories`
+instead of `allowed_contexts` (ecosistema-cerebro.md SS13).
 
-Dos tipos de credencial aceptados en `Authorization: Bearer <token>`:
+Two kinds of credential accepted in `Authorization: Bearer <token>`:
 
-- El **token root** (`Settings.api_token`, desde `.env`/`API_TOKEN`): comparado con
-  `secrets.compare_digest`. Todos los scopes (`read`, `write`, `admin`) sobre todas
-  las categorias, sin fila en base de datos.
-- **Tokens con nombre**, emitidos via `POST /tokens` y guardados en `api_tokens`
-  (`db/migrations/001_init.sql`) como hash SHA-256 - el valor en claro solo se
-  muestra una vez, al crearlo. La emision transversal (un mismo secreto registrado a
-  la vez en cerebro-memory y cerebro-docs via `cerebro token create`) llega en otra
-  fase del ecosistema (SS13); aqui solo vive el lado servidor: validacion y CRUD de
-  tokens propios de este servicio.
+- The **root token** (`Settings.api_token`, from `.env`/`API_TOKEN`): compared with
+  `secrets.compare_digest`. All scopes (`read`, `write`, `admin`) over all
+  categories, with no row in the database.
+- **Named tokens**, issued via `POST /tokens` and stored in `api_tokens`
+  (`db/migrations/001_init.sql`) as a SHA-256 hash - the plaintext value is only
+  shown once, at creation time. Cross-cutting issuance (the same secret registered
+  in both cerebro-memory and cerebro-docs via `cerebro token create`) arrives in a
+  later phase of the ecosystem (SS13); only the server side lives here: validation
+  and CRUD for this service's own tokens.
 
 Enforcement:
-    - `read`  -> todo GET (excepto /health, que no necesita auth).
-    - `write` -> POST/PATCH de categories/documents, DELETE /documents/{id}.
-    - `admin` -> gestion de tokens (`/tokens/*`) y `DELETE /categories/{slug}`
-      (destructivo/cascada, igual criterio que `DELETE /contexts/{slug}` en memory).
+    - `read`  -> every GET (except /health, which needs no auth).
+    - `write` -> POST/PATCH of categories/documents, DELETE /documents/{id}.
+    - `admin` -> token management (`/tokens/*`) and `DELETE /categories/{slug}`
+      (destructive/cascading, same criterion as `DELETE /contexts/{slug}` in memory).
 
-`allowed_categories` (cuando no es None) se aplica igual que `allowed_contexts` en
-memory: 403 en escrituras/lecturas explicitas fuera de la lista; listados sin
-categoria explicita se acotan en silencio al conjunto permitido, nunca se rechazan.
+`allowed_categories` (when not None) is applied the same way as `allowed_contexts` in
+memory: 403 on explicit writes/reads outside the list; listings with no explicit
+category are silently narrowed to the allowed set, never rejected.
 """
 
 from __future__ import annotations
@@ -52,8 +52,8 @@ def generate_token() -> str:
 
 @dataclass(frozen=True)
 class Principal:
-    """El caller autenticado de la request actual: quien es (para `created_by`),
-    que puede hacer (`scopes`) y donde (`allowed_categories`, None = todas)."""
+    """The authenticated caller of the current request: who they are (for `created_by`),
+    what they can do (`scopes`), and where (`allowed_categories`, None = all)."""
 
     name: str
     scopes: frozenset[str]
@@ -64,14 +64,14 @@ class Principal:
         return scope in self.scopes
 
     def category_allowed(self, slug: str | None) -> bool:
-        """True si este principal puede tocar `slug` (`slug is None` -- usado por
-        callers para casos "categoria todavia no decidida")."""
+        """True if this principal can touch `slug` (`slug is None` -- used by
+        callers for "category not decided yet" cases)."""
         if self.allowed_categories is None or slug is None:
             return True
         return slug in self.allowed_categories
 
     def filter_slugs(self, slugs: list[str]) -> list[str]:
-        """Acota una lista de slugs de categoria a lo que este principal puede ver."""
+        """Narrows a list of category slugs down to what this principal can see."""
         if self.allowed_categories is None:
             return slugs
         return [s for s in slugs if s in self.allowed_categories]
@@ -165,12 +165,12 @@ async def create_api_token(
     allowed_categories: list[str] | None,
     value: str | None = None,
 ) -> dict[str, Any]:
-    """Crea (o, con `value`, re-registra de forma idempotente) un token con nombre.
+    """Creates (or, with `value`, idempotently re-registers) a named token.
 
-    Espejo exacto de `cerebro_memory.auth.create_api_token` -- ver su docstring para
-    el porque de `value` y de la idempotencia por nombre (ecosistema-cerebro.md SS13,
-    "tokens transversales": el mismo secreto se registra por separado en
-    cerebro-memory y cerebro-docs via `cerebro token create`).
+    Exact mirror of `cerebro_memory.auth.create_api_token` -- see its docstring for
+    the reasoning behind `value` and idempotency by name (ecosistema-cerebro.md SS13,
+    "cross-cutting tokens": the same secret gets registered separately in
+    cerebro-memory and cerebro-docs via `cerebro token create`).
     """
     invalid = sorted(set(scopes) - set(VALID_SCOPES))
     if invalid or not scopes:

@@ -5,10 +5,10 @@ optional `X-Agent-Name` header identifies the calling agent for `documents.creat
 (default "unknown") - a named token's `name` always wins over it, same rule as
 cerebro-memory's `agent_name()`.
 
-NOTA (ecosistema-cerebro.md SS2): a diferencia de `POST /memories` en cerebro-memory
-(que rechaza credenciales via `security.py`), cerebro-docs NO filtra contenido. Es una
-decision explicita de Jose Luis, no un descuido - por eso `security.py` no se
-reutiliza aqui.
+NOTE (ecosistema-cerebro.md SS2): unlike `POST /memories` in cerebro-memory
+(which rejects credentials via `security.py`), cerebro-docs does NOT filter content. This is
+an explicit decision by Jose Luis, not an oversight - that's why `security.py` isn't
+reused here.
 """
 
 import logging
@@ -51,12 +51,12 @@ logger = logging.getLogger("cerebro_docs.api")
 
 
 class StrictIn(BaseModel):
-    """Base de los modelos de ENTRADA: un campo desconocido es 422, nunca se ignora.
+    """Base for INPUT models: an unknown field is a 422, never silently ignored.
 
-    Sin esto, un typo del cliente (p.ej. mandar `content` en vez de `body` en un
-    parche de seccion) caeria en silencio al default del campo real y podria vaciar
-    contenido - mismo criterio conservador que headings ambiguos: error explicito,
-    nunca adivinar (ecosistema-cerebro.md SS12)."""
+    Without this, a client typo (e.g. sending `content` instead of `body` in a
+    section patch) would silently fall through to the real field's default and could
+    wipe out content - same conservative criterion as ambiguous headings: an explicit
+    error, never guessing (ecosistema-cerebro.md SS12)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -66,10 +66,10 @@ class CategoryCreate(StrictIn):
     name: str = Field(min_length=1)
     description: str | None = None
     hidden: bool = False
-    # `locked` solo se fija aqui, al crear -- no es parte de CategoryUpdate ni tiene
-    # endpoint propio: si se pudiera desbloquear despues, "locked" no significaria
-    # nada. Para categorias que nunca deben poder revelarse (p.ej. las de referencia
-    # de cerebro-flows), ver luisjdev-pendientes/ecosistema-cerebro.
+    # `locked` is only set here, at creation -- it's not part of CategoryUpdate and has no
+    # endpoint of its own: if it could be unlocked later, "locked" wouldn't mean
+    # anything. For categories that must never be able to be revealed (e.g. cerebro-flows'
+    # reference categories), see luisjdev-pendientes/ecosistema-cerebro.
     locked: bool = False
 
     @model_validator(mode="after")
@@ -114,7 +114,7 @@ class DocumentReplace(StrictIn):
     title: str = Field(min_length=1)
     content: str = Field(min_length=1)
     category: str = Field(min_length=1)
-    slug: str | None = None  # None conserva el slug actual del documento
+    slug: str | None = None  # None keeps the document's current slug
 
 
 class DocumentOut(BaseModel):
@@ -127,10 +127,10 @@ class DocumentOut(BaseModel):
     created_by: str | None
     created_at: datetime
     updated_at: datetime
-    score: float | None = None  # solo poblado por GET /documents?q=...
-    # poblado solo cuando GET /documents/{category}/{slug} resolvio via slug_redirects
-    # (la ruta pedida ya no es la actual) -- ver docs_get en cerebro-mcp/server.py,
-    # que usa esto para alertar al modelo y que deje de referenciar la ruta vieja.
+    score: float | None = None  # only populated by GET /documents?q=...
+    # only populated when GET /documents/{category}/{slug} resolved via slug_redirects
+    # (the requested route is no longer the current one) -- see docs_get in cerebro-mcp/server.py,
+    # which uses this to alert the model to stop referencing the old route.
     redirected_from: dict[str, str] | None = None
 
 
@@ -154,10 +154,10 @@ class TokenCreate(StrictIn):
     name: str = Field(min_length=1, max_length=100)
     scopes: list[str] = Field(min_length=1)
     allowed_categories: list[str] | None = None
-    # admin-only (este endpoint ya requiere scope admin): si se pasa, el servidor
-    # hashea ESTE valor en vez de generar uno -- usado por `cerebro token create`
-    # para registrar el MISMO secreto tambien en cerebro-memory (ecosistema-cerebro.md
-    # SS13, tokens transversales).
+    # admin-only (this endpoint already requires admin scope): if passed, the server
+    # hashes THIS value instead of generating one -- used by `cerebro token create`
+    # to also register the SAME secret in cerebro-memory (ecosistema-cerebro.md
+    # SS13, cross-cutting tokens).
     value: str | None = Field(default=None, min_length=1)
 
 
@@ -171,13 +171,13 @@ class TokenOut(BaseModel):
 
 
 class TokenCreateOut(TokenOut):
-    token: str  # plaintext - solo en ESTA respuesta, nunca de nuevo
+    token: str  # plaintext - only in THIS response, never again
 
 
 class StatsOut(BaseModel):
-    """Mirror minimo de GET /stats de cerebro-memory (ecosistema-cerebro.md SS11):
-    cerebro-docs no tiene desambiguaciones ni preferencias aprendidas, asi que solo
-    son los tres conteos que tienen sentido aqui."""
+    """Minimal mirror of cerebro-memory's GET /stats (ecosistema-cerebro.md SS11):
+    cerebro-docs has no disambiguations or learned preferences, so only these
+    three counts make sense here."""
 
     categories: int
     documents: int
@@ -215,9 +215,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         principal: Annotated[Principal, Depends(get_principal)],
         x_agent_name: Annotated[str | None, Header()] = None,
     ) -> str:
-        """Identidad usada para `documents.created_by`. Un token con nombre siempre
-        pisa el header (mismo criterio que `agent_name()` en cerebro-memory); el
-        token root no tiene identidad propia y cae al header (default "unknown")."""
+        """Identity used for `documents.created_by`. A named token always
+        overrides the header (same rule as `agent_name()` in cerebro-memory); the
+        root token has no identity of its own and falls back to the header (default "unknown")."""
         if not principal.is_root:
             return principal.name
         return x_agent_name or "unknown"
@@ -251,10 +251,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
-        """Conteos de categorias/documentos/versiones (mirror minimo de GET /stats de
-        cerebro-memory). Con `allowed_categories` restringido, cuenta solo lo visible
-        para ese token -- mismo criterio de filtrado silencioso que el resto de
-        listados de cerebro-docs (nunca 403 en un agregado, se acota)."""
+        """Counts of categories/documents/versions (minimal mirror of cerebro-memory's
+        GET /stats). With `allowed_categories` restricted, counts only what's visible
+        to that token -- same silent-filtering criterion as the rest of cerebro-docs'
+        listings (never a 403 on an aggregate, it's just narrowed)."""
         if principal.allowed_categories is None:
             categories = await pool.fetchval("SELECT count(*) FROM categories")
             documents = await pool.fetchval("SELECT count(*) FROM documents")
@@ -358,10 +358,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
-        """`hidden=true` nunca aparece aqui (sin parametro para desactivarlo -- ver
-        luisjdev-pendientes/ecosistema-cerebro): una categoria oculta solo es
-        alcanzable sabiendo su slug exacto de antemano (create_document/get_document
-        no filtran por `hidden`, solo este listado)."""
+        """`hidden=true` never shows up here (no parameter to turn it off -- see
+        luisjdev-pendientes/ecosistema-cerebro): a hidden category is only
+        reachable by knowing its exact slug in advance (create_document/get_document
+        don't filter by `hidden`, only this listing does)."""
         rows = await pool.fetch(
             """
             SELECT id, slug, name, description, hidden, locked, created_at, updated_at
@@ -377,12 +377,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        """Renombra/edita una categoria SIN tocar `documents` - las rutas
-        `/{categoria}/{slug}` de sus documentos cambian gratis al resolver el join,
-        porque `category_id` es un FK, nunca texto copiado (ecosistema-cerebro.md
-        SS6). Si el slug cambia, registra un redirect por cada documento de la
-        categoria (su ruta externa se mueve aunque `category_id` no cambie) - ver
-        luisjdev-pendientes/ecosistema-cerebro, "Redirects de slug"."""
+        """Renames/edits a category WITHOUT touching `documents` - its documents'
+        `/{category}/{slug}` routes change for free when the join resolves,
+        because `category_id` is an FK, never copied text (ecosistema-cerebro.md
+        SS6). If the slug changes, registers a redirect for each document in the
+        category (its external route moves even though `category_id` doesn't change) - see
+        luisjdev-pendientes/ecosistema-cerebro, "Slug redirects"."""
         require_category_allowed(principal, slug)
         if body.slug is not None:
             require_category_allowed(principal, body.slug)
@@ -459,11 +459,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         principal: Annotated[Principal, Depends(require_scope("admin"))],
         force: bool = False,
     ):
-        """409 si la categoria todavia tiene documentos, salvo `?force=true` - en cuyo
-        caso el `ON DELETE CASCADE` de `documents.category_id` (y de
-        `document_versions.document_id` sobre esos documentos) hace la cascada
-        completa con un solo DELETE. `admin`-only, igual criterio que
-        `DELETE /contexts/{slug}` en cerebro-memory (destructivo)."""
+        """409 if the category still has documents, unless `?force=true` - in which
+        case `documents.category_id`'s `ON DELETE CASCADE` (and
+        `document_versions.document_id`'s over those documents) does the full
+        cascade with a single DELETE. `admin`-only, same criterion as
+        `DELETE /contexts/{slug}` in cerebro-memory (destructive)."""
         require_category_allowed(principal, slug)
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -534,12 +534,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
-        """Registrado ANTES de `GET /documents/{category}/{slug}` a proposito: ambas
-        rutas tienen 2 segmentos tras `/documents/`, y esta debe ganarle a esa (mas
-        generica) para que `/documents/<uuid>/versions` no se interprete como
-        category='<uuid>', slug='versions'. Solo lectura -- sin endpoint de restore,
-        ver luisjdev-pendientes/ecosistema-cerebro, "document_versions sin ninguna
-        forma de lectura"."""
+        """Registered BEFORE `GET /documents/{category}/{slug}` on purpose: both
+        routes have 2 segments after `/documents/`, and this one must win over that
+        (more generic) one so `/documents/<uuid>/versions` doesn't get interpreted as
+        category='<uuid>', slug='versions'. Read-only -- no restore endpoint,
+        see luisjdev-pendientes/ecosistema-cerebro, "document_versions with no
+        way to read it"."""
         doc = await pool.fetchrow(
             "SELECT d.id, c.slug AS category FROM documents d JOIN categories c ON c.id = d.category_id WHERE d.id = $1",
             document_id,
@@ -566,11 +566,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
-        """Ruta exacta: funciona igual para documentos archivados y para categorias
-        `hidden` (ninguno de los dos se filtra aqui, solo en los listados). Si no hay
-        match directo, cae a `slug_redirects` -- el documento real en su ruta actual
-        SIEMPRE gana sobre un redirect; el fallback solo corre cuando el lookup
-        directo ya dio 404 (ver luisjdev-pendientes/ecosistema-cerebro)."""
+        """Exact route: works the same for archived documents and for `hidden`
+        categories (neither is filtered here, only in listings). If there's no
+        direct match, falls back to `slug_redirects` -- the real document at its current
+        route ALWAYS wins over a redirect; the fallback only runs when the direct
+        lookup already returned a 404 (see luisjdev-pendientes/ecosistema-cerebro)."""
         require_category_allowed(principal, category)
         row = await pool.fetchrow(
             """
@@ -614,15 +614,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int,
         offset: int,
     ) -> list[dict[str, Any]]:
-        """Compartido entre `GET /documents` (`doc_status='active'`) y
-        `GET /documents/archived` (`doc_status='archived'`). Sin `q`: listado por
-        `updated_at desc`. Con `q`: full-text simple (`websearch_to_tsquery('simple',
-        ...)` + `ts_rank`), SIEMPRE parametrizado - `q` viaja como bind param de
-        asyncpg, nunca interpolado en el texto del SQL (ecosistema-cerebro.md SS15).
+        """Shared between `GET /documents` (`doc_status='active'`) and
+        `GET /documents/archived` (`doc_status='archived'`). Without `q`: listed by
+        `updated_at desc`. With `q`: simple full-text (`websearch_to_tsquery('simple',
+        ...)` + `ts_rank`), ALWAYS parameterized - `q` travels as an asyncpg bind
+        param, never interpolated into the SQL text (ecosistema-cerebro.md SS15).
 
-        `category` explicito se toma tal cual (una categoria `hidden` sigue siendo
-        alcanzable sabiendo su slug exacto de antemano); sin `category`, se excluyen
-        ademas las categorias `hidden` del listado sin filtro ("browse everything")."""
+        An explicit `category` is taken as-is (a `hidden` category is still
+        reachable by knowing its exact slug in advance); without `category`, `hidden`
+        categories are also excluded from the unfiltered listing ("browse everything")."""
         filters: list[str] = ["d.status = $1"]
         params: list[Any] = [doc_status]
 
@@ -687,8 +687,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: Annotated[int, Query(ge=1, le=100)] = 20,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
-        """Enumeracion dedicada de documentos archivados (nunca se mezclan con
-        `GET /documents`) - ver luisjdev-pendientes/ecosistema-cerebro, "Archivado"."""
+        """Dedicated listing of archived documents (never mixed with
+        `GET /documents`) - see luisjdev-pendientes/ecosistema-cerebro, "Archiving"."""
         if category is not None:
             require_category_allowed(principal, category)
         return await _query_documents(
@@ -704,10 +704,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        """Reemplazo completo (incluye mover de categoria). Transaccionalidad
-        obligatoria (ecosistema-cerebro.md SS12): `SELECT ... FOR UPDATE` de la fila,
-        INSERT del snapshot previo en `document_versions`, y el `UPDATE`, todo en UNA
-        sola transaccion - nunca se lee el contenido en una query separada sin lock."""
+        """Full replacement (includes moving categories). Mandatory transactionality
+        (ecosistema-cerebro.md SS12): `SELECT ... FOR UPDATE` of the row,
+        INSERT of the prior snapshot into `document_versions`, and the `UPDATE`, all in ONE
+        single transaction - content is never read in a separate query without a lock."""
         async with pool.acquire() as conn:
             async with conn.transaction():
                 old = await conn.fetchrow(
@@ -770,10 +770,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         detail=f"ya existe un documento con slug '{new_slug}' en la categoria '{body.category}'",
                     ) from exc
 
-                # Redirect de slug (luisjdev-pendientes/ecosistema-cerebro): si la ruta
-                # externa cambio (slug y/o categoria), registra la coordenada VIEJA ->
-                # este document_id, para que GET /documents/{cat}/{slug} con la ruta
-                # vieja siga resolviendo (con aviso) en vez de dar 404 en silencio.
+                # Slug redirect (luisjdev-pendientes/ecosistema-cerebro): if the
+                # external route changed (slug and/or category), registers the OLD
+                # coordinate -> this document_id, so GET /documents/{cat}/{slug} with the
+                # old route keeps resolving (with a warning) instead of silently 404ing.
                 if new_slug != old["slug"] or body.category != old["category"]:
                     await conn.execute(
                         """
@@ -796,10 +796,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        """Parche parcial por heading (ecosistema-cerebro.md SS12): seccion = desde el
-        heading hasta el siguiente del mismo nivel o superior. Misma transaccionalidad
-        obligatoria que `replace_document` - `FOR UPDATE` + snapshot + UPDATE en una
-        sola transaccion."""
+        """Partial patch by heading (ecosistema-cerebro.md SS12): section = from the
+        heading to the next one at the same level or higher. Same mandatory
+        transactionality as `replace_document` - `FOR UPDATE` + snapshot + UPDATE in one
+        single transaction."""
         async with pool.acquire() as conn:
             async with conn.transaction():
                 old = await conn.fetchrow(
@@ -870,9 +870,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _set_document_status(
         document_id: UUID, new_status: str, pool: asyncpg.Pool, principal: Principal
     ) -> dict[str, Any]:
-        """Compartido por `docs_archive`/`docs_unarchive`: cambiar `status` no es una
-        edicion de contenido, asi que -a diferencia de replace_document/
-        patch_document_section- no toca `document_versions`."""
+        """Shared by `docs_archive`/`docs_unarchive`: changing `status` isn't a
+        content edit, so -unlike replace_document/
+        patch_document_section- it doesn't touch `document_versions`."""
         row = await pool.fetchrow(
             """
             SELECT d.id, c.slug AS category
@@ -931,7 +931,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row is None:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
                 require_category_allowed(principal, row["category"])
-                await conn.execute("DELETE FROM documents WHERE id = $1", document_id)  # cascada a document_versions
+                await conn.execute("DELETE FROM documents WHERE id = $1", document_id)  # cascades to document_versions
 
         return {"id": str(document_id), "status": "deleted"}
 

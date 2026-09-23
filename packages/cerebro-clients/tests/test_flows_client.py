@@ -1,5 +1,5 @@
-"""`FlowsClient` debe enrutar cada metodo al endpoint/verbo/params correcto de la API
-de cerebro-flows -- mismo criterio que test_docs_client.py."""
+"""`FlowsClient` must route each method to the correct endpoint/verb/params of the
+cerebro-flows API -- same criterion as test_docs_client.py."""
 
 from __future__ import annotations
 

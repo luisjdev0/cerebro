@@ -1,6 +1,6 @@
-# cerebro-flows API - imagen multi-stage, espejo de la de cerebro-docs (Dockerfile).
-# Sin paso de descarga de modelo: cerebro-flows no hace retrieval, solo el motor de
-# ejecucion (Postgres + Redis).
+# cerebro-flows API - multi-stage image, mirrors cerebro-docs's (Dockerfile).
+# No model download step: cerebro-flows doesn't do retrieval, just the
+# execution engine (Postgres + Redis).
 
 # ------------------------------------------------------------------------- builder
 FROM python:3.13-slim AS builder

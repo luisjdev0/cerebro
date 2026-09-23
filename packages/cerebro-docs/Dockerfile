@@ -1,14 +1,14 @@
-# cerebro-docs API - imagen multi-stage, espejo de la de cerebro-memory (Dockerfile)
-# pero sin paso de descarga de modelo de embeddings: cerebro-docs no hace retrieval
-# semantico, solo full-text simple (ver ecosistema-cerebro.md SS2/SS7).
+# cerebro-docs API - multi-stage image, mirrors cerebro-memory's (Dockerfile)
+# but without the embeddings model download step: cerebro-docs doesn't do
+# semantic retrieval, only simple full-text (see ecosistema-cerebro.md SS2/SS7).
 #
-# Stage 1 (builder) instala el proyecto (editable, para que
-# `cerebro_docs.db.PACKAGE_ROOT` - calculado dos niveles arriba de
-# src/cerebro_docs/db.py - siga resolviendo a /app tambien en la imagen de runtime)
-# en un venv aislado.
+# Stage 1 (builder) installs the project (editable, so
+# `cerebro_docs.db.PACKAGE_ROOT` - computed two levels up from
+# src/cerebro_docs/db.py - keeps resolving to /app in the runtime image too)
+# into an isolated venv.
 #
-# Stage 2 (runtime) copia solo el venv + fuente + migraciones a una imagen limpia, y
-# baja a un usuario no-root antes de servir.
+# Stage 2 (runtime) copies only the venv + source + migrations into a clean
+# image, and drops to a non-root user before serving.
 
 # ------------------------------------------------------------------------- builder
 FROM python:3.13-slim AS builder

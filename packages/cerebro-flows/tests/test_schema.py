@@ -1,5 +1,5 @@
-"""Unit tests (sin DB) de `cerebro_flows.schema`: parseo y validacion referencial del
-YAML de un flujo (luisjdev-pendientes/cerebro-flows SS2)."""
+"""Unit tests (no DB) for `cerebro_flows.schema`: parsing and referential
+validation of a flow's YAML (luisjdev-pendientes/cerebro-flows SS2)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ procedure:
     terminal: true
 """
 
-# El flujo de ejemplo INC-22 del documento de diseno (luisjdev-pendientes/cerebro-flows SS2).
+# The INC-22 example flow from the design document (luisjdev-pendientes/cerebro-flows SS2).
 INC_22 = """
 metadata:
   name: Procesamiento de incidencia
@@ -318,9 +318,10 @@ procedure:
 
 
 def test_branches_named_yes_no_are_not_coerced_to_booleans():
-    """El 'Norway problem' de YAML 1.1: 'yes'/'no' sin comillas se interpretan como
-    booleanos por defecto. Una decision si/no es el caso mas natural del mundo para
-    nombrar sus branches asi -- deben sobrevivir como los strings literales "yes"/"no"."""
+    """The 'Norway problem' of YAML 1.1: unquoted 'yes'/'no' are interpreted as
+    booleans by default. A yes/no decision is the most natural case in the world
+    for naming its branches this way -- they must survive as the literal strings
+    "yes"/"no"."""
     ok = """
 metadata: {name: x, category: y}
 entry: a

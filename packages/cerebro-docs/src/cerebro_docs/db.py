@@ -10,8 +10,8 @@ has no such history, so its runner is stricter: it explicitly creates the
 `cerebro_docs` schema and its own `schema_migrations` table with FULLY QUALIFIED
 names *before* running anything else, so a fresh install lands entirely inside
 `cerebro_docs` in a single boot without depending on the search_path being right yet
-(ver ecosistema-cerebro.md SS6 - "una instalacion fresca debe dejar TODO en
-cerebro_docs en un solo arranque").
+(see ecosistema-cerebro.md SS6 - "a fresh install must leave EVERYTHING in
+cerebro_docs in a single boot").
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 async def create_pool(settings: Settings) -> asyncpg.Pool:
-    # cerebro_docs primero, public despues (donde vive pgcrypto si otra
-    # instalacion - p.ej. cerebro-memory - ya la registro ahi). En una DB fresca
-    # donde `cerebro_docs` todavia no existe, apply_migrations() lo crea antes de que
-    # se ejecute cualquier migracion (ver docstring del modulo), asi que este
-    # search_path ya es valido para la primera conexion que se use de verdad.
+    # cerebro_docs first, public after (where pgcrypto lives if another
+    # install - e.g. cerebro-memory - already registered it there). On a fresh DB
+    # where `cerebro_docs` doesn't exist yet, apply_migrations() creates it before
+    # any migration runs (see the module docstring), so this search_path is
+    # already valid by the time the first connection actually gets used.
     return await asyncpg.create_pool(
         dsn=settings.database_url,
         min_size=1,
@@ -49,12 +49,11 @@ async def apply_migrations(pool: asyncpg.Pool, settings: Settings) -> list[str]:
     applied: list[str] = []
 
     async with pool.acquire() as conn:
-        # Nombres calificados a proposito (cerebro_docs.schema_migrations, no
-        # schema_migrations a secas): en una instalacion fresca el schema
-        # `cerebro_docs` todavia no existe en el momento en que se adquirio esta
-        # conexion, asi que no podemos depender del search_path para la propia tabla
-        # de control del runner - la creamos nosotros mismos, calificada, antes de
-        # tocar nada mas.
+        # Deliberately qualified names (cerebro_docs.schema_migrations, not
+        # bare schema_migrations): on a fresh install the `cerebro_docs` schema
+        # doesn't exist yet at the moment this connection was acquired, so we can't
+        # rely on the search_path for the runner's own control table - we create it
+        # ourselves, qualified, before touching anything else.
         await conn.execute("CREATE SCHEMA IF NOT EXISTS cerebro_docs")
         await conn.execute(
             """

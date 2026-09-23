@@ -1,7 +1,7 @@
-"""Subcomandos `cerebro docs <subcomando>` (ecosistema-cerebro.md SS11): categorias,
-CRUD de documentos completos, parche parcial por seccion y stats -- todo via
-`DocsClient` (`cerebro_clients`), sin logica de negocio propia mas alla de leer
-contenido de un archivo/stdin y formatear la salida de consola.
+"""`cerebro docs <subcommand>` subcommands (ecosistema-cerebro.md SS11): categories,
+full-document CRUD, partial per-section patching and stats -- all via
+`DocsClient` (`cerebro_clients`), with no business logic of its own beyond reading
+content from a file/stdin and formatting console output.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ def _client() -> DocsClient:
 
 
 def _read_content(args: argparse.Namespace) -> str:
-    """Contenido Markdown desde --content-file, o stdin si se omite -- documentos
-    completos no son practicos como un solo argumento de linea de comandos."""
+    """Markdown content from --content-file, or stdin if omitted -- full
+    documents aren't practical as a single command-line argument."""
     if args.content_file:
         path = Path(args.content_file)
         if not path.exists():
@@ -314,10 +314,10 @@ def cmd_stats(args: argparse.Namespace, *, client: DocsClient | None = None) -> 
 
 
 def _derive_title_and_slug(path: Path, text: str) -> tuple[str, str]:
-    """Titulo = primer '# heading' del archivo si existe, si no el nombre de
-    archivo. Slug = nombre de archivo saneado, pasado EXPLICITO (no derivado del
-    titulo) para que quede estable y trazable al archivo de origen -- ver
-    luisjdev-pendientes/ecosistema-cerebro, "Importador bulk de markdown"."""
+    """Title = the file's first '# heading' if present, otherwise the file
+    name. Slug = sanitized file name, passed EXPLICITLY (not derived from the
+    title) so it stays stable and traceable to the source file -- see
+    luisjdev-pendientes/ecosistema-cerebro, "Bulk markdown importer"."""
     m = _TITLE_RE.search(text)
     title = m.group(1) if m else path.stem
     slug = path.stem.lower().replace("_", "-")

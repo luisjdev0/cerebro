@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cerebro-cli"
 version = "0.1.0"
-description = "cerebro-cli - CLI unico del ecosistema cerebro (memory, docs, backup/restore, tokens transversales)"
+description = "cerebro-cli - single CLI for the cerebro ecosystem (memory, docs, backup/restore, cross-service tokens)"
 requires-python = ">=3.11"
 dependencies = [
     "cerebro-clients",

@@ -1,18 +1,18 @@
-"""Aisla los tests de este paquete contra una base de datos Postgres efimera
-(`cerebro_test`), separada de la base de desarrollo real (`knowledgeos`).
+"""Isolates this package's tests against an ephemeral Postgres database
+(`cerebro_test`), separate from the real development database (`knowledgeos`).
 
-Ver el conftest.py equivalente en packages/cerebro-memory/tests/ para el
-detalle completo del mecanismo -- este es identico salvo por el DSN por
-defecto, que aqui coincide con `cerebro_docs.config.Settings.database_url`
-(misma instancia Postgres compartida entre ambos servicios, distinto schema).
+See the equivalent conftest.py in packages/cerebro-memory/tests/ for the
+full detail of the mechanism -- this one is identical except for the default
+DSN, which here matches `cerebro_docs.config.Settings.database_url`
+(same Postgres instance shared between both services, different schema).
 
-Importante: esto vive en `pytest_configure`, NO en un fixture (ni siquiera uno
-`session`+`autouse`) -- `cerebro_docs/api.py` tiene `app = create_app()` a
-nivel de MODULO (necesario para `uvicorn cerebro_docs.main:app` en
-produccion), que llama a `get_settings()` (con `@lru_cache`) al IMPORTAR el
-modulo, durante la fase de "collection" de pytest -- ANTES de que cualquier
-fixture llegue a correr. Solo `pytest_configure` corre a tiempo para ganarle a
-ese import.
+Important: this lives in `pytest_configure`, NOT in a fixture (not even a
+`session`+`autouse` one) -- `cerebro_docs/api.py` has `app = create_app()` at
+MODULE level (needed for `uvicorn cerebro_docs.main:app` in
+production), which calls `get_settings()` (with `@lru_cache`) when the
+module is IMPORTED, during pytest's "collection" phase -- BEFORE any
+fixture gets to run. Only `pytest_configure` runs in time to beat
+that import.
 """
 
 from __future__ import annotations

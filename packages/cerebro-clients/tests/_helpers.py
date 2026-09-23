@@ -1,6 +1,6 @@
-"""Utilidades compartidas por test_memory_client.py y test_docs_client.py: un
-`httpx.BaseTransport` de prueba que graba cada request (metodo, path, params, json) en
-vez de tocar la red -- asi verificamos "enruta a la API correcta" sin una API viva
+"""Utilities shared by test_memory_client.py and test_docs_client.py: a test
+`httpx.BaseTransport` that records every request (method, path, params, json) instead
+of touching the network -- this way we verify "routes to the correct API" without a live API
 (ecosistema-cerebro.md SS15)."""
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class RecordingTransport(httpx.BaseTransport):
 
 
 class RaisingTransport(httpx.BaseTransport):
-    """Simula un fallo de red total (DNS, conexion rechazada...)."""
+    """Simulates a total network failure (DNS, connection refused...)."""
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)

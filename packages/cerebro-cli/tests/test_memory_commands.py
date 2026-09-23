@@ -1,6 +1,6 @@
-"""`cerebro memory <subcomando>` debe enrutar al `MemoryClient` correcto y no filtrar
-logica de negocio propia (salvo la orquestacion ya existente del importador de
-Markdown, que se prueba explicitamente aparte)."""
+"""`cerebro memory <subcommand>` must route to the correct `MemoryClient` and not leak
+business logic of its own (except the Markdown importer's already-existing
+orchestration, which is tested explicitly elsewhere)."""
 
 from __future__ import annotations
 

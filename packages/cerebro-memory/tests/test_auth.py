@@ -220,10 +220,10 @@ class TestTokenLifecycle:
 
 
 class TestTokenValueField:
-    """`value` (ecosistema-cerebro.md SS13, tokens transversales): admin puede pasar
-    el secreto en claro para que el servidor lo hashee, en vez de generar uno -
-    permite registrar el MISMO token en cerebro-memory y cerebro-docs. Idempotente
-    por nombre: reintentar con el mismo `value` no duplica ni falla."""
+    """`value` (ecosistema-cerebro.md SS13, cross-cutting tokens): admin can pass
+    the plaintext secret for the server to hash, instead of generating one -
+    allows registering the SAME token in cerebro-memory and cerebro-docs. Idempotent
+    by name: retrying with the same `value` does not duplicate or fail."""
 
     def test_create_with_value_uses_that_exact_secret(self, client, root_headers):
         name = f"test-token-value-{uuid.uuid4().hex[:8]}"

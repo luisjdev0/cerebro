@@ -1,11 +1,11 @@
-"""`DocsClient`: wrapper 1:1 sobre la API HTTP de cerebro-docs.
+"""`DocsClient`: 1:1 wrapper over the cerebro-docs HTTP API.
 
-Mismo criterio que `MemoryClient` (ver su docstring): cero logica de negocio, cada
-metodo hace una request y devuelve el JSON decodificado o deja propagar
-`CerebroAPIError`/`CerebroConnectionError`. `docs_search`/`docs_list` (cerebro-mcp) y
-`docs search`/`docs list` (cerebro-cli) son dos superficies de UX sobre el MISMO
-endpoint `GET /documents` -- por eso aqui solo hay un `list_documents`, con `q`
-opcional, en vez de dos metodos separados.
+Same criterion as `MemoryClient` (see its docstring): zero business logic, each
+method makes one request and returns the decoded JSON or lets
+`CerebroAPIError`/`CerebroConnectionError` propagate. `docs_search`/`docs_list` (cerebro-mcp) and
+`docs search`/`docs list` (cerebro-cli) are two UX surfaces over the SAME
+`GET /documents` endpoint -- that's why there's only one `list_documents` here, with an
+optional `q`, instead of two separate methods.
 """
 
 from __future__ import annotations

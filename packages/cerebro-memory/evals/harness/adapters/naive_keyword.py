@@ -1,17 +1,17 @@
 """
-Adaptador de referencia: búsqueda por overlap de palabras clave normalizadas.
+Reference adapter: search by normalized keyword overlap.
 
-Es intencionalmente simple ("pésimo pero funcional"): no usa embeddings, no
-distingue contexto, no entiende sinónimos. Sirve para dos cosas:
+It is intentionally simple ("terrible but functional"): it doesn't use embeddings,
+doesn't distinguish context, doesn't understand synonyms. It serves two purposes:
 
-  1. Probar que el harness completo (carga de corpus, casos, métricas, reporte)
-     funciona de punta a punta sin instalar ni configurar nada más que pyyaml.
-  2. Ser una línea base de "peor caso razonable": se espera que tenga
-     contaminación ALTA en los casos ambiguos, porque rankea por coincidencia
-     literal de palabras y el corpus tiene colisiones léxicas deliberadas
-     entre contextos (ver evals/memories.yaml). Un adaptador real (mem0,
-     graphiti, letta, embeddings + filtro de contexto...) debería superarlo
-     claramente, sobre todo en la tasa de contaminación de "ambiguo" y
+  1. Proving that the full harness (corpus loading, cases, metrics, report)
+     works end-to-end without installing or configuring anything more than pyyaml.
+  2. Being a "reasonable worst case" baseline: it is expected to have
+     HIGH contamination in ambiguous cases, because it ranks by literal
+     word matching and the corpus has deliberate lexical collisions
+     between contexts (see evals/memories.yaml). A real adapter (mem0,
+     graphiti, letta, embeddings + context filter...) should clearly
+     outperform it, especially in the contamination rate for "ambiguous" and
      "temporal".
 """
 
@@ -22,8 +22,8 @@ from collections import Counter
 
 from base import MemoryAdapter
 
-# Stopwords españolas básicas. No pretende ser exhaustiva, solo suficiente
-# para que el ranking por overlap de tokens no se ahogue en "de", "la", "el"...
+# Basic Spanish stopwords. Not meant to be exhaustive, just enough
+# so that token-overlap ranking doesn't drown in "de", "la", "el"...
 STOPWORDS_ES = {
     "a", "al", "algo", "algunas", "algunos", "ante", "antes", "como", "con",
     "contra", "cual", "cuales", "cuando", "cuanto", "cuanta", "cuantos",
@@ -42,7 +42,7 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _normalize(text: str) -> list[str]:
-    """Minúsculas, quita acentos comunes, tokeniza y filtra stopwords."""
+    """Lowercase, strip common accents, tokenize, and filter stopwords."""
     text = text.lower()
     accents = str.maketrans("áéíóúñü", "aeiounu")
     text = text.translate(accents)
@@ -51,7 +51,7 @@ def _normalize(text: str) -> list[str]:
 
 
 class NaiveKeywordAdapter(MemoryAdapter):
-    """Indexa memorias en memoria (RAM) y rankea por overlap de tokens."""
+    """Indexes memories in memory (RAM) and ranks by token overlap."""
 
     def __init__(self) -> None:
         self._docs: dict[str, Counter] = {}
@@ -80,12 +80,12 @@ class NaiveKeywordAdapter(MemoryAdapter):
             overlap = sum(doc_tokens[t] for t in query_tokens if t in doc_tokens)
             if overlap == 0:
                 continue
-            # Normaliza un poco por longitud del documento para no premiar
-            # solo el volumen de texto (sigue siendo una heurística naive).
+            # Normalizes a bit by document length so as not to reward
+            # sheer text volume alone (still a naive heuristic).
             score = overlap / (len(doc_tokens) ** 0.5)
             scored.append((score, rank_hint, doc_id))
 
-        # Orden descendente por score; rank_hint como desempate estable.
+        # Descending order by score; rank_hint as a stable tiebreaker.
         scored.sort(key=lambda x: (-x[0], x[1]))
         return [doc_id for _, _, doc_id in scored[:k]]
 

@@ -1,15 +1,15 @@
-"""Aisla los tests de este paquete contra una base de datos Postgres efimera
-(`cerebro_test`), separada de la base de desarrollo real. Ver el conftest.py
-equivalente en packages/cerebro-memory/tests/ para el detalle completo del mecanismo
-y por que vive en `pytest_configure` (no un fixture: `cerebro_flows/api.py` instancia
-`app = create_app()` a nivel de modulo, que cachea `get_settings()` al importarse
-durante la fase de collection de pytest, antes de que cualquier fixture corra).
+"""Isolates this package's tests against an ephemeral Postgres database
+(`cerebro_test`), separate from the real development database. See the equivalent
+conftest.py in packages/cerebro-memory/tests/ for the full detail of the mechanism
+and why it lives in `pytest_configure` (not a fixture: `cerebro_flows/api.py`
+instantiates `app = create_app()` at module level, which caches `get_settings()` on
+import during pytest's collection phase, before any fixture runs).
 
-`REDIS_URL` tambien se sobreescribe aqui a una base logica de Redis dedicada
-(`/15`, la ultima de las 16 por defecto) para no chocar con el uso normal de la
-`/0` en desarrollo -- Redis no tiene el concepto de "base efimera que se recrea",
-asi que en vez de dropear/crear como con Postgres, cada sesion de test hace
-`FLUSHDB` sobre esa base dedicada al arrancar.
+`REDIS_URL` is also overridden here to a dedicated logical Redis database (`/15`,
+the last of the default 16) so it doesn't collide with the normal use of `/0` in
+development -- Redis has no concept of an "ephemeral database that gets recreated",
+so instead of dropping/creating like with Postgres, each test session runs
+`FLUSHDB` on that dedicated database on startup.
 """
 
 from __future__ import annotations
@@ -63,8 +63,8 @@ def pytest_configure(config) -> None:  # noqa: ARG001 - pytest hook signature
         asyncio.run(_recreate_test_database(_with_database(base_dsn, "postgres")))
         asyncio.run(_flush_test_redis(test_redis_url))
     except Exception:
-        # Postgres/Redis no alcanzables: cada test se salta solo via su propio
-        # _db_reachable(), igual que antes de este hook.
+        # Postgres/Redis unreachable: each test skips itself via its own
+        # _db_reachable(), same as before this hook.
         return
 
     os.environ["DATABASE_URL"] = test_dsn

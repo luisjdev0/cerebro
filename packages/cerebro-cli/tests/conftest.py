@@ -1,19 +1,19 @@
-"""Aisla los tests de este paquete contra una base de datos Postgres efimera
-(`cerebro_test`), separada de la base de desarrollo real (`knowledgeos`).
+"""Isolates this package's tests against an ephemeral Postgres database
+(`cerebro_test`), separate from the real development database (`knowledgeos`).
 
-Ver el conftest.py equivalente en packages/cerebro-memory/tests/ para el
-detalle completo del mecanismo, incluido por que esto vive en
-`pytest_configure` y no en un fixture (`cerebro_memory.api`/`cerebro_docs.api`
-instancian `app = create_app()` a nivel de modulo, al importarse -- durante la
-fase de "collection" de pytest, antes de que cualquier fixture corra).
+See the equivalent conftest.py in packages/cerebro-memory/tests/ for the
+full detail of the mechanism, including why this lives in
+`pytest_configure` and not in a fixture (`cerebro_memory.api`/`cerebro_docs.api`
+instantiate `app = create_app()` at module level, on import -- during pytest's
+"collection" phase, before any fixture runs).
 
-Aqui importa ademas porque test_token_transversal_integration.py lanza
-subprocesos reales de `cerebro_memory.main`/`cerebro_docs.main` heredando
-`os.environ` (`env = os.environ.copy()`) -- como `DATABASE_URL` ya queda
-sobreescrito en el proceso de pytest antes de que ese fixture arranque los
-subprocesos, ambos servicios heredan la base efimera automaticamente, sin
-tocar ese archivo. Los prefijos `itest-*` que se ven en la base de desarrollo
-hoy vienen justamente de ese test.
+It matters here too because test_token_transversal_integration.py spawns
+real `cerebro_memory.main`/`cerebro_docs.main` subprocesses inheriting
+`os.environ` (`env = os.environ.copy()`) -- since `DATABASE_URL` is already
+overwritten in the pytest process before that fixture starts the
+subprocesses, both services inherit the ephemeral database automatically, without
+touching that file. The `itest-*` prefixes seen in the development database
+today come precisely from that test.
 """
 
 from __future__ import annotations

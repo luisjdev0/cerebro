@@ -1,6 +1,6 @@
-"""Unitarios de generacion/normalizacion/colision de slugs (cerebro_docs.slugs).
+"""Unit tests for slug generation/normalization/collision (cerebro_docs.slugs).
 
-Sin I/O - mismo espiritu que tests/test_rrf.py en cerebro-memory.
+No I/O - same spirit as tests/test_rrf.py in cerebro-memory.
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ def test_slugify_strips_leading_and_trailing_dashes():
 
 
 def test_slugify_is_deterministic_same_title_same_slug():
-    # Dos documentos con el mismo titulo en la misma categoria deben COLISIONAR en la
-    # base de datos (UNIQUE (category_id, slug), ver api.py) - eso solo funciona si
-    # slugify() es determinista para el mismo input.
+    # Two documents with the same title in the same category must COLLIDE in the
+    # database (UNIQUE (category_id, slug), see api.py) - that only works if
+    # slugify() is deterministic for the same input.
     assert slugify("Plan de arquitectura") == slugify("Plan de arquitectura")
 
 

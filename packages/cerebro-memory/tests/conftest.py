@@ -1,36 +1,36 @@
-"""Aisla los tests de este paquete contra una base de datos Postgres efimera
-(`cerebro_test`), separada de la base de desarrollo real (`knowledgeos`).
+"""Isolates this package's tests against an ephemeral Postgres database
+(`cerebro_test`), separate from the real development database (`knowledgeos`).
 
-Sin esto, la suite de tests de integracion (test_auth.py, test_supersedence.py,
-test_graph.py, ...) escribe directamente contra la base de datos local de
-desarrollo via `get_settings().database_url`, acumulando filas `test-*` entre
-sesiones -- ver `luisjdev-pendientes/ecosistema-cerebro` (Infraestructura /
-Testing) en cerebro-docs.
+Without this, the integration test suite (test_auth.py, test_supersedence.py,
+test_graph.py, ...) writes directly against the local development database
+via `get_settings().database_url`, accumulating `test-*` rows across
+sessions -- see `luisjdev-pendientes/ecosistema-cerebro` (Infrastructure /
+Testing) in cerebro-docs.
 
-Se dropea y recrea `cerebro_test` al inicio de la sesion de pytest y se
-sobreescribe `DATABASE_URL` en el entorno del proceso ANTES de que cualquier
-modulo de test se importe -- por eso esto vive en `pytest_configure`, NO en un
-fixture (ni siquiera un fixture `session`+`autouse`): `cerebro_memory/api.py`
-tiene `app = create_app()` a nivel de MODULO (necesario para
-`uvicorn cerebro_memory.main:app` en produccion), que llama a
-`get_settings()` (con `@lru_cache`) en el momento de IMPORTAR el modulo. Un
-fixture -- por temprano que corra -- se ejecuta durante la fase de "run", que
-en pytest sucede DESPUES de la fase de "collection" (donde se importan todos
-los modulos de test, y con ellos `cerebro_memory.api`) -- para entonces el
-cache de `get_settings()` ya habria quedado fijo en el `DATABASE_URL` real de
-`.env`, sin importar que el fixture despues sobreescriba la variable de
-entorno. `pytest_configure` sí corre antes de la collection, a tiempo para
-ganarle a ese import.
+`cerebro_test` is dropped and recreated at the start of the pytest session and
+`DATABASE_URL` is overwritten in the process environment BEFORE any test
+module is imported -- that's why this lives in `pytest_configure`, NOT in a
+fixture (not even a `session`+`autouse` fixture): `cerebro_memory/api.py`
+has `app = create_app()` at MODULE level (needed for
+`uvicorn cerebro_memory.main:app` in production), which calls
+`get_settings()` (with `@lru_cache`) at the moment the module is IMPORTED. A
+fixture -- no matter how early it runs -- executes during the "run" phase,
+which in pytest happens AFTER the "collection" phase (where all test
+modules are imported, and with them `cerebro_memory.api`) -- by then
+`get_settings()`'s cache would have already been fixed to the real
+`DATABASE_URL` from `.env`, no matter that the fixture later overwrites the
+environment variable. `pytest_configure` DOES run before collection, in time
+to beat that import.
 
-Como `create_app()` ya corre las migraciones en su `lifespan` de arranque (ver
-db.py/api.py), la base efimera se migra sola en el primer `TestClient` de cada
-modulo -- no hace falta tocar nada mas.
+Since `create_app()` already runs the migrations in its startup `lifespan` (see
+db.py/api.py), the ephemeral database migrates itself on the first `TestClient` of
+each module -- nothing else needs to be touched.
 
-Requiere que el rol de `DATABASE_URL` pueda crear/borrar bases (el mismo rol
-que crea la instancia via `POSTGRES_USER` en compose.yaml ya tiene ese permiso,
-por ser el rol de `initdb`). No pensado para correr en paralelo con otra suite
-de este ecosistema contra el mismo Postgres -- competirian por el mismo nombre
-de base.
+Requires that the `DATABASE_URL` role can create/drop databases (the same role
+that creates the instance via `POSTGRES_USER` in compose.yaml already has that
+permission, being the `initdb` role). Not meant to run in parallel with another
+suite from this ecosystem against the same Postgres -- they would compete for
+the same database name.
 """
 
 from __future__ import annotations
@@ -65,8 +65,8 @@ def pytest_configure(config) -> None:  # noqa: ARG001 - pytest hook signature
     try:
         asyncio.run(_recreate_test_database(_with_database(base_dsn, "postgres")))
     except Exception:
-        # Postgres no alcanzable: cada test se salta solo via su propio
-        # _db_reachable() contra DATABASE_URL, igual que antes de este hook.
+        # Postgres unreachable: each test skips itself via its own
+        # _db_reachable() against DATABASE_URL, same as before this hook.
         return
 
     os.environ["DATABASE_URL"] = test_dsn

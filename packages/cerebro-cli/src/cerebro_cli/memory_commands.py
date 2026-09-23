@@ -1,13 +1,13 @@
-"""Subcomandos `cerebro memory <subcomando>` -- port 1:1 del `cerebro_memory.cli`
-original, sustituyendo las llamadas httpx directas por `MemoryClient`
-(`cerebro_clients`). El unico calculo propio que queda aqui (fuera del cliente) es la
-orquestacion del importador de Markdown (`_collect_memories`/`_ensure_context`/
-`_is_duplicate`), igual que en el original: el parseo puro sigue viviendo en
-`cerebro_memory.markdown_importer`, no se duplica.
+"""`cerebro memory <subcommand>` subcommands -- a 1:1 port of the original
+`cerebro_memory.cli`, replacing the direct httpx calls with `MemoryClient`
+(`cerebro_clients`). The only logic of its own left here (outside the client) is the
+Markdown importer's orchestration (`_collect_memories`/`_ensure_context`/
+`_is_duplicate`), same as in the original: the pure parsing still lives in
+`cerebro_memory.markdown_importer`, it isn't duplicated.
 
-`token create/list/revoke` aqui son ESCOPADOS a cerebro-memory unicamente (mismo
-comportamiento que el `cerebro-memory token` original) -- distintos de `cerebro token
-create/revoke` a nivel raiz, que son TRANSVERSALES (ver shared_commands.py y
+`token create/list/revoke` here are SCOPED to cerebro-memory only (same
+behavior as the original `cerebro-memory token`) -- distinct from the root-level
+`cerebro token create/revoke`, which is CROSS-CUTTING (see shared_commands.py and
 ecosistema-cerebro.md SS13).
 """
 
@@ -22,12 +22,12 @@ from typing import Any
 from cerebro_clients import CerebroAPIError, CerebroConnectionError, MemoryClient
 from cerebro_memory.markdown_importer import ParsedMemory, iter_markdown_files, parse_markdown_file
 
-# RRF score de un hit que gana el rank #1 tanto en la busqueda vectorial como en full
-# text es ~2/(60+1) ~= 0.033 (ver cerebro_memory.retrieval.reciprocal_rank_fusion,
-# k=60 default). Un duplicado casi exacto del mismo contenido deberia aterrizar ahi;
-# ponemos el umbral algo por debajo para tolerar variacion menor sin abrir la puerta a
-# falsos positivos (el requisito de titulo identico, exigido aparte, es la salvaguarda
-# principal).
+# The RRF score of a hit that wins rank #1 in both vector search and full
+# text search is ~2/(60+1) ~= 0.033 (see cerebro_memory.retrieval.reciprocal_rank_fusion,
+# k=60 default). A near-exact duplicate of the same content should land there;
+# we set the threshold a bit below that to tolerate minor variation without opening the
+# door to false positives (the identical-title requirement, enforced separately, is the
+# main safeguard).
 DEDUP_SCORE_THRESHOLD = 0.02
 
 DISAMBIGUATION_TRAINING_THRESHOLD = 500
@@ -151,7 +151,7 @@ def _is_duplicate(client: MemoryClient, mem: ParsedMemory, context: str) -> bool
     try:
         data = client.search_memories(mem.content[:500], context=context, limit=1)
     except (CerebroConnectionError, CerebroAPIError):
-        return False  # no bloquear el import por un fallo de busqueda puntual
+        return False  # don't block the import over a one-off search failure
 
     results = data.get("results", [])
     if not results:

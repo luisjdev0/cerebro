@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Runner de la suite de evaluación de retrieval de cerebro-memory.
+Runner for the cerebro-memory retrieval evaluation suite.
 
-Uso:
+Usage:
     python evals/harness/run_eval.py --adapter naive
     python evals/harness/run_eval.py --adapter naive --include-superseded
     python evals/harness/run_eval.py --adapter naive --k 5 --results-dir evals/results
 
-Requiere únicamente `pyyaml` (ver evals/harness/requirements.txt).
+Requires only `pyyaml` (see evals/harness/requirements.txt).
 
-Qué hace:
-  1. Carga evals/memories.yaml y evals/cases.yaml.
-  2. Inserta en el adaptador seleccionado solo las memorias con status "active"
-     (a menos que se pase --include-superseded, en cuyo caso se insertan todas).
-  3. Para cada caso corre `adapter.search(query, k)` y calcula precision@k,
-     recall@k y si el resultado quedó "contaminado" (alguna memoria trampa
-     apareció en el top-k).
-  4. Imprime una tabla agregada por categoría (directo/ambiguo/temporal) y
-     guarda el detalle completo en evals/results/<adapter>-<timestamp>.json.
+What it does:
+  1. Loads evals/memories.yaml and evals/cases.yaml.
+  2. Inserts into the selected adapter only the memories with status "active"
+     (unless --include-superseded is passed, in which case all are inserted).
+  3. For each case, runs `adapter.search(query, k)` and computes precision@k,
+     recall@k, and whether the result got "contaminated" (some trap memory
+     appeared in the top-k).
+  4. Prints a table aggregated by category (direct/ambiguous/temporal) and
+     saves the full detail to evals/results/<adapter>-<timestamp>.json.
 
-Ver evals/README.md para la definición completa de las métricas y cómo
-interpretar los resultados.
+See evals/README.md for the full definition of the metrics and how to
+interpret the results.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ from pathlib import Path
 HARNESS_DIR = Path(__file__).resolve().parent
 EVALS_DIR = HARNESS_DIR.parent
 
-# En algunas consolas de Windows (cp1252/cp437) imprimir texto en español con
-# tildes puede lanzar UnicodeEncodeError. Forzamos UTF-8 con reemplazo si el
-# stream lo soporta; si no, seguimos con el encoding por defecto.
+# On some Windows consoles (cp1252/cp437), printing Spanish text with
+# accents can raise UnicodeEncodeError. We force UTF-8 with replacement if the
+# stream supports it; if not, we continue with the default encoding.
 for _stream in (sys.stdout, sys.stderr):
     reconfigure = getattr(_stream, "reconfigure", None)
     if callable(reconfigure):
@@ -45,8 +45,8 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
-# Permite `from base import MemoryAdapter` y `from adapters import ADAPTERS`
-# sin necesidad de instalar el proyecto como paquete ni de correr con `-m`.
+# Allows `from base import MemoryAdapter` and `from adapters import ADAPTERS`
+# without needing to install the project as a package or run with `-m`.
 if str(HARNESS_DIR) not in sys.path:
     sys.path.insert(0, str(HARNESS_DIR))
 
@@ -61,11 +61,11 @@ except ImportError:
     raise
 
 from adapters import ADAPTERS  # noqa: E402
-from base import MemoryAdapter  # noqa: E402  (re-exportado para adaptadores externos)
+from base import MemoryAdapter  # noqa: E402  (re-exported for external adapters)
 
 
 # ---------------------------------------------------------------------------
-# Carga de datos
+# Data loading
 # ---------------------------------------------------------------------------
 
 def load_memories(path: Path) -> list[dict]:
@@ -84,7 +84,7 @@ def load_cases(path: Path) -> list[dict]:
 
 
 def validate_case_ids(cases: list[dict], known_ids: set[str]) -> None:
-    """Avisa (sin abortar) si un caso referencia un id que no existe en el corpus."""
+    """Warns (without aborting) if a case references an id that does not exist in the corpus."""
     for case in cases:
         referenced = set(case.get("memorias_relevantes", [])) | set(case.get("memorias_trampa", []))
         missing = referenced - known_ids
@@ -97,13 +97,13 @@ def validate_case_ids(cases: list[dict], known_ids: set[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Métricas
+# Metrics
 # ---------------------------------------------------------------------------
 
 def precision_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
-    """|relevantes en el top-k| / k. Sigue la convención estándar de IR: si el
-    adaptador devuelve menos de k resultados, las posiciones faltantes cuentan
-    como "no relevante" (no se reduce el denominador)."""
+    """|relevant in the top-k| / k. Follows the standard IR convention: if the
+    adapter returns fewer than k results, the missing positions count
+    as "not relevant" (the denominator is not reduced)."""
     if k == 0:
         return 0.0
     hits = sum(1 for doc_id in retrieved[:k] if doc_id in relevant)
@@ -111,8 +111,8 @@ def precision_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
 
 
 def recall_at_k(retrieved: list[str], relevant: set[str], k: int) -> float | None:
-    """|relevantes en el top-k| / |relevantes totales|. None si el caso no
-    define memorias relevantes (no debería pasar, pero se maneja con cuidado)."""
+    """|relevant in the top-k| / |total relevant|. None if the case does not
+    define relevant memories (shouldn't happen, but handled carefully)."""
     if not relevant:
         return None
     hits = sum(1 for doc_id in retrieved[:k] if doc_id in relevant)
@@ -120,7 +120,7 @@ def recall_at_k(retrieved: list[str], relevant: set[str], k: int) -> float | Non
 
 
 def is_contaminated(retrieved: list[str], trampa: set[str], k: int) -> bool:
-    """True si alguna memoria trampa aparece en el top-k."""
+    """True if any trap memory appears in the top-k."""
     if not trampa:
         return False
     return any(doc_id in trampa for doc_id in retrieved[:k])
@@ -191,7 +191,7 @@ def aggregate(case_results: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Reporte en consola
+# Console report
 # ---------------------------------------------------------------------------
 
 def print_report(adapter_name: str, run_result: dict, agg: dict, include_superseded: bool) -> None:

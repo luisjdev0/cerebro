@@ -1,11 +1,11 @@
-"""Generacion y normalizacion de slugs para documentos (ecosistema-cerebro.md SS6).
+"""Slug generation and normalization for documents (ecosistema-cerebro.md SS6).
 
-Puro (sin I/O) a proposito, para que sea testeable sin base de datos - la deteccion
-de COLISION real vive en la restriccion `UNIQUE (category_id, slug)` de la base de
-datos (ver api.py, que traduce el `UniqueViolationError` de Postgres a un 409
-explicito): dos documentos con el mismo titulo en la misma categoria generan aqui,
-deliberadamente, el mismo slug - es la base de datos, no este modulo, quien decide
-si eso es un conflicto real.
+Deliberately pure (no I/O), so it's testable without a database - real COLLISION
+detection lives in the database's `UNIQUE (category_id, slug)` constraint
+(see api.py, which translates Postgres's `UniqueViolationError` into an explicit
+409): two documents with the same title in the same category deliberately
+generate the same slug here - it's the database, not this module, that decides
+whether that's a real conflict.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ _REPEATED_DASH_RE = re.compile(r"-{2,}")
 
 
 def slugify(title: str) -> str:
-    """lowercase, sin acentos, espacios -> guiones, solo [a-z0-9-].
+    """lowercase, no accents, spaces -> dashes, only [a-z0-9-].
 
-    Guiones repetidos se colapsan y los de inicio/fin se recortan. Un titulo que no
-    deja ningun caracter valido (p.ej. solo emoji o puntuacion) cae a
-    `FALLBACK_SLUG` en vez de producir un slug vacio.
+    Repeated dashes are collapsed and leading/trailing ones are trimmed. A title that
+    leaves no valid character (e.g. only emoji or punctuation) falls back to
+    `FALLBACK_SLUG` instead of producing an empty slug.
     """
     normalized = unicodedata.normalize("NFKD", title)
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii")

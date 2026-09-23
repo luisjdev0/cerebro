@@ -1,19 +1,19 @@
-"""Relaciones / grafo ligero (Fase 3, plan_v2.md SS8): aristas explicitas entre
-memorias, EN POSTGRES -- nada de base de grafos dedicada (regla del proyecto).
+"""Relationships / lightweight graph (Phase 3, plan_v2.md SS8): explicit edges between
+memories, IN POSTGRES -- no dedicated graph database (project rule).
 
-`memory_edges` (db/migrations/003_edges.sql) guarda aristas dirigidas con un
-vocabulario de relacion controlado (RELATION_VOCAB, reflejado en el CHECK de la
-migracion). Este modulo tambien deriva, en lectura, la cadena de supersedencia ya
-existente desde Fase 1 (`memories.superseded_by`) como una relacion VIRTUAL
-'supersedes' -- nunca se materializa en `memory_edges`.
+`memory_edges` (db/migrations/003_edges.sql) stores directed edges with a
+controlled relationship vocabulary (RELATION_VOCAB, reflected in the migration's
+CHECK). This module also derives, on read, the supersedence chain that already
+existed since Phase 1 (`memories.superseded_by`) as a VIRTUAL 'supersedes'
+relationship -- it is never materialized in `memory_edges`.
 
-Tres piezas:
-    - add_edge / delete_edge: CRUD de aristas explicitas.
-    - get_related: vecinos a 1 salto (ambas direcciones) + cadena de supersedencia.
-    - get_timeline: memorias episodic/decision ordenadas por fecha efectiva.
-    - get_search_related: vecinos de los top-N resultados de una busqueda
-      (GET /memories/search?expand=true), con la regla de contaminacion cruzada
-      entre contextos.
+Three pieces:
+    - add_edge / delete_edge: CRUD for explicit edges.
+    - get_related: 1-hop neighbors (both directions) + supersedence chain.
+    - get_timeline: episodic/decision memories ordered by effective date.
+    - get_search_related: neighbors of the top-N results of a search
+      (GET /memories/search?expand=true), with the cross-context contamination
+      rule.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ import asyncpg
 
 RELATION_VOCAB = ("relates_to", "caused_by", "part_of", "contradicts", "follows")
 
-# Nombre de la relacion virtual derivada de memories.superseded_by - nunca aparece en
-# memory_edges.relation (el CHECK de la migracion la excluye a proposito), pero es un
-# valor valido para filtrar en get_related(relation=...).
+# Name of the virtual relation derived from memories.superseded_by - it never appears
+# in memory_edges.relation (the migration's CHECK deliberately excludes it), but it is
+# a valid value to filter on in get_related(relation=...).
 SUPERSEDES = "supersedes"
 
 _MEMORY_COLUMNS = """
@@ -259,9 +259,9 @@ async def get_timeline(
     limit: int,
     allowed_contexts: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Episodic (and decision) memories ordered by "fecha efectiva"
+    """Episodic (and decision) memories ordered by "effective date"
     (occurred_at, falling back to created_at when occurred_at is NULL), most recent
-    first - built for "que paso en X las ultimas semanas". Only `status='active'`.
+    first - built for "what happened in X over the last few weeks". Only `status='active'`.
 
     Raises UnknownContextError if `context` is given and does not match any context.
 

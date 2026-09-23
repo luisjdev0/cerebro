@@ -1,5 +1,5 @@
-"""`cerebro docs <subcomando>` debe enrutar al `DocsClient` correcto -- sin logica de
-negocio propia mas alla de leer contenido de archivo/stdin y formatear la salida."""
+"""`cerebro docs <subcommand>` must route to the correct `DocsClient` -- with no
+business logic of its own beyond reading file/stdin content and formatting output."""
 
 from __future__ import annotations
 

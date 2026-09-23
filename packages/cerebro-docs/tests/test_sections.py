@@ -1,6 +1,6 @@
-"""Unitarios del parseo de secciones por heading y de docs_patch_section
-(cerebro_docs.sections). Sin I/O - mismo espiritu que tests/test_rrf.py y
-tests/test_graph.py (parte unitaria) en cerebro-memory.
+"""Unit tests for parsing sections by heading and for docs_patch_section
+(cerebro_docs.sections). No I/O - same spirit as tests/test_rrf.py and
+tests/test_graph.py (unit part) in cerebro-memory.
 """
 
 from __future__ import annotations
@@ -86,9 +86,9 @@ def test_patch_replace_swaps_section_body_keeps_heading():
 
 
 def test_patch_heading_with_markdown_prefix_is_normalized():
-    """luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section reporta fallos de
-    actualizacion": un heading pasado CON el prefijo ("## Introduccion" en vez de
-    "Introduccion") debe tratarse igual, no fallar con HeadingNotFoundError."""
+    """luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section reports update
+    failures": a heading passed WITH the prefix ("## Introduccion" instead of
+    "Introduccion") must be treated the same, not fail with HeadingNotFoundError."""
     with_prefix = apply_section_patch(SAMPLE, heading="## Introduccion", operation="replace", body="nuevo contenido")
     without_prefix = apply_section_patch(SAMPLE, heading="Introduccion", operation="replace", body="nuevo contenido")
     assert with_prefix == without_prefix
@@ -104,7 +104,7 @@ def test_patch_append_adds_after_existing_body():
     assert "texto de introduccion." in result
     assert "linea extra" in result
     assert result.index("texto de introduccion.") < result.index("linea extra")
-    # no se filtra a la siguiente seccion
+    # does not leak into the next section
     assert result.index("linea extra") < result.index("## Detalles")
 
 

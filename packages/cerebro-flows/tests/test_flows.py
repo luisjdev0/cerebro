@@ -1,6 +1,7 @@
-"""Integration tests: CRUD de categorias/definiciones de flujo y el motor de
-ejecucion end-to-end (luisjdev-pendientes/cerebro-flows). Se saltan automaticamente
-si DATABASE_URL/REDIS_URL no responden (mismo patron que cerebro-docs/tests/test_documents.py).
+"""Integration tests: category/flow definition CRUD and the execution engine
+end-to-end (luisjdev-pendientes/cerebro-flows). They're skipped automatically if
+DATABASE_URL/REDIS_URL don't respond (same pattern as
+cerebro-docs/tests/test_documents.py).
 """
 
 from __future__ import annotations
@@ -166,9 +167,9 @@ class TestFlowCrud:
 
 class TestExecutionEngine:
     def test_full_inc_22_walkthrough(self, client, auth_headers):
-        """Recorre el flujo INC-22 del documento de diseno de punta a punta: arranque
-        con prerequisitos -> analyze -> investigate -> decision (sufficient) ->
-        resolve (bloqueado por checkpoint hasta aprobarlo) -> end (completed)."""
+        """Walks the INC-22 flow from the design document end to end: start with
+        prerequisites -> analyze -> investigate -> decision (sufficient) -> resolve
+        (blocked by checkpoint until approved) -> end (completed)."""
         cat = _make_category(client, auth_headers, code="INC")
         flow = _make_flow(client, auth_headers, cat, yaml_content=INC_22)
 
@@ -190,7 +191,7 @@ class TestExecutionEngine:
         assert step["step"]["id"] == "decision"
         assert set(step["step"]["branches"].keys()) == {"sufficient", "insufficient"}
 
-        # decision invalida
+        # invalid decision
         bad = client.post(f"/runs/{run_id}/next", json={"decision": "no-existe"}, headers=auth_headers)
         assert bad.status_code == 422, bad.text
 
@@ -198,7 +199,7 @@ class TestExecutionEngine:
         assert step["step"]["id"] == "resolve"
         assert step["step"]["checkpoint"]["required"] is True
 
-        # flow_next bloqueado hasta aprobar el checkpoint
+        # flow_next blocked until the checkpoint is approved
         blocked = client.post(f"/runs/{run_id}/next", json={}, headers=auth_headers)
         assert blocked.status_code == 409, blocked.text
 
@@ -209,7 +210,7 @@ class TestExecutionEngine:
         assert finished.status_code == 200, finished.text
         assert finished.json() == {"run_id": run_id, "status": "completed", "step": None}
 
-        # una vez completado, ya no admite mas transiciones
+        # once completed, it no longer accepts any more transitions
         again = client.post(f"/runs/{run_id}/next", json={}, headers=auth_headers)
         assert again.status_code == 409, again.text
 
@@ -226,13 +227,13 @@ class TestExecutionEngine:
             f"/runs/{run_id}/reject-checkpoint", json={"reason": "falta evidencia"}, headers=auth_headers
         )
         assert rejected.status_code == 200, rejected.text
-        # checkpoint.on_reject de "resolve" en INC_22 es "analyze"
+        # checkpoint.on_reject of "resolve" in INC_22 is "analyze"
         assert rejected.json()["step"]["id"] == "analyze"
 
     def test_flow_without_tools_and_terminal_entry_completes_immediately(self, client, auth_headers):
-        """MINIMAL_FLOW no tiene 'tools:' (sin prerequisitos) y su unico step
-        ('only') ya es terminal -- start_run debe completarlo de una vez, no
-        dejarlo 'in_progress' colgado en un step que nunca se va a poder avanzar."""
+        """MINIMAL_FLOW has no 'tools:' (no prerequisites) and its only step
+        ('only') is already terminal -- start_run must complete it right away,
+        not leave it stuck 'in_progress' on a step that can never be advanced."""
         cat = _make_category(client, auth_headers)
         flow = _make_flow(client, auth_headers, cat, yaml_content=MINIMAL_FLOW)
         start = client.post(f"/flows/{flow['code']}/start", headers=auth_headers).json()

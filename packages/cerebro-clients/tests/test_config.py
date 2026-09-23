@@ -1,4 +1,4 @@
-"""Precedencia de variables de entorno (ecosistema-cerebro.md SS4/SS13)."""
+"""Environment variable precedence (ecosistema-cerebro.md SS4/SS13)."""
 
 from __future__ import annotations
 
@@ -61,8 +61,8 @@ class TestDocsToken:
         assert config.docs_token() == ""
 
     def test_has_no_legacy_fallback(self, monkeypatch):
-        # A diferencia de memory, docs no tiene variable legada que preservar - solo
-        # CEREBRO_TOKEN o nada.
+        # Unlike memory, docs has no legacy variable to preserve - only
+        # CEREBRO_TOKEN or nothing.
         monkeypatch.delenv("CEREBRO_TOKEN", raising=False)
         monkeypatch.setenv("KNOWLEDGEOS_API_TOKEN", "legacy-secret")
         assert config.docs_token() == ""

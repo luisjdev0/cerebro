@@ -1,20 +1,20 @@
-# Gateway interno del stack de cerebro (contenedor `cerebro-gateway` en
-# compose.yaml, perfil `full`). Rutea por prefijo a cada API interna y expone
-# UN solo puerto -- para que un Caddy externo (el del VPS de quien despliegue
-# esto, o el de cualquier reverse proxy) solo necesite un `reverse_proxy`
-# simple a este puerto, en vez de mantener un bloque por servicio (pedido de
-# Jose Luis, 2026-09-23). No reemplaza los puertos directos de cada API
-# (memory/docs/flows-api siguen accesibles tal cual para dev local o acceso
-# directo dentro de la red de compose) -- es una capa adicional, opcional.
+# Internal gateway for the cerebro stack (`cerebro-gateway` container in
+# compose.yaml, `full` profile). Routes by prefix to each internal API and
+# exposes A SINGLE port -- so an external Caddy (whoever's VPS deploys this, or
+# any reverse proxy) only needs one simple `reverse_proxy` to this port, instead
+# of maintaining a block per service (requested by Jose Luis, 2026-09-23). Does
+# not replace each API's direct ports (memory/docs/flows-api stay reachable as
+# they are for local dev or direct access within the compose network) -- this
+# is an additional, optional layer.
 #
-# `handle_path` recorta el prefijo antes de reenviar, asi que
-# `/memory/contexts` llega al backend como `/contexts`, `/docs/categories`
-# como `/categories`, `/flows/flows/INC-1` como `/flows/INC-1` (el "flows"
-# repetido es el propio recurso top-level de esa API, no un error). Con esto,
-# `CEREBRO_MEMORY_URL=https://tu-dominio/memory` (mismo patron para
-# DOCS/FLOWS) alcanza para que MemoryClient/DocsClient/FlowsClient funcionen
-# sin ningun cambio de codigo -- ya arman las URLs concatenando base_url +
-# ruta relativa.
+# `handle_path` strips the prefix before forwarding, so `/memory/contexts`
+# reaches the backend as `/contexts`, `/docs/categories` as `/categories`,
+# `/flows/flows/INC-1` as `/flows/INC-1` (the repeated "flows" is that API's own
+# top-level resource, not a mistake). With this,
+# `CEREBRO_MEMORY_URL=https://your-domain/memory` (same pattern for
+# DOCS/FLOWS) is enough for MemoryClient/DocsClient/FlowsClient to work with no
+# code changes at all -- they already build URLs by concatenating base_url +
+# relative path.
 
 :80 {
 	handle /health {
@@ -34,6 +34,6 @@
 	}
 
 	handle {
-		respond "cerebro gateway: usa /memory, /docs o /flows" 404
+		respond "cerebro gateway: use /memory, /docs or /flows" 404
 	}
 }

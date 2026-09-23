@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cerebro-mcp"
 version = "0.1.0"
-description = "cerebro-mcp - servidor MCP stdio unico del ecosistema cerebro (memory_* + docs_*)"
+description = "cerebro-mcp - single stdio MCP server for the cerebro ecosystem (memory_* + docs_* + flow_*)"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.2.0,<2.0.0",

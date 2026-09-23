@@ -1,8 +1,8 @@
 """Settings loaded from the environment (and .env for local dev).
 
-Espejo minimo de cerebro_memory.config: mismo DATABASE_URL por defecto (misma
-instancia Postgres, ver ecosistema-cerebro.md SS8), pero sin nada de
-embeddings/Context Engine - cerebro-docs no hace retrieval semantico.
+Minimal mirror of cerebro_memory.config: same default DATABASE_URL (same
+Postgres instance, see ecosistema-cerebro.md SS8), but without any
+embeddings/Context Engine - cerebro-docs doesn't do semantic retrieval.
 """
 
 from functools import lru_cache

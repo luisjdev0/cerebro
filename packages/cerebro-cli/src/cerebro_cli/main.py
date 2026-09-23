@@ -1,16 +1,16 @@
-"""CLI unico del ecosistema cerebro: `cerebro <modulo> <subcomando>` (entry point en
-pyproject.toml) mas comandos de nivel ecosistema sin prefijo (ecosistema-cerebro.md
-SS11): `cerebro backup`/`restore` y `cerebro token create/revoke` (transversal, SS13).
+"""Single CLI for the cerebro ecosystem: `cerebro <module> <subcommand>` (entry point in
+pyproject.toml) plus ecosystem-level commands with no prefix (ecosistema-cerebro.md
+SS11): `cerebro backup`/`restore` and `cerebro token create/revoke` (cross-cutting, SS13).
 
-Como cerebro-mcp, es un cliente delgado de las APIs HTTP via `cerebro_clients` --
-ninguna logica de negocio nueva aqui salvo la orquestacion propia del importador de
-Markdown (heredada de `cerebro_memory.cli`, ver `memory_commands.py`) y el manejo de
-fallo parcial de `cerebro token create/revoke` (ver `shared_commands.py`).
+Like cerebro-mcp, it's a thin client over the HTTP APIs via `cerebro_clients` --
+no new business logic here except the Markdown importer's own orchestration
+(inherited from `cerebro_memory.cli`, see `memory_commands.py`) and handling
+partial failure of `cerebro token create/revoke` (see `shared_commands.py`).
 
 Config: `cerebro_clients.config` -- CEREBRO_MEMORY_URL/CEREBRO_DOCS_URL/CEREBRO_TOKEN,
-con fallback KNOWLEDGEOS_API_URL/KNOWLEDGEOS_API_TOKEN para memory (compatibilidad).
-`main()` ademas carga `.env.production`/`.env` de la raiz del monorepo antes de
-despachar cualquier subcomando -- ver `dotenv.py`.
+with fallback to KNOWLEDGEOS_API_URL/KNOWLEDGEOS_API_TOKEN for memory (compatibility).
+`main()` also loads `.env.production`/`.env` from the monorepo root before
+dispatching any subcommand -- see `dotenv.py`.
 """
 
 from __future__ import annotations
@@ -270,15 +270,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    # ANTES de construir cualquier cliente (los subcomandos los crean via
-    # cerebro_clients, que lee os.environ en cada llamada): carga .env.production/.env
-    # de la raiz del monorepo sin pisar nada ya presente -- ver dotenv.py para el
-    # porque (reemplaza al viejo wrapper .venv\Scripts\cerebro.cmd que hacia esto a
-    # mano y que el entry point instalado por pip ahora opaca en el PATH).
+    # BEFORE building any client (subcommands create them via
+    # cerebro_clients, which reads os.environ on every call): load .env.production/.env
+    # from the monorepo root without overwriting anything already present -- see dotenv.py for
+    # why (replaces the old .venv\Scripts\cerebro.cmd wrapper that did this by
+    # hand and that the entry point installed by pip now shadows on the PATH).
     load_repo_dotenv()
-    # Best-effort: un registro de token transversal pendiente muy viejo (fallo
-    # parcial nunca reintentado) no debe quedar en disco para siempre sin aviso
-    # (ver cerebro_cli.tokens.warn_stale_pending_tokens).
+    # Best-effort: a very old pending cross-cutting token record (a partial
+    # failure never retried) shouldn't sit on disk forever without a warning
+    # (see cerebro_cli.tokens.warn_stale_pending_tokens).
     warn_stale_pending_tokens()
     parser = build_parser()
     args = parser.parse_args(argv)
