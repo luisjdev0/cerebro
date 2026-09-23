@@ -80,25 +80,48 @@ usa embeddings (full-text simple), arranca al instante.
 
 ### B. Todo en Docker (producción / probar el deploy real)
 
-Postgres **y** ambas APIs en contenedores, sin instalar Python en el host. Cada API se
-sirve desde su propia imagen multi-stage (`packages/cerebro-memory/Dockerfile`,
-`packages/cerebro-docs/Dockerfile`); la de `cerebro-memory` pre-descarga el modelo de
-embeddings *en build*, así el contenedor arranca en segundos, no minutos.
+Postgres, Redis y las tres APIs en contenedores, sin instalar Python en el host. Cada
+API se sirve desde su propia imagen multi-stage (`packages/cerebro-memory/Dockerfile`,
+`packages/cerebro-docs/Dockerfile`, `packages/cerebro-flows/Dockerfile`); la de
+`cerebro-memory` pre-descarga el modelo de embeddings *en build*, así el contenedor
+arranca en segundos, no minutos.
 
 ```bash
 cp .env.example .env   # y cambia API_TOKEN
 
-# levanta LOS TRES servicios (el profile "full" agrega ambas APIs; sin el flag,
-# `docker compose up -d` sigue levantando solo postgres, modo dev de arriba)
+# levanta las tres APIs + el gateway (el profile "full" las agrega todas; sin el
+# flag, `docker compose up -d` sigue levantando solo postgres+redis, modo dev de arriba)
 docker compose --profile full up -d
-docker compose --profile full ps   # espera a que "cerebro-memory-api" y "cerebro-docs-api" esten "healthy"
+docker compose --profile full ps   # espera a que las 4 esten "healthy"
 
 curl http://localhost:8005/health   # cerebro-memory (host 8005 -> contenedor 8000)
 curl http://localhost:8006/health   # cerebro-docs   (host 8006 -> contenedor 8000)
+curl http://localhost:8007/health   # cerebro-flows  (host 8007 -> contenedor 8000)
+
+# equivalente, TODO a traves del gateway (host 8080 -> contenedor 80, ver mas abajo):
+curl http://localhost:8080/memory/health
+curl http://localhost:8080/docs/health
+curl http://localhost:8080/flows/health
 ```
 
 Para reconstruir una imagen tras un cambio de código:
-`docker compose --profile full build cerebro-memory-api` (o `cerebro-docs-api`).
+`docker compose --profile full build cerebro-memory-api` (o `cerebro-docs-api`/
+`cerebro-flows-api`).
+
+#### Exponerlo detrás de un solo reverse proxy (`gateway`)
+
+El servicio `gateway` (Caddy, `gateway/Caddyfile`) rutea por prefijo a cada API interna
+y expone todo en un solo puerto (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`): `/memory`
+→ `cerebro-memory-api`, `/docs` → `cerebro-docs-api`, `/flows` → `cerebro-flows-api`. La
+idea es que si vas a exponer esto detrás de tu propio Caddy/nginx (un VPS, lo que sea),
+ese reverse proxy externo solo necesite **un** bloque apuntando al puerto del gateway,
+en vez de un bloque por servicio -- sin importar cuántos módulos tenga el ecosistema.
+No reemplaza los puertos directos de cada API (siguen ahí para dev local o acceso
+directo dentro de la red de compose); es una capa adicional y opcional. Con
+`CEREBRO_MEMORY_URL=https://tu-dominio/memory` (mismo patrón para `_DOCS_`/`_FLOWS_`),
+`MemoryClient`/`DocsClient`/`FlowsClient` no necesitan ningún cambio de código -- ya
+arman la URL final concatenando `base_url` + ruta relativa. Ver "HTTPS con Caddy" en
+`DEPLOY.md` para el ejemplo completo con dominio real.
 
 ### C. Solo quiero conectar Claude/un agente vía MCP o CLI (ya tengo las APIs corriendo en otro lado)
 
