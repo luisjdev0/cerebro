@@ -19,7 +19,7 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cerebro_docs.auth import (
     DuplicateTokenNameError,
@@ -65,12 +65,25 @@ class CategoryCreate(StrictIn):
     slug: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1)
     description: str | None = None
+    hidden: bool = False
+    # `locked` solo se fija aqui, al crear -- no es parte de CategoryUpdate ni tiene
+    # endpoint propio: si se pudiera desbloquear despues, "locked" no significaria
+    # nada. Para categorias que nunca deben poder revelarse (p.ej. las de referencia
+    # de cerebro-flows), ver luisjdev-pendientes/ecosistema-cerebro.
+    locked: bool = False
+
+    @model_validator(mode="after")
+    def _locked_requires_hidden(self) -> "CategoryCreate":
+        if self.locked and not self.hidden:
+            raise ValueError("una categoria 'locked' debe ser 'hidden' (bloquear solo tiene sentido para ocultar)")
+        return self
 
 
 class CategoryUpdate(StrictIn):
     slug: str | None = Field(default=None, min_length=1, max_length=100)
     name: str | None = Field(default=None, min_length=1)
     description: str | None = None
+    hidden: bool | None = None
 
 
 class CategoryOut(BaseModel):
@@ -78,6 +91,8 @@ class CategoryOut(BaseModel):
     slug: str
     name: str
     description: str | None
+    hidden: bool
+    locked: bool
     created_at: datetime
     updated_at: datetime
 
@@ -108,10 +123,23 @@ class DocumentOut(BaseModel):
     slug: str
     title: str
     content: str
+    status: str
     created_by: str | None
     created_at: datetime
     updated_at: datetime
     score: float | None = None  # solo poblado por GET /documents?q=...
+    # poblado solo cuando GET /documents/{category}/{slug} resolvio via slug_redirects
+    # (la ruta pedida ya no es la actual) -- ver docs_get en cerebro-mcp/server.py,
+    # que usa esto para alertar al modelo y que deje de referenciar la ruta vieja.
+    redirected_from: dict[str, str] | None = None
+
+
+class DocumentVersionOut(BaseModel):
+    version_number: int
+    category: str
+    title: str
+    content: str
+    created_at: datetime
 
 
 class SectionPatchIn(StrictIn):
@@ -308,13 +336,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             row = await pool.fetchrow(
                 """
-                INSERT INTO categories (slug, name, description)
-                VALUES ($1, $2, $3)
-                RETURNING id, slug, name, description, created_at, updated_at
+                INSERT INTO categories (slug, name, description, hidden, locked)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, slug, name, description, hidden, locked, created_at, updated_at
                 """,
                 body.slug,
                 body.name,
                 body.description,
+                body.hidden,
+                body.locked,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -328,8 +358,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
+        """`hidden=true` nunca aparece aqui (sin parametro para desactivarlo -- ver
+        luisjdev-pendientes/ecosistema-cerebro): una categoria oculta solo es
+        alcanzable sabiendo su slug exacto de antemano (create_document/get_document
+        no filtran por `hidden`, solo este listado)."""
         rows = await pool.fetch(
-            "SELECT id, slug, name, description, created_at, updated_at FROM categories ORDER BY created_at"
+            """
+            SELECT id, slug, name, description, hidden, locked, created_at, updated_at
+            FROM categories WHERE hidden = false ORDER BY created_at
+            """
         )
         return [dict(r) for r in rows if principal.category_allowed(r["slug"])]
 
@@ -343,7 +380,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Renombra/edita una categoria SIN tocar `documents` - las rutas
         `/{categoria}/{slug}` de sus documentos cambian gratis al resolver el join,
         porque `category_id` es un FK, nunca texto copiado (ecosistema-cerebro.md
-        SS6)."""
+        SS6). Si el slug cambia, registra un redirect por cada documento de la
+        categoria (su ruta externa se mueve aunque `category_id` no cambie) - ver
+        luisjdev-pendientes/ecosistema-cerebro, "Redirects de slug"."""
         require_category_allowed(principal, slug)
         if body.slug is not None:
             require_category_allowed(principal, body.slug)
@@ -359,30 +398,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if body.description is not None:
             params.append(body.description)
             fields.append(f"description = ${len(params)}")
+        if body.hidden is not None:
+            params.append(body.hidden)
+            fields.append(f"hidden = ${len(params)}")
 
-        if not fields:
-            row = await pool.fetchrow(
-                "SELECT id, slug, name, description, created_at, updated_at FROM categories WHERE slug = $1", slug
-            )
-            if row is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
-            return dict(row)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                old = await conn.fetchrow(
+                    "SELECT id, slug, hidden, locked FROM categories WHERE slug = $1 FOR UPDATE", slug
+                )
+                if old is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
 
-        fields.append("updated_at = now()")
-        params.append(slug)
-        sql = (
-            f"UPDATE categories SET {', '.join(fields)} WHERE slug = ${len(params)} "
-            "RETURNING id, slug, name, description, created_at, updated_at"
-        )
-        try:
-            row = await pool.fetchrow(sql, *params)
-        except asyncpg.UniqueViolationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"category slug '{body.slug}' already exists",
-            ) from exc
-        if row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
+                if old["locked"] and body.hidden is False:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"category '{slug}' is locked - it can never be revealed (hidden=false)",
+                    )
+
+                if not fields:
+                    row = await conn.fetchrow(
+                        "SELECT id, slug, name, description, hidden, locked, created_at, updated_at "
+                        "FROM categories WHERE id = $1",
+                        old["id"],
+                    )
+                    return dict(row)
+
+                fields.append("updated_at = now()")
+                params.append(old["id"])
+                sql = (
+                    f"UPDATE categories SET {', '.join(fields)} WHERE id = ${len(params)} "
+                    "RETURNING id, slug, name, description, hidden, locked, created_at, updated_at"
+                )
+                try:
+                    row = await conn.fetchrow(sql, *params)
+                except asyncpg.UniqueViolationError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"category slug '{body.slug}' already exists",
+                    ) from exc
+
+                if body.slug is not None and body.slug != old["slug"]:
+                    await conn.execute(
+                        """
+                        INSERT INTO slug_redirects (old_category, old_slug, document_id)
+                        SELECT $1, d.slug, d.id FROM documents d WHERE d.category_id = $2
+                        ON CONFLICT (old_category, old_slug)
+                        DO UPDATE SET document_id = EXCLUDED.document_id, created_at = now()
+                        """,
+                        old["slug"],
+                        old["id"],
+                    )
+
         return dict(row)
 
     @app.delete("/categories/{slug}", response_model=CategoryDeleteOut)
@@ -442,7 +509,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """
                 INSERT INTO documents (category_id, slug, title, content, created_by)
                 VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, category_id, slug, title, content, created_by, created_at, updated_at
+                RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
                 """,
                 category_row["id"],
                 slug,
@@ -461,6 +528,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return row_to_document_out({**dict(row), "category": category_row["slug"]})
 
+    @app.get("/documents/{document_id}/versions", response_model=list[DocumentVersionOut])
+    async def get_document_versions(
+        document_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """Registrado ANTES de `GET /documents/{category}/{slug}` a proposito: ambas
+        rutas tienen 2 segmentos tras `/documents/`, y esta debe ganarle a esa (mas
+        generica) para que `/documents/<uuid>/versions` no se interprete como
+        category='<uuid>', slug='versions'. Solo lectura -- sin endpoint de restore,
+        ver luisjdev-pendientes/ecosistema-cerebro, "document_versions sin ninguna
+        forma de lectura"."""
+        doc = await pool.fetchrow(
+            "SELECT d.id, c.slug AS category FROM documents d JOIN categories c ON c.id = d.category_id WHERE d.id = $1",
+            document_id,
+        )
+        if doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+        require_category_allowed(principal, doc["category"])
+
+        rows = await pool.fetch(
+            """
+            SELECT dv.version_number, c.slug AS category, dv.title, dv.content, dv.created_at
+            FROM document_versions dv JOIN categories c ON c.id = dv.category_id
+            WHERE dv.document_id = $1
+            ORDER BY dv.version_number DESC
+            """,
+            document_id,
+        )
+        return [dict(r) for r in rows]
+
     @app.get("/documents/{category}/{slug}", response_model=DocumentOut)
     async def get_document(
         category: str,
@@ -468,45 +566,74 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
+        """Ruta exacta: funciona igual para documentos archivados y para categorias
+        `hidden` (ninguno de los dos se filtra aqui, solo en los listados). Si no hay
+        match directo, cae a `slug_redirects` -- el documento real en su ruta actual
+        SIEMPRE gana sobre un redirect; el fallback solo corre cuando el lookup
+        directo ya dio 404 (ver luisjdev-pendientes/ecosistema-cerebro)."""
         require_category_allowed(principal, category)
         row = await pool.fetchrow(
             """
-            SELECT d.id, d.slug, d.title, d.content, d.created_by, d.created_at, d.updated_at, c.slug AS category
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
+                   c.slug AS category
             FROM documents d JOIN categories c ON c.id = d.category_id
             WHERE c.slug = $1 AND d.slug = $2
             """,
             category,
             slug,
         )
-        if row is None:
+        if row is not None:
+            return row_to_document_out(row)
+
+        redirected = await pool.fetchrow(
+            """
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
+                   c.slug AS category
+            FROM slug_redirects r
+            JOIN documents d ON d.id = r.document_id
+            JOIN categories c ON c.id = d.category_id
+            WHERE r.old_category = $1 AND r.old_slug = $2
+            """,
+            category,
+            slug,
+        )
+        if redirected is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
-        return row_to_document_out(row)
+        require_category_allowed(principal, redirected["category"])
+        return row_to_document_out(
+            {**dict(redirected), "redirected_from": {"category": category, "slug": slug}}
+        )
 
-    @app.get("/documents", response_model=list[DocumentOut])
-    async def list_documents(
-        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
-        principal: Annotated[Principal, Depends(require_scope("read"))],
-        category: str | None = None,
-        q: str | None = None,
-        limit: Annotated[int, Query(ge=1, le=100)] = 20,
-        offset: Annotated[int, Query(ge=0)] = 0,
-    ):
-        """Sin `q`: listado por `updated_at desc`. Con `q`: full-text simple
-        (`websearch_to_tsquery('simple', ...)` + `ts_rank`), SIEMPRE parametrizado -
-        `q` viaja como bind param de asyncpg, nunca interpolado en el texto del SQL
-        (ecosistema-cerebro.md SS15, criterio de auditoria)."""
-        if category is not None:
-            require_category_allowed(principal, category)
+    async def _query_documents(
+        pool: asyncpg.Pool,
+        principal: Principal,
+        *,
+        doc_status: str,
+        category: str | None,
+        q: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        """Compartido entre `GET /documents` (`doc_status='active'`) y
+        `GET /documents/archived` (`doc_status='archived'`). Sin `q`: listado por
+        `updated_at desc`. Con `q`: full-text simple (`websearch_to_tsquery('simple',
+        ...)` + `ts_rank`), SIEMPRE parametrizado - `q` viaja como bind param de
+        asyncpg, nunca interpolado en el texto del SQL (ecosistema-cerebro.md SS15).
 
-        filters: list[str] = []
-        params: list[Any] = []
+        `category` explicito se toma tal cual (una categoria `hidden` sigue siendo
+        alcanzable sabiendo su slug exacto de antemano); sin `category`, se excluyen
+        ademas las categorias `hidden` del listado sin filtro ("browse everything")."""
+        filters: list[str] = ["d.status = $1"]
+        params: list[Any] = [doc_status]
 
         if category is not None:
             params.append(category)
             filters.append(f"c.slug = ${len(params)}")
-        elif principal.allowed_categories is not None:
-            params.append(list(principal.allowed_categories))
-            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        else:
+            filters.append("c.hidden = false")
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
 
         if q:
             params.append(q)
@@ -519,7 +646,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             select_score = "NULL::real AS score"
             order_clause = "ORDER BY d.updated_at DESC"
 
-        where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
+        where_clause = " WHERE " + " AND ".join(filters)
 
         params.append(limit)
         limit_param = len(params)
@@ -527,7 +654,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset_param = len(params)
 
         sql = f"""
-            SELECT d.id, d.slug, d.title, d.content, d.created_by, d.created_at, d.updated_at,
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
                    c.slug AS category, {select_score}
             FROM documents d JOIN categories c ON c.id = d.category_id
             {where_clause}
@@ -536,6 +663,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         rows = await pool.fetch(sql, *params)
         return [row_to_document_out(r) for r in rows]
+
+    @app.get("/documents", response_model=list[DocumentOut])
+    async def list_documents(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        category: str | None = None,
+        q: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        if category is not None:
+            require_category_allowed(principal, category)
+        return await _query_documents(
+            pool, principal, doc_status="active", category=category, q=q, limit=limit, offset=offset
+        )
+
+    @app.get("/documents/archived", response_model=list[DocumentOut])
+    async def list_archived_documents(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        category: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Enumeracion dedicada de documentos archivados (nunca se mezclan con
+        `GET /documents`) - ver luisjdev-pendientes/ecosistema-cerebro, "Archivado"."""
+        if category is not None:
+            require_category_allowed(principal, category)
+        return await _query_documents(
+            pool, principal, doc_status="archived", category=category, q=None, limit=limit, offset=offset
+        )
 
     # ---------------------------------------------------------------- documents: write (versioned)
 
@@ -598,7 +756,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         UPDATE documents
                         SET title = $1, content = $2, category_id = $3, slug = $4, updated_at = now()
                         WHERE id = $5
-                        RETURNING id, category_id, slug, title, content, created_by, created_at, updated_at
+                        RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
                         """,
                         body.title,
                         body.content,
@@ -611,6 +769,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         status_code=status.HTTP_409_CONFLICT,
                         detail=f"ya existe un documento con slug '{new_slug}' en la categoria '{body.category}'",
                     ) from exc
+
+                # Redirect de slug (luisjdev-pendientes/ecosistema-cerebro): si la ruta
+                # externa cambio (slug y/o categoria), registra la coordenada VIEJA ->
+                # este document_id, para que GET /documents/{cat}/{slug} con la ruta
+                # vieja siga resolviendo (con aviso) en vez de dar 404 en silencio.
+                if new_slug != old["slug"] or body.category != old["category"]:
+                    await conn.execute(
+                        """
+                        INSERT INTO slug_redirects (old_category, old_slug, document_id)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (old_category, old_slug)
+                        DO UPDATE SET document_id = EXCLUDED.document_id, created_at = now()
+                        """,
+                        old["category"],
+                        old["slug"],
+                        document_id,
+                    )
 
         return row_to_document_out({**dict(new_row), "category": new_category["slug"]})
 
@@ -684,13 +859,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 new_row = await conn.fetchrow(
                     """
                     UPDATE documents SET content = $1, updated_at = now() WHERE id = $2
-                    RETURNING id, category_id, slug, title, content, created_by, created_at, updated_at
+                    RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
                     """,
                     new_content,
                     document_id,
                 )
 
         return row_to_document_out({**dict(new_row), "category": old["category"]})
+
+    async def _set_document_status(
+        document_id: UUID, new_status: str, pool: asyncpg.Pool, principal: Principal
+    ) -> dict[str, Any]:
+        """Compartido por `docs_archive`/`docs_unarchive`: cambiar `status` no es una
+        edicion de contenido, asi que -a diferencia de replace_document/
+        patch_document_section- no toca `document_versions`."""
+        row = await pool.fetchrow(
+            """
+            SELECT d.id, c.slug AS category
+            FROM documents d JOIN categories c ON c.id = d.category_id
+            WHERE d.id = $1
+            """,
+            document_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+        require_category_allowed(principal, row["category"])
+
+        new_row = await pool.fetchrow(
+            """
+            UPDATE documents SET status = $1, updated_at = now() WHERE id = $2
+            RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
+            """,
+            new_status,
+            document_id,
+        )
+        return row_to_document_out({**dict(new_row), "category": row["category"]})
+
+    @app.post("/documents/{document_id}/archive", response_model=DocumentOut)
+    async def archive_document(
+        document_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        return await _set_document_status(document_id, "archived", pool, principal)
+
+    @app.post("/documents/{document_id}/unarchive", response_model=DocumentOut)
+    async def unarchive_document(
+        document_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        return await _set_document_status(document_id, "active", pool, principal)
 
     @app.delete("/documents/{document_id}")
     async def delete_document(

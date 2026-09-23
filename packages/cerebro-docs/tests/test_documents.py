@@ -91,14 +91,19 @@ class TestCategoriesCrud:
         assert resp.status_code == 200, resp.text
         assert resp.json()["slug"] == new_slug
 
-        # la ruta vieja ya no resuelve, la nueva si - mismo documento, mismo id.
+        # la ruta vieja sigue resolviendo (via slug_redirects, poblado en bulk para
+        # TODOS los documentos de la categoria renombrada) pero avisa que se movio -
+        # ver TestSlugRedirects para el detalle de este mecanismo.
         old_route = client.get(f"/documents/{old_slug}/doc-estable", headers=auth_headers)
-        assert old_route.status_code == 404, old_route.text
+        assert old_route.status_code == 200, old_route.text
+        assert old_route.json()["id"] == doc["id"]
+        assert old_route.json()["redirected_from"] == {"category": old_slug, "slug": "doc-estable"}
 
         new_route = client.get(f"/documents/{new_slug}/doc-estable", headers=auth_headers)
         assert new_route.status_code == 200, new_route.text
         assert new_route.json()["id"] == doc["id"]
         assert new_route.json()["content"] == "contenido inicial"
+        assert new_route.json()["redirected_from"] is None
 
     def test_delete_empty_category_succeeds_without_force(self, client, auth_headers):
         slug = _make_category(client, auth_headers)
@@ -510,3 +515,161 @@ class TestStats:
         # and no versions - a token restricted to it must see exactly that, never
         # anything belonging to `other`.
         assert data == {"categories": 1, "documents": 1, "versions": 0}
+
+
+# --------------------------------------------------------------------------- archiving
+
+
+class TestArchiving:
+    def test_archive_hides_from_list_and_search_but_get_still_works(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat, title="Doc archivable", slug="archivable")
+
+        resp = client.post(f"/documents/{doc['id']}/archive", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "archived"
+
+        listed = client.get("/documents", params={"category": cat}, headers=auth_headers)
+        assert doc["id"] not in {d["id"] for d in listed.json()}
+
+        searched = client.get("/documents", params={"category": cat, "q": "archivable"}, headers=auth_headers)
+        assert doc["id"] not in {d["id"] for d in searched.json()}
+
+        direct = client.get(f"/documents/{cat}/archivable", headers=auth_headers)
+        assert direct.status_code == 200, direct.text
+        assert direct.json()["status"] == "archived"
+
+    def test_list_archived_shows_only_archived(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        active = _make_document(client, auth_headers, cat, title="Activo", slug="activo")
+        archived = _make_document(client, auth_headers, cat, title="Para archivar", slug="para-archivar")
+        client.post(f"/documents/{archived['id']}/archive", headers=auth_headers)
+
+        resp = client.get("/documents/archived", params={"category": cat}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        ids = {d["id"] for d in resp.json()}
+        assert archived["id"] in ids
+        assert active["id"] not in ids
+
+    def test_unarchive_restores_visibility(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat, slug="ir-y-volver")
+        client.post(f"/documents/{doc['id']}/archive", headers=auth_headers)
+
+        resp = client.post(f"/documents/{doc['id']}/unarchive", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "active"
+
+        listed = client.get("/documents", params={"category": cat}, headers=auth_headers)
+        assert doc["id"] in {d["id"] for d in listed.json()}
+
+    def test_archive_nonexistent_document_is_404(self, client, auth_headers):
+        resp = client.post(f"/documents/{uuid.uuid4()}/archive", headers=auth_headers)
+        assert resp.status_code == 404, resp.text
+
+
+# --------------------------------------------------------------------------- hidden/locked categories
+
+
+class TestHiddenCategories:
+    def test_hidden_category_excluded_from_list_but_reachable_by_exact_slug(self, client, auth_headers):
+        slug = _make_category(client, auth_headers, hidden=True)
+        doc = _make_document(client, auth_headers, slug, title="Doc en oculta", slug="doc-en-oculta")
+
+        listed = client.get("/categories", headers=auth_headers)
+        assert slug not in {c["slug"] for c in listed.json()}
+
+        doc_listed = client.get("/documents", headers=auth_headers)
+        assert doc["id"] not in {d["id"] for d in doc_listed.json()}
+
+        direct = client.get(f"/documents/{slug}/doc-en-oculta", headers=auth_headers)
+        assert direct.status_code == 200, direct.text
+
+        explicit_category_listing = client.get("/documents", params={"category": slug}, headers=auth_headers)
+        assert explicit_category_listing.status_code == 200, explicit_category_listing.text
+        assert doc["id"] in {d["id"] for d in explicit_category_listing.json()}
+
+    def test_hidden_category_can_be_revealed_via_update(self, client, auth_headers):
+        slug = _make_category(client, auth_headers, hidden=True)
+        resp = client.patch(f"/categories/{slug}", json={"hidden": False}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["hidden"] is False
+
+        listed = client.get("/categories", headers=auth_headers)
+        assert slug in {c["slug"] for c in listed.json()}
+
+    def test_locked_requires_hidden_at_creation(self, client, auth_headers):
+        resp = client.post(
+            "/categories",
+            json={"slug": f"locked-bad-{uuid.uuid4().hex[:8]}", "name": "x", "locked": True, "hidden": False},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_locked_category_can_never_be_revealed(self, client, auth_headers):
+        slug = f"locked-{uuid.uuid4().hex[:8]}"
+        create = client.post(
+            "/categories", json={"slug": slug, "name": "x", "hidden": True, "locked": True}, headers=auth_headers
+        )
+        assert create.status_code == 201, create.text
+
+        resp = client.patch(f"/categories/{slug}", json={"hidden": False}, headers=auth_headers)
+        assert resp.status_code == 409, resp.text
+
+        # sigue oculta despues del intento fallido
+        listed = client.get("/categories", headers=auth_headers)
+        assert slug not in {c["slug"] for c in listed.json()}
+
+    def test_locked_category_setting_hidden_true_again_is_a_noop_not_an_error(self, client, auth_headers):
+        slug = f"locked-noop-{uuid.uuid4().hex[:8]}"
+        client.post(
+            "/categories", json={"slug": slug, "name": "x", "hidden": True, "locked": True}, headers=auth_headers
+        )
+        resp = client.patch(f"/categories/{slug}", json={"hidden": True}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+
+
+# --------------------------------------------------------------------------- document_versions reader
+
+
+class TestDocumentVersionsEndpoint:
+    def test_history_lists_versions_newest_first_with_full_content(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat, content="v1")
+        client.patch(
+            f"/documents/{doc['id']}",
+            json={"title": doc["title"], "content": "v2", "category": cat},
+            headers=auth_headers,
+        )
+        client.patch(
+            f"/documents/{doc['id']}",
+            json={"title": doc["title"], "content": "v3", "category": cat},
+            headers=auth_headers,
+        )
+
+        resp = client.get(f"/documents/{doc['id']}/versions", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        versions = resp.json()
+        assert [v["version_number"] for v in versions] == [2, 1]
+        assert [v["content"] for v in versions] == ["v2", "v1"]
+        assert versions[0]["category"] == cat
+
+    def test_history_empty_for_never_edited_document(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat)
+        resp = client.get(f"/documents/{doc['id']}/versions", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == []
+
+    def test_history_nonexistent_document_is_404(self, client, auth_headers):
+        resp = client.get(f"/documents/{uuid.uuid4()}/versions", headers=auth_headers)
+        assert resp.status_code == 404, resp.text
+
+    def test_history_route_does_not_collide_with_get_document_by_category_slug(self, client, auth_headers):
+        """Regresion: /documents/{document_id}/versions debe ganarle a
+        /documents/{category}/{slug} en el orden de rutas (ver api.py)."""
+        cat = _make_category(client, auth_headers)
+        doc = _make_document(client, auth_headers, cat)
+        resp = client.get(f"/documents/{doc['id']}/versions", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == []

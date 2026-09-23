@@ -75,16 +75,29 @@ def _add_docs_subparser(sub: argparse._SubParsersAction) -> None:
     p_cat_create.add_argument("slug")
     p_cat_create.add_argument("--name", default=None, help="nombre legible (default: el slug)")
     p_cat_create.add_argument("--description", default=None)
+    p_cat_create.add_argument("--hidden", action="store_true", help="no aparece en list/search sin slug exacto")
+    p_cat_create.add_argument(
+        "--locked",
+        action="store_true",
+        help="con --hidden: la oculta para SIEMPRE (nunca se podra revelar despues, ni por admin)",
+    )
     p_cat_create.set_defaults(func=docs_commands.cmd_category_create)
 
     p_cat_list = category_sub.add_parser("list", help="Lista categorias")
     p_cat_list.set_defaults(func=docs_commands.cmd_category_list)
 
-    p_cat_rename = category_sub.add_parser("rename", help="Renombra una categoria (sus documentos no cambian)")
+    p_cat_rename = category_sub.add_parser(
+        "rename", help="Renombra/edita una categoria (slug actual == slug nuevo para solo tocar name/description/hidden)"
+    )
     p_cat_rename.add_argument("slug", help="slug actual")
-    p_cat_rename.add_argument("new_slug", help="slug nuevo")
+    p_cat_rename.add_argument("new_slug", help="slug nuevo (repite el actual si no quieres cambiarlo)")
     p_cat_rename.add_argument("--name", default=None, help="tambien actualiza el nombre legible")
     p_cat_rename.add_argument("--description", default=None, help="tambien actualiza la descripcion")
+    p_cat_visibility = p_cat_rename.add_mutually_exclusive_group()
+    p_cat_visibility.add_argument("--hidden", action="store_true", help="oculta la categoria")
+    p_cat_visibility.add_argument(
+        "--visible", action="store_true", help="revela la categoria (falla si esta 'locked')"
+    )
     p_cat_rename.set_defaults(func=docs_commands.cmd_category_rename)
 
     p_cat_delete = category_sub.add_parser("delete", help="Borra una categoria (409 si tiene documentos, salvo --force)")
@@ -106,6 +119,7 @@ def _add_docs_subparser(sub: argparse._SubParsersAction) -> None:
 
     p_list = docs_sub.add_parser("list", help="Lista documentos (mas recientes primero)")
     p_list.add_argument("--category", default=None)
+    p_list.add_argument("--archived", action="store_true", help="lista archivados en vez de activos")
     p_list.add_argument("--limit", type=int, default=20)
     p_list.add_argument("--offset", type=int, default=0)
     p_list.set_defaults(func=docs_commands.cmd_list)
@@ -139,6 +153,29 @@ def _add_docs_subparser(sub: argparse._SubParsersAction) -> None:
     p_delete.add_argument("document_id")
     p_delete.add_argument("--yes", action="store_true", help="omite la confirmacion interactiva")
     p_delete.set_defaults(func=docs_commands.cmd_delete)
+
+    p_archive = docs_sub.add_parser("archive", help="Archiva un documento (soft-delete, reversible con unarchive)")
+    p_archive.add_argument("document_id")
+    p_archive.set_defaults(func=docs_commands.cmd_archive)
+
+    p_unarchive = docs_sub.add_parser("unarchive", help="Revierte un archive")
+    p_unarchive.add_argument("document_id")
+    p_unarchive.set_defaults(func=docs_commands.cmd_unarchive)
+
+    p_history = docs_sub.add_parser("history", help="Lista el historial de versiones anteriores de un documento")
+    p_history.add_argument("document_id")
+    p_history.set_defaults(func=docs_commands.cmd_history)
+
+    p_docs_import = docs_sub.add_parser(
+        "import-markdown", help="Importa documentos completos (sin destilar) desde archivos Markdown existentes"
+    )
+    p_docs_import.add_argument("path", help="archivo .md o directorio (recursivo)")
+    p_docs_import.add_argument("--category", required=True, help="slug de la categoria destino (debe existir)")
+    p_docs_import.add_argument("--dry-run", action="store_true", help="solo muestra que se importaria, sin escribir nada")
+    p_docs_import.add_argument(
+        "--update", action="store_true", help="si el (categoria, slug) ya existe, actualizalo en vez de omitirlo"
+    )
+    p_docs_import.set_defaults(func=docs_commands.cmd_import_markdown)
 
     p_docs_stats = docs_sub.add_parser("stats", help="Estadisticas del sistema (categorias/documentos/versiones)")
     p_docs_stats.set_defaults(func=docs_commands.cmd_stats)

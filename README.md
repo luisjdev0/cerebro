@@ -529,21 +529,43 @@ de parchear una sección concreta sin reenviar el documento entero.
 
 | Metodo | Ruta | Scope | Descripcion |
 |---|---|---|---|
-| `POST` | `/categories` | write | crea una categoría (`slug`, `name`, `description?`) |
-| `GET` | `/categories` | read | lista categorías (filtrado a `allowed_categories` del token, si tiene) |
-| `PATCH` | `/categories/{slug}` | write | renombra/edita una categoría; sus documentos no cambian de ruta lógica (el FK es `category_id`, no texto copiado) |
+| `POST` | `/categories` | write | crea una categoría (`slug`, `name`, `description?`, `hidden?=false`, `locked?=false`) |
+| `GET` | `/categories` | read | lista categorías `hidden=false` (filtrado ademas a `allowed_categories` del token, si tiene) -- una categoria `hidden` sigue siendo alcanzable sabiendo su slug exacto |
+| `PATCH` | `/categories/{slug}` | write | renombra/edita una categoría (incl. `hidden`); sus documentos no cambian de ruta lógica (el FK es `category_id`, no texto copiado). Si el slug cambia, registra un redirect por cada documento de la categoría. 409 si la categoría es `locked` y se intenta `hidden=false` -- una categoría `locked` nunca se puede revelar |
 | `DELETE` | `/categories/{slug}` | admin | 409 si tiene documentos, salvo `?force=true` (cascada a documentos y su historial de versiones) |
 | `POST` | `/documents` | write | crea un documento (`title`, `content`, `category`, `slug?`); 409 si el slug ya existe en esa categoría |
-| `GET` | `/documents/{category}/{slug}` | read | lee un documento por su ruta exacta |
-| `GET` | `/documents` | read | lista documentos, `updated_at desc`; filtros `category?`, `q?` (full-text simple), `limit?=20`, `offset?=0` |
-| `PATCH` | `/documents/{id}` | write | reemplazo completo (incluye mover de categoría); snapshotea la versión anterior en `document_versions` antes de escribir |
+| `GET` | `/documents/{category}/{slug}` | read | lee un documento por su ruta exacta (funciona para archivados y categorías `hidden` por igual). Si no hay match directo, intenta `slug_redirects`; de encontrarlo, responde con el documento actual y `redirected_from: {category, slug}` |
+| `GET` | `/documents` | read | lista documentos `status=active`, `updated_at desc`; filtros `category?`, `q?` (full-text simple), `limit?=20`, `offset?=0`. Sin `category` explicito, excluye ademas categorías `hidden` |
+| `GET` | `/documents/archived` | read | igual que arriba pero `status=archived` -- enumeración dedicada, nunca se mezcla con el listado normal |
+| `GET` | `/documents/{id}/versions` | read | historial completo de `document_versions` (mas reciente primero, con `content` integro) -- solo lectura, sin restore automático |
+| `PATCH` | `/documents/{id}` | write | reemplazo completo (incluye mover de categoría); snapshotea la versión anterior en `document_versions` antes de escribir. Si `slug`/`category` cambian, registra un redirect |
 | `PATCH` | `/documents/{id}/section` | write | parche parcial por heading: `operation` en `replace`\|`append`\|`insert_after`\|`insert_before`\|`delete`; snapshotea igual que el reemplazo completo |
-| `DELETE` | `/documents/{id}` | write | borra el documento (cascada a `document_versions`) |
+| `POST` | `/documents/{id}/archive` | write | archiva (soft-delete): desaparece de `/documents`, sigue accesible por ruta exacta, reversible |
+| `POST` | `/documents/{id}/unarchive` | write | revierte un archive |
+| `DELETE` | `/documents/{id}` | write | borra el documento (cascada a `document_versions`) -- irreversible, a diferencia de archive |
 | `POST` | `/tokens` | admin | crea un token con scopes (`{name, scopes, allowed_categories?}`) |
 | `GET` | `/tokens` | admin | lista tokens |
 | `DELETE` | `/tokens/{name}` | admin | revoca un token por nombre |
 | `GET` | `/stats` | read | conteos de categorías/documentos/versiones (mirror mínimo del `/stats` de cerebro-memory, sin desambiguaciones ni preferencias) |
 | `GET` | `/health` | ninguno | sin auth; chequea conexion a la base de datos |
+
+**Categorías ocultas y bloqueadas** (`hidden`/`locked`): `hidden=true` saca la
+categoría de `GET /categories`/`GET /documents` sin filtro explícito -- sigue siendo
+alcanzable creando/leyendo documentos con su slug exacto. Es alternable via `PATCH
+/categories/{slug}`. `locked=true` (solo fijable al crear, requiere `hidden=true`) la
+oculta PARA SIEMPRE -- ningún endpoint permite revertirlo despues. Pensado para
+categorías de referencia interna que nunca deben ser navegables (p.ej. los `.md` de
+soporte de un futuro módulo `cerebro-flows`).
+
+**Archivado**: `status` de un documento es `active` o `archived`. Archivar (soft-delete,
+reversible) es la alternativa a `DELETE /documents/{id}` (irreversible) cuando se
+quiere sacar algo de circulación sin perderlo.
+
+**Redirects de slug**: renombrar un documento o su categoría deja un registro en
+`slug_redirects` (coordenada vieja `(category, slug)` -> `document_id` actual, nunca
+encadenado). `GET /documents/{category}/{slug}` cae a ese registro solo si no hay
+match directo -- un documento real en esa ruta siempre gana. El tool MCP `docs_get`
+usa esto para alertar al modelo y que deje de referenciar la ruta vieja.
 
 **Sección = desde un heading hasta el siguiente del mismo nivel o superior.** Si el
 heading buscado aparece más de una vez, `PATCH /documents/{id}/section` devuelve `409`
@@ -587,8 +609,15 @@ no-duplicados, direccion en `related`, cascada de hard-delete, ordering de
 `docker compose up -d` primero desde la raíz del repo).
 
 En `cerebro-docs`: `tests/test_auth.py`, `tests/test_documents.py`,
-`tests/test_sections.py`, `tests/test_slugs.py`, `tests/test_strict_input.py` -- mismo
-criterio, la parte de integración necesita `DATABASE_URL` alcanzable.
+`tests/test_sections.py`, `tests/test_slug_redirects.py`, `tests/test_slugs.py`,
+`tests/test_strict_input.py` -- mismo criterio, la parte de integración necesita
+`DATABASE_URL` alcanzable.
+
+Los cuatro paquetes con suite de integración (`cerebro-memory`, `cerebro-docs`,
+`cerebro-cli`, y transitivamente `cerebro-clients`) aíslan sus tests contra una base
+`cerebro_test` efímera (dropeada/recreada en `pytest_configure` de cada paquete, antes
+de que se importe ningún módulo de test) -- nunca escriben contra la base de
+desarrollo real. Ver `packages/cerebro-memory/tests/conftest.py` para el detalle.
 
 ## Conectar a Claude (servidor MCP: `cerebro-mcp`)
 
@@ -598,15 +627,16 @@ tool llama a la API HTTP correspondiente vía `cerebro_clients` (`MemoryClient` 
 `DocsClient`), sin lógica de negocio propia -- toda vive en las APIs, así
 `cerebro-cli` comparte exactamente el mismo camino.
 
-19 tools disponibles:
+23 tools disponibles:
 
 - **`memory_*`** (10, hablan con `cerebro-memory`): `memory_search`,
   `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
   `memory_create_context`, `memory_stats`, `memory_link`, `memory_related`,
   `memory_timeline`.
-- **`docs_*`** (9, hablan con `cerebro-docs`): `docs_create_category`,
+- **`docs_*`** (13, hablan con `cerebro-docs`): `docs_create_category`,
   `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`,
-  `docs_update`, `docs_patch_section`, `docs_delete`.
+  `docs_update`, `docs_patch_section`, `docs_delete`, `docs_archive`,
+  `docs_unarchive`, `docs_list_archived`, `docs_history`.
 
 `memory_search` usa `scope=auto` por defecto (Context Engine). Si la respuesta es
 ambigua, `message` trae el texto ya formateado para decidir o mostrar al usuario, y
@@ -635,7 +665,19 @@ relation?)` lista los vecinos a 1 salto, incluida la cadena de supersedencia vir
 new_heading_level?)` parchea una sección puntual sin reenviar el documento completo --
 el uso previsto para que un agente actualice, p.ej., un runbook línea por línea en vez
 de reescribirlo entero cada vez. `docs_search(query, category?, limit?, offset?)` hace
-full-text simple; `docs_list`/`docs_categories` listan sin query.
+full-text simple; `docs_list`/`docs_categories` listan sin query (ninguno de los dos
+incluye documentos archivados ni categorías ocultas).
+
+`docs_create_category(slug, name, description?, hidden?, locked?)` acepta `hidden`
+para categorías que no deben aparecer en listados sin slug exacto (p.ej. referencia
+interna de un módulo), y `locked` (requiere `hidden`) para las que nunca deben poder
+revelarse. `docs_archive(document_id)`/`docs_unarchive(document_id)` son el
+equivalente de `cerebro-docs` a `memory_forget` (soft-delete reversible, preferible a
+`docs_delete` cuando no se quiere perder el contenido); `docs_list_archived` enumera
+lo archivado. `docs_history(document_id)` lee el historial de `document_versions`
+(solo lectura, sin restore automático). Si `docs_get` resuelve una ruta que fue
+renombrada, la respuesta trae un `alert` pidiéndole al modelo dejar de usar la ruta
+vieja y corregirla en cualquier lado donde la tuviera guardada.
 
 Tras instalar `cerebro-mcp` (`pip install -e packages/cerebro-mcp`) queda disponible
 el entry point de consola `cerebro-mcp` (ver `[project.scripts]` en su
@@ -802,12 +844,31 @@ cerebro docs search "restore postgres"
 cerebro docs update $DOC_ID "Runbook: restore de Postgres (v2)" infraestructura --content-file runbook-v2.md
 cerebro docs patch-section $DOC_ID "## Pasos" append --body "4. Verificar healthcheck" --create-if-missing
 
+cerebro docs archive $DOC_ID           # soft-delete, reversible
+cerebro docs unarchive $DOC_ID
+cerebro docs list --archived           # enumera lo archivado
+cerebro docs history $DOC_ID           # historial de document_versions
+
 cerebro docs delete $DOC_ID --yes
 cerebro docs stats
+
+# categoria oculta (WIP) o bloqueada para siempre (referencia interna)
+cerebro docs category create referencia-interna --hidden
+cerebro docs category create refs-flows --hidden --locked
+cerebro docs category rename referencia-interna referencia-interna --visible   # revela (falla si es --locked)
+
+# importador bulk (sin destilar -- cada archivo se guarda completo)
+cerebro docs import-markdown ./runbooks --category infraestructura --dry-run
+cerebro docs import-markdown ./runbooks --category infraestructura --update
 ```
 
 `--content-file` es opcional en `save`/`update` -- si se omite, el CLI lee el
-contenido de stdin (útil para pipear la salida de otro comando o un heredoc).
+contenido de stdin (útil para pipear la salida de otro comando o un heredoc). El
+importador bulk (`import-markdown`) es el equivalente de `cerebro-docs` a `cerebro
+memory import-markdown`, pero sin destilar: cada archivo `.md` se guarda como un
+documento completo (título = primer `# heading` del archivo o el nombre de archivo,
+slug = nombre de archivo saneado). Por defecto omite archivos cuyo `(categoria, slug)`
+ya existe (`--update` los actualiza en vez de omitirlos).
 
 ### Comandos transversales (sin prefijo)
 

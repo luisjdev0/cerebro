@@ -206,12 +206,23 @@ def test_docs_create_category_routes_to_client(fake_clients):
     _, fake_docs = fake_clients
     fake_docs.create_category.return_value = {"slug": "eco"}
     out = server.docs_create_category("eco", "Ecosistema", description="d")
-    fake_docs.create_category.assert_called_once_with("eco", "Ecosistema", description="d")
+    fake_docs.create_category.assert_called_once_with("eco", "Ecosistema", description="d", hidden=False, locked=False)
     assert out == {"category": {"slug": "eco"}}
 
     fake_docs.create_category.side_effect = _api_error(409)
     out = server.docs_create_category("eco", "Ecosistema")
     assert "error" in out
+
+
+def test_docs_create_category_hidden_locked_routes_to_client(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.create_category.return_value = {"slug": "eco"}
+    server.docs_create_category("eco", "Ecosistema", hidden=True, locked=True)
+    fake_docs.create_category.assert_called_once_with("eco", "Ecosistema", description=None, hidden=True, locked=True)
+
+    fake_docs.create_category.side_effect = _api_error(422, "locked requiere hidden")
+    out = server.docs_create_category("eco", "Ecosistema", locked=True)
+    assert "locked requiere hidden" in out["error"]
 
 
 def test_docs_categories_routes_to_client(fake_clients):
@@ -256,6 +267,28 @@ def test_docs_get_routes_to_client(fake_clients):
     fake_docs.get_document.side_effect = _api_error(404)
     out = server.docs_get("eco", "no-existe")
     assert "error" in out
+
+
+def test_docs_get_alerts_model_on_redirect(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.get_document.return_value = {
+        "id": "d1",
+        "category": "eco",
+        "slug": "nuevo-slug",
+        "redirected_from": {"category": "eco", "slug": "slug-viejo"},
+    }
+    out = server.docs_get("eco", "slug-viejo")
+    assert "alert" in out
+    assert "slug-viejo" in out["alert"]
+    assert "eco/nuevo-slug" in out["alert"]
+    assert out["document"]["slug"] == "nuevo-slug"
+
+
+def test_docs_get_no_alert_without_redirect(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.get_document.return_value = {"id": "d1", "category": "eco", "slug": "mi-doc"}
+    out = server.docs_get("eco", "mi-doc")
+    assert "alert" not in out
 
 
 def test_docs_search_routes_to_list_documents_with_q(fake_clients):
@@ -332,12 +365,53 @@ def test_docs_delete_routes_to_client(fake_clients):
     assert "error" in out
 
 
+def test_docs_archive_routes_to_client(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.archive_document.return_value = {"id": "d1", "status": "archived"}
+    out = server.docs_archive("d1")
+    fake_docs.archive_document.assert_called_once_with("d1")
+    assert out == {"document": {"id": "d1", "status": "archived"}}
+
+    fake_docs.archive_document.side_effect = _api_error(404)
+    out = server.docs_archive("missing")
+    assert "error" in out
+
+
+def test_docs_unarchive_routes_to_client(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.unarchive_document.return_value = {"id": "d1", "status": "active"}
+    out = server.docs_unarchive("d1")
+    fake_docs.unarchive_document.assert_called_once_with("d1")
+    assert out == {"document": {"id": "d1", "status": "active"}}
+
+
+def test_docs_list_archived_routes_to_client(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.list_archived_documents.return_value = [{"id": "d1"}]
+    out = server.docs_list_archived(category="eco", limit=5, offset=1)
+    fake_docs.list_archived_documents.assert_called_once_with(category="eco", limit=5, offset=1)
+    assert out == {"documents": [{"id": "d1"}]}
+
+
+def test_docs_history_routes_to_client(fake_clients):
+    _, fake_docs = fake_clients
+    fake_docs.get_document_versions.return_value = [{"version_number": 1}]
+    out = server.docs_history("d1")
+    fake_docs.get_document_versions.assert_called_once_with("d1")
+    assert out == {"versions": [{"version_number": 1}]}
+
+    fake_docs.get_document_versions.side_effect = _api_error(404)
+    out = server.docs_history("missing")
+    assert "error" in out
+
+
 # =============================================================================== registro de tools
 
 
-def test_all_19_tools_are_registered():
-    """Las 10 memory_* existentes + las 9 docs_* nuevas -- el inventario exacto que
-    espera el usuario (ecosistema-cerebro.md SS10)."""
+def test_all_23_tools_are_registered():
+    """Las 10 memory_* existentes + las 13 docs_* (9 originales + 4 nuevas del
+    bloque de trabajo de archivado/categorias ocultas/redirects/historial) -- el
+    inventario exacto que espera el usuario (ecosistema-cerebro.md SS10)."""
     tool_names = {
         "memory_search",
         "memory_remember",
@@ -358,8 +432,12 @@ def test_all_19_tools_are_registered():
         "docs_update",
         "docs_patch_section",
         "docs_delete",
+        "docs_archive",
+        "docs_unarchive",
+        "docs_list_archived",
+        "docs_history",
     }
-    assert len(tool_names) == 19
+    assert len(tool_names) == 23
     for name in tool_names:
         assert hasattr(server, name), f"falta la tool {name}"
         assert callable(getattr(server, name))

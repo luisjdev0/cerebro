@@ -24,6 +24,16 @@ from typing import Literal
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 
+# Normalizacion defensiva (luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section
+# reporta fallos de actualizacion"): si el caller pasa el heading CON el prefijo
+# markdown incluido (p.ej. "## Mi seccion" en vez de "Mi seccion"), find_section nunca
+# lo va a matchear -- los titulos que parsea find_headings ya vienen sin el prefijo
+# (HEADING_RE.group(2)). Recortarlo aqui evita ese error confuso sin cambiar el
+# contrato: un heading real que empiece con "#" literal (no como prefijo de nivel,
+# sino como texto) sigue sin poder representarse, pero ese caso no se ha visto en la
+# practica y HEADING_RE tampoco lo soportaria al parsear el documento.
+_HEADING_PREFIX_RE = re.compile(r"^#{1,6}\s+")
+
 Operation = Literal["replace", "append", "insert_after", "insert_before", "delete"]
 VALID_OPERATIONS: tuple[Operation, ...] = ("replace", "append", "insert_after", "insert_before", "delete")
 
@@ -112,6 +122,8 @@ def apply_section_patch(
     """
     if operation not in VALID_OPERATIONS:
         raise InvalidOperationError(operation)
+
+    heading = _HEADING_PREFIX_RE.sub("", heading.strip(), count=1).strip()
 
     lines = content.splitlines()
 

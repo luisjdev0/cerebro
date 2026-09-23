@@ -43,8 +43,16 @@ class DocsClient(BaseClient):
 
     # --------------------------------------------------------------------- categories
 
-    def create_category(self, slug: str, name: str, *, description: str | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"slug": slug, "name": name}
+    def create_category(
+        self,
+        slug: str,
+        name: str,
+        *,
+        description: str | None = None,
+        hidden: bool = False,
+        locked: bool = False,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"slug": slug, "name": name, "hidden": hidden, "locked": locked}
         if description is not None:
             body["description"] = description
         return self._request("POST", "/categories", json=body).json()
@@ -59,6 +67,7 @@ class DocsClient(BaseClient):
         new_slug: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        hidden: bool | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if new_slug is not None:
@@ -67,6 +76,8 @@ class DocsClient(BaseClient):
             body["name"] = name
         if description is not None:
             body["description"] = description
+        if hidden is not None:
+            body["hidden"] = hidden
         return self._request("PATCH", f"/categories/{slug}", json=body).json()
 
     def delete_category(self, slug: str, *, force: bool = False) -> dict[str, Any]:
@@ -127,6 +138,23 @@ class DocsClient(BaseClient):
 
     def delete_document(self, document_id: str) -> dict[str, Any]:
         return self._request("DELETE", f"/documents/{document_id}").json()
+
+    def list_archived_documents(
+        self, *, category: str | None = None, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if category is not None:
+            params["category"] = category
+        return self._request("GET", "/documents/archived", params=params).json()
+
+    def archive_document(self, document_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/documents/{document_id}/archive").json()
+
+    def unarchive_document(self, document_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/documents/{document_id}/unarchive").json()
+
+    def get_document_versions(self, document_id: str) -> list[dict[str, Any]]:
+        return self._request("GET", f"/documents/{document_id}/versions").json()
 
     # --------------------------------------------------------------------- stats
 

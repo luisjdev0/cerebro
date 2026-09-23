@@ -38,12 +38,33 @@ class TestCategories:
         make_client(transport).create_category("eco", "Ecosistema")
         assert transport.last["method"] == "POST"
         assert transport.last["path"] == "/categories"
-        assert transport.last["json"] == {"slug": "eco", "name": "Ecosistema"}
+        assert transport.last["json"] == {"slug": "eco", "name": "Ecosistema", "hidden": False, "locked": False}
 
     def test_create_category_with_description(self):
         transport = RecordingTransport()
         make_client(transport).create_category("eco", "Ecosistema", description="algo")
-        assert transport.last["json"] == {"slug": "eco", "name": "Ecosistema", "description": "algo"}
+        assert transport.last["json"] == {
+            "slug": "eco",
+            "name": "Ecosistema",
+            "description": "algo",
+            "hidden": False,
+            "locked": False,
+        }
+
+    def test_create_category_hidden_and_locked(self):
+        transport = RecordingTransport()
+        make_client(transport).create_category("eco", "Ecosistema", hidden=True, locked=True)
+        assert transport.last["json"] == {
+            "slug": "eco",
+            "name": "Ecosistema",
+            "hidden": True,
+            "locked": True,
+        }
+
+    def test_update_category_can_toggle_hidden(self):
+        transport = RecordingTransport()
+        make_client(transport).update_category("eco", hidden=True)
+        assert transport.last["json"] == {"hidden": True}
 
     def test_list_categories(self):
         transport = RecordingTransport(response_json=[])
@@ -152,6 +173,36 @@ class TestDocuments:
         make_client(transport).delete_document("doc-1")
         assert transport.last["method"] == "DELETE"
         assert transport.last["path"] == "/documents/doc-1"
+
+    def test_archive_document(self):
+        transport = RecordingTransport()
+        make_client(transport).archive_document("doc-1")
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/documents/doc-1/archive"
+
+    def test_unarchive_document(self):
+        transport = RecordingTransport()
+        make_client(transport).unarchive_document("doc-1")
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/documents/doc-1/unarchive"
+
+    def test_list_archived_documents_defaults(self):
+        transport = RecordingTransport(response_json=[])
+        make_client(transport).list_archived_documents()
+        assert transport.last["method"] == "GET"
+        assert transport.last["path"] == "/documents/archived"
+        assert transport.last["params"] == {"limit": "20", "offset": "0"}
+
+    def test_list_archived_documents_with_category(self):
+        transport = RecordingTransport(response_json=[])
+        make_client(transport).list_archived_documents(category="eco")
+        assert transport.last["params"]["category"] == "eco"
+
+    def test_get_document_versions(self):
+        transport = RecordingTransport(response_json=[])
+        make_client(transport).get_document_versions("doc-1")
+        assert transport.last["method"] == "GET"
+        assert transport.last["path"] == "/documents/doc-1/versions"
 
 
 def test_get_stats():

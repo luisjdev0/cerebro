@@ -635,7 +635,9 @@ def memory_stats() -> dict[str, Any]:
 
 
 @mcp.tool()
-def docs_create_category(slug: str, name: str, description: str | None = None) -> dict[str, Any]:
+def docs_create_category(
+    slug: str, name: str, description: str | None = None, hidden: bool = False, locked: bool = False
+) -> dict[str, Any]:
     """Crea una categoria nueva para organizar documentos Markdown completos.
 
     Igual flujo que memory_create_context: cerebro-docs organiza documentos en
@@ -644,18 +646,31 @@ def docs_create_category(slug: str, name: str, description: str | None = None) -
     documentos, ver docs_categories). Necesaria antes de docs_save si ninguna
     categoria existente encaja.
 
+    `hidden=True` la excluye de docs_categories()/docs_list()/docs_search() sin
+    filtro explicito -- sigue siendo alcanzable creando/leyendo documentos con su
+    slug exacto. Usa esto para categorias de referencia interna que no deben
+    aparecer en un listado normal (p.ej. prompts de subagente de un flujo). Si
+    ademas pasas `locked=True`, la categoria queda oculta PARA SIEMPRE -- ningun
+    admin va a poder revelarla despues (no hay tool para eso), asi que solo tiene
+    sentido para categorias que por diseno nunca deben ser navegables. `locked=True`
+    sin `hidden=True` es invalido.
+
     Args:
         slug: identificador corto y estable en minusculas con guiones, p.ej.
             "ecosistema" o "runbooks". Debe ser unico.
         name: nombre legible para humanos, p.ej. "Ecosistema cerebro".
         description: descripcion breve de que tipo de documentos va en esta
             categoria (ayuda a decidir despues donde guardar algo nuevo).
+        hidden: si True, no aparece en listados (default False).
+        locked: si True, `hidden` queda fijo para siempre (default False; requiere
+            `hidden=True`).
 
     Returns:
-        dict con la categoria creada (`category`), o `error` si el slug ya existe.
+        dict con la categoria creada (`category`), o `error` si el slug ya existe o
+        `locked=True` sin `hidden=True`.
     """
     try:
-        category = _docs.create_category(slug, name, description=description)
+        category = _docs.create_category(slug, name, description=description, hidden=hidden, locked=locked)
     except CerebroConnectionError as exc:
         return {"error": _connection_error_message("cerebro-docs", exc)}
     except CerebroAPIError as exc:
@@ -663,6 +678,8 @@ def docs_create_category(slug: str, name: str, description: str | None = None) -
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 409:
             return {"error": f"Ya existe una categoria con slug '{slug}'."}
+        if exc.status_code == 422:
+            return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"category": category}
@@ -758,6 +775,11 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
     directamente). Si solo tienes una referencia imprecisa ("el documento del
     despliegue"), usa docs_search en vez de esta.
 
+    Si la ruta pedida se renombro (el documento o su categoria cambiaron de slug), el
+    resultado igual trae el documento (via redirect interno) pero con un `alert` al
+    inicio pidiendote dejar de usar la ruta vieja y corregirla en cualquier lado donde
+    la tuvieras guardada -- tratalo como instruccion, no solo como aviso informativo.
+
     Args:
         category: slug de la categoria del documento.
         slug: slug del documento dentro de esa categoria.
@@ -777,6 +799,23 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
             return {"error": f"No existe ningun documento en '{category}/{slug}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
+    redirected_from = document.get("redirected_from")
+    if redirected_from:
+        # El documento real siempre gana sobre un redirect -- esto solo pasa cuando
+        # '{category}/{slug}' ya no tiene match directo. La alerta va DIRIGIDA AL
+        # MODELO, no solo informativa: debe dejar de usar la ruta vieja de ahora en
+        # adelante y, si la tenia guardada en una memoria o documento, corregirla ahi
+        # tambien -- no solo reportarsela al usuario.
+        return {
+            "alert": (
+                f"AVISO: la ruta '{category}/{slug}' que pediste ya no existe -- este documento se movio a "
+                f"'{document['category']}/{document['slug']}'. No vuelvas a usar la ruta vieja de aqui en "
+                "adelante; si la tenias guardada en una memoria o en otro documento, actualizala a la nueva "
+                "antes de terminar."
+            ),
+            "document": document,
+        }
+
     return {"document": document}
 
 
@@ -787,7 +826,8 @@ def docs_search(query: str, category: str | None = None, limit: int = 20, offset
     Usala cuando el usuario se refiere a un documento sin dar su ruta exacta (p.ej.
     "el documento del desarrollo x", "la guia de despliegue") -- busca en titulo Y
     contenido. Si ya sabes la categoria y el slug exactos, usa docs_get en vez de
-    esta (es mas directo).
+    esta (es mas directo). Nunca incluye documentos archivados -- para esos, usa
+    docs_list_archived.
 
     Args:
         query: texto a buscar (full-text sobre titulo + contenido).
@@ -818,7 +858,8 @@ def docs_list(category: str | None = None, limit: int = 20, offset: int = 0) -> 
     """Lista documentos, mas recientes primero (sin filtro de texto -- ver docs_search para eso).
 
     Usala para explorar que documentos existen en una categoria, o en todo el
-    repositorio si se omite `category`. Ordenado por `updated_at` descendente.
+    repositorio si se omite `category`. Ordenado por `updated_at` descendente. Nunca
+    incluye documentos archivados -- para esos, usa docs_list_archived.
 
     Args:
         category: slug de una categoria para acotar el listado a ella (opcional; si
@@ -972,10 +1013,11 @@ def docs_patch_section(
 def docs_delete(document_id: str) -> dict[str, Any]:
     """Borra un documento (y, en cascada, todo su historial de versiones).
 
-    Usala cuando el usuario pida explicitamente borrar un documento. No hay
-    papelera/soft-delete en v1 -- es irreversible, a diferencia de memory_forget (que
-    por defecto solo archiva). Si tienes dudas sobre si el usuario quiere borrar en
-    vez de solo editar, confirma antes de llamar esta tool.
+    IRREVERSIBLE -- si lo que el usuario quiere es sacar un documento de circulacion
+    sin perderlo para siempre, usa docs_archive en vez de esta (equivalente a
+    memory_forget: por defecto archiva, no borra). Usa docs_delete solo cuando el
+    usuario pida explicitamente borrar. Si tienes dudas sobre cual de las dos quiere,
+    confirma antes de llamar cualquiera.
 
     Args:
         document_id: UUID del documento a borrar.
@@ -993,6 +1035,116 @@ def docs_delete(document_id: str) -> dict[str, Any]:
         if exc.status_code == 404:
             return {"error": f"No existe ningun documento con id '{document_id}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
+
+
+@mcp.tool()
+def docs_archive(document_id: str) -> dict[str, Any]:
+    """Archiva un documento (soft-delete): deja de aparecer en docs_list/docs_search,
+    pero sigue accesible por su ruta exacta con docs_get y se puede revertir con
+    docs_unarchive. Equivalente de cerebro-docs a memory_forget -- preferila sobre
+    docs_delete cuando el usuario quiere "quitar de en medio" algo sin perderlo.
+
+    Args:
+        document_id: UUID del documento a archivar.
+
+    Returns:
+        dict con el documento actualizado (`document`), o `error` si no existe.
+    """
+    try:
+        document = _docs.archive_document(document_id)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-docs", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-docs", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun documento con id '{document_id}'."}
+        return {"error": _http_error_message("cerebro-docs", exc)}
+
+    return {"document": document}
+
+
+@mcp.tool()
+def docs_unarchive(document_id: str) -> dict[str, Any]:
+    """Revierte un docs_archive: el documento vuelve a aparecer en docs_list/docs_search.
+
+    Args:
+        document_id: UUID del documento a desarchivar.
+
+    Returns:
+        dict con el documento actualizado (`document`), o `error` si no existe.
+    """
+    try:
+        document = _docs.unarchive_document(document_id)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-docs", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-docs", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun documento con id '{document_id}'."}
+        return {"error": _http_error_message("cerebro-docs", exc)}
+
+    return {"document": document}
+
+
+@mcp.tool()
+def docs_list_archived(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    """Enumera documentos archivados (docs_list/docs_search nunca los muestran).
+
+    Usala para encontrar algo que se archivo antes, o para decidir si desarchivar
+    (docs_unarchive) o borrar definitivamente (docs_delete) algo viejo.
+
+    Args:
+        category: slug de una categoria para acotar el listado (opcional).
+        limit: maximo de resultados por pagina (default 20, maximo 100).
+        offset: cuantos resultados saltar, para paginar (default 0).
+
+    Returns:
+        dict con `documents`: lista de documentos archivados, o `error` si algo fallo.
+    """
+    try:
+        documents = _docs.list_archived_documents(category=category, limit=limit, offset=offset)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-docs", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-docs", exc)}
+        if exc.status_code == 403:
+            return {"error": f"No tienes acceso a la categoria '{category}'."}
+        return {"error": _http_error_message("cerebro-docs", exc)}
+
+    return {"documents": documents}
+
+
+@mcp.tool()
+def docs_history(document_id: str) -> dict[str, Any]:
+    """Lista el historial de versiones anteriores de un documento (snapshots
+    guardados automaticamente antes de cada docs_update/docs_patch_section).
+
+    Solo lectura -- no hay restore automatico. Para recuperar contenido de una
+    version vieja, cópialo del resultado y guardalo con docs_update.
+
+    Args:
+        document_id: UUID del documento.
+
+    Returns:
+        dict con `versions`: lista ordenada de mas reciente a mas vieja (cada una con
+        `version_number`, `category`, `title`, `content`, `created_at`), o `error` si
+        el documento no existe.
+    """
+    try:
+        versions = _docs.get_document_versions(document_id)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-docs", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-docs", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun documento con id '{document_id}'."}
+        return {"error": _http_error_message("cerebro-docs", exc)}
+
+    return {"versions": versions}
 
 
 def main() -> None:

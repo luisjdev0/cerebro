@@ -85,6 +85,20 @@ def test_patch_replace_swaps_section_body_keeps_heading():
     assert "texto de introduccion." not in result
 
 
+def test_patch_heading_with_markdown_prefix_is_normalized():
+    """luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section reporta fallos de
+    actualizacion": un heading pasado CON el prefijo ("## Introduccion" en vez de
+    "Introduccion") debe tratarse igual, no fallar con HeadingNotFoundError."""
+    with_prefix = apply_section_patch(SAMPLE, heading="## Introduccion", operation="replace", body="nuevo contenido")
+    without_prefix = apply_section_patch(SAMPLE, heading="Introduccion", operation="replace", body="nuevo contenido")
+    assert with_prefix == without_prefix
+
+
+def test_patch_heading_with_prefix_and_extra_whitespace_is_normalized():
+    result = apply_section_patch(SAMPLE, heading="  ##   Introduccion  ", operation="append", body="linea extra")
+    assert "linea extra" in result
+
+
 def test_patch_append_adds_after_existing_body():
     result = apply_section_patch(SAMPLE, heading="Introduccion", operation="append", body="linea extra")
     assert "texto de introduccion." in result
