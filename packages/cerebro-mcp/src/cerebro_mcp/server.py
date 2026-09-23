@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient, MemoryClient
+from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient, FlowsClient, MemoryClient
 from mcp.server.fastmcp import FastMCP
 
 MEMORY_TYPES = ("semantic", "episodic", "procedural", "decision")
@@ -37,6 +37,7 @@ SECTION_OPERATIONS = ("replace", "append", "insert_after", "insert_before", "del
 
 _memory = MemoryClient()
 _docs = DocsClient()
+_flows = FlowsClient()
 
 # Process-memory de la ultima desambiguacion *sin resolver* (Fase 2 Context Engine,
 # plan_v2.md SS7). Ver el docstring de memory_search() para el comportamiento de
@@ -59,7 +60,12 @@ mcp = FastMCP(
         "usar. Usa docs_save/docs_get/docs_search para documentos Markdown completos "
         "(guias, definiciones, notas largas) que NO deben destilarse a memorias -- "
         "cerebro-docs es un repositorio de documentos, no memoria formal; llama "
-        "docs_categories para ver las categorias disponibles antes de guardar."
+        "docs_categories para ver las categorias disponibles antes de guardar. Usa "
+        "flow_* para procesos/checklists con pasos, decisiones y checkpoints de "
+        "aprobacion -- flow_start/flow_next revelan el flujo paso a paso (nunca leas "
+        "una definicion completa para 'seguirla' manualmente), y flow_validate/"
+        "flow_save/flow_update te dejan autorar flujos nuevos iterando sobre errores "
+        "puntuales antes de guardarlos."
     ),
 )
 
@@ -1145,6 +1151,405 @@ def docs_history(document_id: str) -> dict[str, Any]:
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"versions": versions}
+
+
+# =============================================================================== flow_*
+
+
+@mcp.tool()
+def flow_create_category(slug: str, code: str, name: str, description: str | None = None) -> dict[str, Any]:
+    """Crea una categoria de flujos nueva (luisjdev-pendientes/cerebro-flows).
+
+    Una categoria de cerebro-flows NO es lo mismo que una categoria de cerebro-docs
+    -- son modulos independientes. Aqui una categoria es tambien el prefijo del id
+    correlativo de sus flujos: una categoria con `code="INC"` genera flujos
+    "INC-1", "INC-2", etc. al guardarlos sin `code` explicito.
+
+    Args:
+        slug: identificador corto y estable en minusculas con guiones, p.ej.
+            "incident" o "onboarding". Debe ser unico.
+        code: prefijo corto en mayusculas para los ids de sus flujos, p.ej. "INC".
+            Debe ser unico.
+        name: nombre legible para humanos, p.ej. "Incidencias".
+        description: descripcion breve de que tipo de procesos va en esta categoria.
+
+    Returns:
+        dict con la categoria creada (`category`), o `error` si el slug o el code ya existen.
+    """
+    try:
+        category = _flows.create_category(slug, code, name, description=description)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 409:
+            return {"error": f"Ya existe una categoria con slug '{slug}' o code '{code}'."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"category": category}
+
+
+@mcp.tool()
+def flow_categories() -> dict[str, Any]:
+    """Lista todas las categorias de flujos existentes, con su `code` (prefijo de id).
+
+    Llama esta tool antes de flow_save si no sabes en que categoria debe ir un flujo
+    nuevo, o si necesitas el `code` de una categoria para predecir el id que le tocara.
+
+    Returns:
+        dict con `categories`: lista de {id, slug, code, name, description, created_at, updated_at}.
+    """
+    try:
+        categories = _flows.list_categories()
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"categories": categories}
+
+
+@mcp.tool()
+def flow_validate(yaml_content: str) -> dict[str, Any]:
+    """Valida un YAML de definicion de flujo SIN guardarlo -- para autoria iterativa.
+
+    Usala mientras redactas o editas un flujo, antes de comprometerlo con flow_save/
+    flow_update: corre exactamente la misma validacion que esos dos harian (referencial
+    incluida -- todo `next`/`branches`/`checkpoint.on_reject` debe apuntar a un step
+    real que exista en `procedure`, cada step debe tener exactamente uno de
+    `next`/`branches`/`terminal: true` segun su tipo, etc.) y te devuelve el error
+    puntual (que step, que campo) si algo esta mal, sin tocar la base de datos.
+
+    Args:
+        yaml_content: el YAML completo del flujo a validar.
+
+    Returns:
+        dict `{"valid": true}` si es valido, o `error` con el detalle puntual del
+        primer problema encontrado.
+    """
+    try:
+        _flows.validate_flow(yaml_content)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 422:
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"valid": True}
+
+
+@mcp.tool()
+def flow_save(category: str, yaml_content: str, code: str | None = None) -> dict[str, Any]:
+    """Guarda un flujo NUEVO (validado antes de escribir -- mismo chequeo que flow_validate).
+
+    `category` es OBLIGATORIA y debe ser una categoria existente -- revisa con
+    flow_categories() y crea una nueva con flow_create_category si de verdad no
+    existe ninguna adecuada. Si omites `code`, se autogenera como
+    "{codigo-de-categoria}-{siguiente numero}" (p.ej. "INC-23").
+
+    Args:
+        category: slug de una categoria existente (obligatorio).
+        yaml_content: el YAML completo del flujo (ver flow_validate para el schema).
+        code: id correlativo explicito opcional; si se omite, se autogenera.
+
+    Returns:
+        dict con el flujo creado (`flow`), o `error` si el YAML es invalido, la
+        categoria no existe, o el code ya esta en uso.
+    """
+    try:
+        flow = _flows.create_flow(category, yaml_content, code=code)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            try:
+                categories = _flows.list_categories()
+            except (CerebroConnectionError, CerebroAPIError):
+                categories = []
+            return {
+                "error": (
+                    f"La categoria '{category}' no existe. Categorias disponibles:\n"
+                    f"{_format_category_list(categories)}\n\n"
+                    f"Elige una de estas, o creala primero con flow_create_category(slug='{category}', ...)."
+                )
+            }
+        if exc.status_code in (409, 422):
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"flow": flow}
+
+
+@mcp.tool()
+def flow_get(code: str) -> dict[str, Any]:
+    """Lee la definicion completa (YAML incluido) de un flujo por su id correlativo.
+
+    NO uses esto para EJECUTAR un flujo (eso es flow_start/flow_next, que revelan un
+    paso a la vez) -- es para inspeccionar o editar una definicion existente.
+
+    Args:
+        code: id correlativo del flujo, p.ej. "INC-22".
+
+    Returns:
+        dict con el flujo (`flow`, incluye `yaml_content` completo), o `error` si no existe.
+    """
+    try:
+        flow = _flows.get_flow(code)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun flujo con code '{code}'."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"flow": flow}
+
+
+@mcp.tool()
+def flow_list(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    """Lista definiciones de flujo, mas recientes primero.
+
+    Args:
+        category: slug de una categoria para acotar el listado (opcional).
+        limit: maximo de resultados por pagina (default 20, maximo 100).
+        offset: cuantos resultados saltar, para paginar (default 0).
+
+    Returns:
+        dict con `flows`: lista de flujos, o `error` si algo fallo.
+    """
+    try:
+        flows = _flows.list_flows(category=category, limit=limit, offset=offset)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 403:
+            return {"error": f"No tienes acceso a la categoria '{category}'."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"flows": flows}
+
+
+@mcp.tool()
+def flow_update(code: str, yaml_content: str) -> dict[str, Any]:
+    """Reemplaza el YAML de un flujo existente, creando una version nueva (nunca
+    sobrescribe en silencio -- la version anterior queda snapshoteada). Una ejecucion
+    ya en curso (`flow_start` previo) sigue la version con la que arranco, asi que
+    editar un flujo nunca cambia el comportamiento de un run que ya esta corriendo.
+
+    Args:
+        code: id correlativo del flujo a actualizar.
+        yaml_content: el YAML completo nuevo (reemplaza el anterior entero).
+
+    Returns:
+        dict con el flujo actualizado (`flow`), o `error` si no existe o el YAML es invalido.
+    """
+    try:
+        flow = _flows.update_flow(code, yaml_content)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun flujo con code '{code}'."}
+        if exc.status_code == 422:
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+    return {"flow": flow}
+
+
+@mcp.tool()
+def flow_delete(code: str) -> dict[str, Any]:
+    """Borra una definicion de flujo (y, en cascada, su historial de versiones y sus
+    ejecuciones registradas). Irreversible -- confirma con el usuario si hay dudas.
+
+    Args:
+        code: id correlativo del flujo a borrar.
+
+    Returns:
+        dict de confirmacion, o `error` si no existe.
+    """
+    try:
+        return _flows.delete_flow(code)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun flujo con code '{code}'."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
+def flow_start(code: str) -> dict[str, Any]:
+    """Arranca una ejecucion nueva de un flujo -- el PRIMER paso del protocolo de
+    ejecucion (luisjdev-pendientes/cerebro-flows SS3). NUNCA leas la definicion
+    completa con flow_get para "seguirla" a mano -- el servidor revela un paso a la
+    vez, y eso es intencional: no puedes saltarte un checkpoint que todavia no has
+    visto.
+
+    Protocolo completo:
+      1. flow_start(code) -> {run_id, status, step}. Guarda `run_id`, lo necesitas en
+         TODAS las llamadas siguientes.
+      2. El primer `step` casi siempre es sintetico (`id: "__prerequisites__"`) con
+         `tools_required`: confirma que tienes esas tools (intenta ToolSearch si
+         alguna esta diferida) antes de seguir. Si de verdad falta alguna, avisa al
+         usuario y NO continues.
+      3. Llama flow_next(run_id) en loop para avanzar. Si el `step` que te devuelve es
+         `type: "decision"`, tu PROXIMA llamada a flow_next debe incluir `decision`
+         con una de las claves de `branches` (el servidor no infiere la condicion,
+         tu la reportas).
+      4. Si un `step` trae `checkpoint`, flow_next se bloquea hasta que llames
+         flow_approve_checkpoint o flow_reject_checkpoint.
+      5. `status: "completed"` (con `step: null`) marca el fin exitoso. No hay que
+         reconocer ningun texto libre tipo "fin del flujo".
+
+    Args:
+        code: id correlativo del flujo a ejecutar, p.ej. "INC-22".
+
+    Returns:
+        dict con `run_id`, `status` y `step` (el primer paso), o `error` si el flujo no existe.
+    """
+    try:
+        return _flows.start_flow(code)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun flujo con code '{code}'."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
+def flow_next(run_id: str, decision: str | None = None) -> dict[str, Any]:
+    """Avanza una ejecucion al siguiente paso (ver el protocolo completo en flow_start).
+
+    Si el paso ACTUAL (el que ya viste) es `type: "decision"`, pasa `decision` con
+    una de sus `branches`. Si el paso actual tiene un `checkpoint` sin resolver, esta
+    tool falla (409) hasta que llames flow_approve_checkpoint/flow_reject_checkpoint.
+
+    Args:
+        run_id: el run_id devuelto por flow_start.
+        decision: la rama tomada, solo si el paso actual es una decision (ver arriba).
+
+    Returns:
+        dict con `status` (`in_progress`|`completed`) y `step` (el siguiente paso, o
+        `null` si `completed`), o `error`.
+    """
+    try:
+        return _flows.next_step(run_id, decision=decision)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+        if exc.status_code in (409, 422):
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
+def flow_approve_checkpoint(run_id: str) -> dict[str, Any]:
+    """Aprueba el checkpoint del paso actual -- desbloquea el siguiente flow_next.
+
+    Llamada DELIBERADA y separada de flow_next a proposito (ecosistema-cerebro.md,
+    mismo criterio que memory_forget/docs_archive): aprobar un checkpoint es la
+    accion de mayor consecuencia de un flujo, nunca un parametro que se pueda pasar
+    "por costumbre". Si tienes dudas sobre si el usuario aprobaria este paso,
+    confirma con el ANTES de llamar esta tool.
+
+    Args:
+        run_id: el run_id de la ejecucion.
+
+    Returns:
+        dict con el estado actualizado, o `error` si el paso actual no tiene checkpoint.
+    """
+    try:
+        return _flows.approve_checkpoint(run_id)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+        if exc.status_code == 409:
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
+def flow_reject_checkpoint(run_id: str, reason: str) -> dict[str, Any]:
+    """Rechaza el checkpoint del paso actual -- el flujo salta al step de
+    `checkpoint.on_reject` definido en el YAML (p.ej. de vuelta a revisar o rehacer
+    un paso anterior), no simplemente se detiene.
+
+    Args:
+        run_id: el run_id de la ejecucion.
+        reason: motivo del rechazo (queda en el historial de auditoria del run).
+
+    Returns:
+        dict con el nuevo paso actual (el destino de `on_reject`), o `error`.
+    """
+    try:
+        return _flows.reject_checkpoint(run_id, reason)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+        if exc.status_code == 409:
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
+def flow_abort(run_id: str, reason: str | None = None) -> dict[str, Any]:
+    """Aborta una ejecucion en curso -- la marca como `aborted` (irreversible, a
+    diferencia de un checkpoint rechazado, que reencamina el flujo en vez de
+    terminarlo). Usala cuando el usuario decide explicitamente no continuar con un
+    proceso que ya empezo.
+
+    Args:
+        run_id: el run_id de la ejecucion a abortar.
+        reason: motivo opcional (queda en el historial de auditoria del run).
+
+    Returns:
+        dict de confirmacion con `status: "aborted"`, o `error` si el run no existe o
+        ya estaba terminado (`completed`/`aborted`).
+    """
+    try:
+        return _flows.abort_run(run_id, reason=reason)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            return {"error": f"run_id '{run_id}' no existe."}
+        if exc.status_code == 409:
+            return {"error": str(exc.detail)}
+        return {"error": _http_error_message("cerebro-flows", exc)}
 
 
 def main() -> None:

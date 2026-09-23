@@ -2,22 +2,23 @@
 
 Ecosistema self-hosted y agnóstico al modelo de memoria persistente y documentación
 para agentes de IA (Claude, GPT, Gemini, agentes propios). Nació como un único paquete
-(`knowledgeos`) y hoy es un monorepo de cinco paquetes bajo `packages/`:
+(`knowledgeos`) y hoy es un monorepo de seis paquetes bajo `packages/`:
 
 | Paquete | Qué es | Entry point |
 |---|---|---|
 | [`cerebro-memory`](packages/cerebro-memory) | Servicio API de memoria persistente: PostgreSQL + pgvector, retrieval híbrido (vector + full-text en español, fusionado con RRF), ciclo de vida por supersedencia, audit log, Context Engine (desambiguación de contexto sin LLM), grafo ligero de relaciones + timeline, tokens con scopes | *(ninguno — servicio API puro, sin CLI ni MCP propios)* |
-| [`cerebro-docs`](packages/cerebro-docs) | Servicio API hermano: repositorio de documentos Markdown completos, categorizables, versionados, con parches parciales por sección y búsqueda full-text | *(ninguno — servicio API puro)* |
-| [`cerebro-clients`](packages/cerebro-clients) | SDK delgado `httpx` compartido (`MemoryClient`, `DocsClient`) que habla con ambas APIs | *(librería, no ejecutable)* |
-| [`cerebro-mcp`](packages/cerebro-mcp) | Servidor MCP único por stdio que expone ambos servicios como tools (`memory_*` + `docs_*`) | `cerebro-mcp` |
-| [`cerebro-cli`](packages/cerebro-cli) | CLI único (`cerebro memory ...`, `cerebro docs ...`, más comandos transversales) | `cerebro` |
+| [`cerebro-docs`](packages/cerebro-docs) | Servicio API hermano: repositorio de documentos Markdown completos, categorizables, versionados, con parches parciales por sección, archivado, categorías ocultas, redirects de slug y búsqueda full-text | *(ninguno — servicio API puro)* |
+| [`cerebro-flows`](packages/cerebro-flows) | Servicio API hermano: motor "semáforo" que revela un proceso definido en YAML paso a paso a un modelo (nunca la definición completa) — decisiones, checkpoints de aprobación, delegación en paralelo. Postgres para lo inmutable + Redis solo para el puntero mutable de una ejecución | *(ninguno — servicio API puro)* |
+| [`cerebro-clients`](packages/cerebro-clients) | SDK delgado `httpx` compartido (`MemoryClient`, `DocsClient`, `FlowsClient`) que habla con las tres APIs | *(librería, no ejecutable)* |
+| [`cerebro-mcp`](packages/cerebro-mcp) | Servidor MCP único por stdio que expone los tres servicios como tools (`memory_*` + `docs_*` + `flow_*`) | `cerebro-mcp` |
+| [`cerebro-cli`](packages/cerebro-cli) | CLI único (`cerebro memory ...`, `cerebro docs ...`, `cerebro flow ...`, más comandos transversales) | `cerebro` |
 
-`cerebro-memory` y `cerebro-docs` no tienen lógica de negocio duplicada entre sí: cada
-uno es dueño de su propio schema en el mismo Postgres (`cerebro_memory` /
-`cerebro_docs`) y su propia auth. Todo cliente (`cerebro-mcp`, `cerebro-cli`, o
-cualquier integración futura) pasa por `cerebro-clients` y por el mismo camino HTTP de
-auth + scopes + audit log de cada API — no hay atajos ni lógica de negocio duplicada
-en la capa de cliente.
+`cerebro-memory`, `cerebro-docs` y `cerebro-flows` no tienen lógica de negocio
+duplicada entre sí: cada uno es dueño de su propio schema en el mismo Postgres
+(`cerebro_memory` / `cerebro_docs` / `cerebro_flows`) y su propia auth. Todo cliente
+(`cerebro-mcp`, `cerebro-cli`, o cualquier integración futura) pasa por
+`cerebro-clients` y por el mismo camino HTTP de auth + scopes + audit log de cada API
+— no hay atajos ni lógica de negocio duplicada en la capa de cliente.
 
 v1.0 de `cerebro-memory` = Fases 1-3 sólidas + evaluación pasando + dogfooding
 sostenido (ver `plan_v2.md` SS8, en la raíz del repo, para la arquitectura y el
@@ -586,12 +587,64 @@ retrieval semántico ni Context Engine -- la búsqueda (`GET /documents?q=...`) 
 full-text simple (`websearch_to_tsquery('simple', ...)` + `ts_rank`), siempre
 parametrizada.
 
+## `cerebro-flows`: motor de flujos tipo semáforo
+
+Un tercer tipo de contenido además de memoria (hechos destilados) y documentos
+(Markdown completo): procesos con pasos, decisiones y checkpoints de aprobación,
+definidos en YAML. El modelo **nunca** recibe la definición completa -- el servidor
+revela un paso a la vez, así "no debería saltarse un checkpoint" se vuelve "no puede
+ver el siguiente paso hasta que lo aprobó". Es un servicio de información y control de
+secuencia ("semáforo"), no un orquestador: quien ejecuta las acciones reales (Jira,
+SSH, lo que sea) sigue siendo el modelo, con sus propias tools.
+
+Dos almacenes con roles distintos: **Postgres** (schema `cerebro_flows`) guarda todo
+lo inmutable -- definiciones versionadas, el historial de eventos de cada ejecución
+(`flow_run_events`, escrito incrementalmente). **Redis** guarda SOLO el puntero
+mutable de una ejecución en curso (`flow_run:<run_id>` -- qué paso toca ahora, TTL
+deslizante `FLOW_RUN_TTL_HOURS`, default 72h) -- la definición se relee y reparsea de
+Postgres en cada paso, nunca se cachea completa.
+
+| Método | Ruta | Scope | Descripción |
+|---|---|---|---|
+| `POST` | `/categories` | write | crea una categoría (`slug`, `code`, `name`, `description?`) -- `code` es el prefijo de los ids de sus flujos (ej. categoría `incident`/`INC` → flujos `INC-1`, `INC-2`...) |
+| `GET` | `/categories` | read | lista categorías |
+| `POST` | `/flows/validate` | write | valida un YAML SIN guardarlo -- error puntual (qué step, qué campo) para autoría iterativa |
+| `POST` | `/flows` | write | crea una definición (`category`, `yaml_content`, `code?`); `code` autogenerado si se omite |
+| `GET` | `/flows/{code}` | read | definición completa (YAML de la versión vigente) |
+| `GET` | `/flows` | read | lista definiciones (`category?`) |
+| `PATCH` | `/flows/{code}` | write | reemplaza el YAML (nueva versión, snapshot de la anterior) -- una ejecución en curso sigue la versión con la que arrancó |
+| `DELETE` | `/flows/{code}` | write | borra (cascada a versiones y ejecuciones) |
+| `POST` | `/flows/{code}/start` | write | arranca una ejecución -- `{run_id, status, step}` |
+| `POST` | `/runs/{run_id}/next` | write | avanza al siguiente paso; body `{decision?}` si el paso actual es una decisión |
+| `POST` | `/runs/{run_id}/approve-checkpoint` | write | aprueba el checkpoint del paso actual -- desbloquea el siguiente `next` |
+| `POST` | `/runs/{run_id}/reject-checkpoint` | write | rechaza el checkpoint -- el flujo salta a `checkpoint.on_reject` del YAML |
+| `POST` | `/runs/{run_id}/abort` | write | aborta una ejecución en curso (irreversible) |
+| `GET` | `/runs/{run_id}` | read | estado actual de una ejecución |
+
+**Primer paso siempre sintético**: si la definición declara `tools:` (las tools que el
+modelo va a necesitar), `flow_start` devuelve primero un step `__prerequisites__` con
+`tools_required` -- el chequeo en sí lo hace el modelo (intentar `ToolSearch`, avisar
+si de verdad falta algo), el servidor solo lo obliga a aparecer primero en el
+protocolo. Un `step` de tipo `decision` no se infiere: el modelo reporta la condición
+evaluada (`decision` en el body de `/next`) contra las `branches` del YAML.
+
+```bash
+curl -s -X POST localhost:8007/flows/incident/start \
+  -H "Authorization: Bearer $FLOWS_TOKEN"
+# {"run_id": "...", "status": "in_progress", "step": {"id": "__prerequisites__", ...}}
+
+curl -s -X POST localhost:8007/runs/$RUN_ID/next -H "Authorization: Bearer $FLOWS_TOKEN" -d '{}'
+curl -s -X POST localhost:8007/runs/$RUN_ID/next -H "Authorization: Bearer $FLOWS_TOKEN" \
+  -d '{"decision": "sufficient"}'
+```
+
 ## Tests
 
 ```bash
 # cada paquete tiene su propia suite (testpaths = ["tests"] en su pyproject.toml)
 cd packages/cerebro-memory && pytest
 cd packages/cerebro-docs && pytest
+cd packages/cerebro-flows && pytest
 cd packages/cerebro-clients && pytest
 cd packages/cerebro-mcp && pytest
 cd packages/cerebro-cli && pytest
@@ -613,21 +666,28 @@ En `cerebro-docs`: `tests/test_auth.py`, `tests/test_documents.py`,
 `tests/test_strict_input.py` -- mismo criterio, la parte de integración necesita
 `DATABASE_URL` alcanzable.
 
-Los cuatro paquetes con suite de integración (`cerebro-memory`, `cerebro-docs`,
-`cerebro-cli`, y transitivamente `cerebro-clients`) aíslan sus tests contra una base
-`cerebro_test` efímera (dropeada/recreada en `pytest_configure` de cada paquete, antes
-de que se importe ningún módulo de test) -- nunca escriben contra la base de
-desarrollo real. Ver `packages/cerebro-memory/tests/conftest.py` para el detalle.
+En `cerebro-flows`: `tests/test_schema.py` es unitario (parseo/validación referencial
+del YAML, sin DB); `tests/test_auth.py` y `tests/test_flows.py` (CRUD + el motor de
+ejecución completo, incluido un recorrido end-to-end del flujo de ejemplo `INC-22` del
+documento de diseño) necesitan además `REDIS_URL` alcanzable, no solo Postgres.
+
+Los paquetes con suite de integración (`cerebro-memory`, `cerebro-docs`,
+`cerebro-flows`, `cerebro-cli`, y transitivamente `cerebro-clients`) aíslan sus tests
+contra una base `cerebro_test` efímera (dropeada/recreada en `pytest_configure` de
+cada paquete, antes de que se importe ningún módulo de test) -- nunca escriben contra
+la base de desarrollo real. Ver `packages/cerebro-memory/tests/conftest.py` para el
+detalle del mecanismo, y `packages/cerebro-flows/tests/conftest.py` para su variante
+(ademas hace `FLUSHDB` sobre una base de Redis dedicada, `/15`).
 
 ## Conectar a Claude (servidor MCP: `cerebro-mcp`)
 
-`packages/cerebro-mcp/src/cerebro_mcp/server.py` expone **ambas** APIs como un único
-servidor MCP por stdio (SDK oficial `mcp`, `FastMCP`). Es un adaptador delgado: cada
-tool llama a la API HTTP correspondiente vía `cerebro_clients` (`MemoryClient` /
-`DocsClient`), sin lógica de negocio propia -- toda vive en las APIs, así
-`cerebro-cli` comparte exactamente el mismo camino.
+`packages/cerebro-mcp/src/cerebro_mcp/server.py` expone **los tres** servicios como un
+único servidor MCP por stdio (SDK oficial `mcp`, `FastMCP`). Es un adaptador delgado:
+cada tool llama a la API HTTP correspondiente vía `cerebro_clients` (`MemoryClient` /
+`DocsClient` / `FlowsClient`), sin lógica de negocio propia -- toda vive en las APIs,
+así `cerebro-cli` comparte exactamente el mismo camino.
 
-23 tools disponibles:
+36 tools disponibles:
 
 - **`memory_*`** (10, hablan con `cerebro-memory`): `memory_search`,
   `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
@@ -637,6 +697,11 @@ tool llama a la API HTTP correspondiente vía `cerebro_clients` (`MemoryClient` 
   `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`,
   `docs_update`, `docs_patch_section`, `docs_delete`, `docs_archive`,
   `docs_unarchive`, `docs_list_archived`, `docs_history`.
+- **`flow_*`** (13, hablan con `cerebro-flows`): `flow_create_category`,
+  `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_list`,
+  `flow_update`, `flow_delete` (autoría/CRUD) + `flow_start`, `flow_next`,
+  `flow_approve_checkpoint`, `flow_reject_checkpoint`, `flow_abort` (motor de
+  ejecución -- ver "`cerebro-flows`" arriba para el protocolo paso a paso).
 
 `memory_search` usa `scope=auto` por defecto (Context Engine). Si la respuesta es
 ambigua, `message` trae el texto ya formateado para decidir o mostrar al usuario, y
@@ -691,7 +756,8 @@ Variables de entorno que lee el servidor MCP (vía `cerebro_clients.config`):
 |---|---|---|
 | `CEREBRO_MEMORY_URL` | `http://localhost:8005` | base URL de `cerebro-memory` |
 | `CEREBRO_DOCS_URL` | `http://localhost:8010` | base URL de `cerebro-docs` |
-| `CEREBRO_TOKEN` | *(vacío)* | token compartido para ambas APIs |
+| `CEREBRO_FLOWS_URL` | `http://localhost:8020` | base URL de `cerebro-flows` |
+| `CEREBRO_TOKEN` | *(vacío)* | token compartido para las tres APIs |
 | `CEREBRO_AGENT_NAME` | `cerebro-client` | identidad enviada como `X-Agent-Name` (audit log, `memory.source`/`documents.created_by`) |
 | `KNOWLEDGEOS_API_URL` / `KNOWLEDGEOS_API_TOKEN` / `KNOWLEDGEOS_AGENT_NAME` | *(fallback)* | legado, **solo aplica a `cerebro-memory`**; si ya los tenías configurados de antes de la migración siguen funcionando |
 
@@ -707,6 +773,7 @@ exporta explícitamente las dos variables para que apunten al mismo lado -- ver
 claude mcp add cerebro --scope user \
   -e CEREBRO_MEMORY_URL=http://localhost:8005 \
   -e CEREBRO_DOCS_URL=http://localhost:8006 \
+  -e CEREBRO_FLOWS_URL=http://localhost:8007 \
   -e CEREBRO_TOKEN=change-me-dev-token \
   -e CEREBRO_AGENT_NAME=claude-code \
   -- cerebro-mcp
@@ -725,6 +792,7 @@ Config):
       "env": {
         "CEREBRO_MEMORY_URL": "http://localhost:8005",
         "CEREBRO_DOCS_URL": "http://localhost:8006",
+        "CEREBRO_FLOWS_URL": "http://localhost:8007",
         "CEREBRO_TOKEN": "change-me-dev-token",
         "CEREBRO_AGENT_NAME": "claude-desktop"
       }
@@ -869,6 +937,25 @@ memory import-markdown`, pero sin destilar: cada archivo `.md` se guarda como un
 documento completo (título = primer `# heading` del archivo o el nombre de archivo,
 slug = nombre de archivo saneado). Por defecto omite archivos cuyo `(categoria, slug)`
 ya existe (`--update` los actualiza en vez de omitirlos).
+
+### `cerebro flow ...`
+
+CRUD de definiciones únicamente -- **sin comandos para ejecutar un flujo**
+(`flow_start`/`flow_next` no tienen sentido tecleados a mano; un flujo lo conduce un
+modelo turno a turno vía las tools MCP `flow_*`).
+
+```bash
+cerebro flow category create incident INC --name Incidencias
+cerebro flow category list
+
+cerebro flow validate --yaml-file incidencia.yaml
+cerebro flow save incident --yaml-file incidencia.yaml
+cerebro flow get INC-1
+cerebro flow list --category incident
+cerebro flow update INC-1 --yaml-file incidencia-v2.yaml
+cerebro flow delete INC-1 --yes
+cerebro flow stats
+```
 
 ### Comandos transversales (sin prefijo)
 

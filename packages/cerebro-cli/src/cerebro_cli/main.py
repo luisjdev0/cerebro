@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import argparse
 
-from cerebro_cli import docs_commands, memory_commands, shared_commands
+from cerebro_cli import docs_commands, flow_commands, memory_commands, shared_commands
 from cerebro_cli.dotenv import load_repo_dotenv
 from cerebro_cli.tokens import warn_stale_pending_tokens
 
@@ -181,6 +181,57 @@ def _add_docs_subparser(sub: argparse._SubParsersAction) -> None:
     p_docs_stats.set_defaults(func=docs_commands.cmd_stats)
 
 
+def _add_flows_subparser(sub: argparse._SubParsersAction) -> None:
+    p_flow = sub.add_parser("flow", help="Subcomandos de cerebro-flows (CRUD de definiciones -- ejecutar un flujo lo hace un modelo via MCP)")
+    flow_sub = p_flow.add_subparsers(dest="flow_command", required=True)
+
+    p_category = flow_sub.add_parser("category", help="Gestion de categorias de flujo")
+    category_sub = p_category.add_subparsers(dest="category_command", required=True)
+
+    p_cat_create = category_sub.add_parser("create", help="Crea una categoria nueva")
+    p_cat_create.add_argument("slug")
+    p_cat_create.add_argument("code", help="prefijo corto en mayusculas para los ids de sus flujos, ej. INC")
+    p_cat_create.add_argument("--name", default=None, help="nombre legible (default: el slug)")
+    p_cat_create.add_argument("--description", default=None)
+    p_cat_create.set_defaults(func=flow_commands.cmd_category_create)
+
+    p_cat_list = category_sub.add_parser("list", help="Lista categorias")
+    p_cat_list.set_defaults(func=flow_commands.cmd_category_list)
+
+    p_validate = flow_sub.add_parser("validate", help="Valida un YAML de flujo sin guardarlo")
+    p_validate.add_argument("--yaml-file", required=True, help="ruta al archivo YAML del flujo")
+    p_validate.set_defaults(func=flow_commands.cmd_validate)
+
+    p_save = flow_sub.add_parser("save", help="Guarda un flujo nuevo")
+    p_save.add_argument("category")
+    p_save.add_argument("--yaml-file", required=True, help="ruta al archivo YAML del flujo")
+    p_save.add_argument("--code", default=None, help="id correlativo explicito (default: autogenerado)")
+    p_save.set_defaults(func=flow_commands.cmd_save)
+
+    p_get = flow_sub.add_parser("get", help="Lee el YAML completo de un flujo por su code")
+    p_get.add_argument("code")
+    p_get.set_defaults(func=flow_commands.cmd_get)
+
+    p_list = flow_sub.add_parser("list", help="Lista definiciones de flujo")
+    p_list.add_argument("--category", default=None)
+    p_list.add_argument("--limit", type=int, default=20)
+    p_list.add_argument("--offset", type=int, default=0)
+    p_list.set_defaults(func=flow_commands.cmd_list)
+
+    p_update = flow_sub.add_parser("update", help="Reemplaza el YAML de un flujo (nueva version)")
+    p_update.add_argument("code")
+    p_update.add_argument("--yaml-file", required=True, help="ruta al archivo YAML del flujo")
+    p_update.set_defaults(func=flow_commands.cmd_update)
+
+    p_delete = flow_sub.add_parser("delete", help="Borra un flujo (irreversible)")
+    p_delete.add_argument("code")
+    p_delete.add_argument("--yes", action="store_true", help="omite la confirmacion interactiva")
+    p_delete.set_defaults(func=flow_commands.cmd_delete)
+
+    p_flow_stats = flow_sub.add_parser("stats", help="Estadisticas del sistema (categorias/flujos/runs)")
+    p_flow_stats.set_defaults(func=flow_commands.cmd_stats)
+
+
 def _add_shared_subparsers(sub: argparse._SubParsersAction) -> None:
     p_backup = sub.add_parser("backup", help="pg_dump via docker compose (cubre cerebro_memory y cerebro_docs)")
     p_backup.add_argument("--output", default=None, help="directorio de salida (default: backups/)")
@@ -212,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_memory_subparser(sub)
     _add_docs_subparser(sub)
+    _add_flows_subparser(sub)
     _add_shared_subparsers(sub)
 
     return parser

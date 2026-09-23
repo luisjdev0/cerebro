@@ -18,6 +18,7 @@ import os
 
 DEFAULT_MEMORY_URL = "http://localhost:8005"
 DEFAULT_DOCS_URL = "http://localhost:8010"
+DEFAULT_FLOWS_URL = "http://localhost:8020"
 DEFAULT_AGENT_NAME = "cerebro-client"
 
 
@@ -34,6 +35,14 @@ def memory_token() -> str:
 
 
 def docs_token() -> str:
+    return os.environ.get("CEREBRO_TOKEN") or ""
+
+
+def flows_base_url() -> str:
+    return os.environ.get("CEREBRO_FLOWS_URL") or DEFAULT_FLOWS_URL
+
+
+def flows_token() -> str:
     return os.environ.get("CEREBRO_TOKEN") or ""
 
 

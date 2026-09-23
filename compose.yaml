@@ -31,6 +31,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis (luisjdev-pendientes/cerebro-flows SS5): guarda SOLO el puntero mutable de
+  # una ejecucion de flujo (flow_run:<run_id>), nunca la definicion completa -- por
+  # eso basta con un solo nodo, sin cluster/replicas. Sin `profile`, igual que
+  # postgres: arranca con el `docker compose up -d` de siempre, disponible tambien
+  # para el dev local sin Docker de cerebro-flows-api (`python -m cerebro_flows.main`)
+  # y para futuros modulos del ecosistema que necesiten estado rapido/efimero -- no
+  # es exclusivo de flows, solo es su primer consumidor.
+  redis:
+    image: redis:7-alpine
+    container_name: cerebro-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      # Host-side port parametrizado via REDIS_HOST_PORT (default 6379) - mismo
+      # motivo que POSTGRES_HOST_PORT arriba.
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - cerebro-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # Dockerized API (plan_v2.md SS10). Behind the `full` profile on purpose: plain
   # `docker compose up -d` (default, no --profile flag) still only starts postgres -
   # the day-to-day dev workflow (`python -m cerebro_memory.main` against it) is unchanged.
@@ -116,5 +140,40 @@ services:
       retries: 10
       start_period: 15s
 
+  # cerebro-flows API (luisjdev-pendientes/cerebro-flows): mismo Postgres compartido
+  # (schema cerebro_flows) + Redis nuevo de arriba. Mismo patron exacto que
+  # cerebro-memory-api/cerebro-docs-api (profile, healthcheck, depends_on) mas la
+  # dependencia extra de redis.
+  cerebro-flows-api:
+    build:
+      context: ./packages/cerebro-flows
+    image: cerebro-flows-api
+    container_name: cerebro-flows-api
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
+      REDIS_URL: redis://redis:6379/0
+      APP_PORT: 8000
+    ports:
+      # Host-side port parametrizado via CEREBRO_FLOWS_HOST_PORT (default 8007,
+      # siguiente libre despues de memory=8005/docs=8006) - mismo motivo que
+      # POSTGRES_HOST_PORT arriba.
+      - "127.0.0.1:${CEREBRO_FLOWS_HOST_PORT:-8007}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   knowledgeos-pgdata:
+  cerebro-redis-data:
