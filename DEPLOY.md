@@ -83,13 +83,36 @@ de día a día sin cambios si corres las APIs fuera de Docker.
 
 ## 5. HTTPS con Caddy (reverse proxy)
 
-Necesitas un dominio (o subdominio) por servicio apuntando al VPS. El dominio actual en
-uso para memoria es `cerebro.luisjdev.com`; para docs añade un segundo subdominio, por
-ejemplo `docs-cerebro.luisjdev.com`. Caddy gestiona ambos certificados Let's Encrypt
-automáticamente:
+**Recomendado: un solo subdominio, vía el gateway interno.** `compose.yaml` ya trae un
+contenedor `gateway` (Caddy, perfil `full`, ver `gateway/Caddyfile`) que rutea
+`/memory`, `/docs` y `/flows` por prefijo a cada API interna y expone todo en un solo
+puerto (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`) -- así tu Caddy del VPS solo
+necesita un bloque, sin importar cuántos módulos tenga el ecosistema:
 
 ```bash
 sudo apt install -y caddy
+sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
+cerebro.luisjdev.com {
+    reverse_proxy 127.0.0.1:8080
+}
+EOF
+sudo systemctl reload caddy
+curl -s https://cerebro.luisjdev.com/memory/health
+curl -s https://cerebro.luisjdev.com/docs/health
+curl -s https://cerebro.luisjdev.com/flows/health
+```
+
+Con esto, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory` (mismo patrón para
+`_DOCS_`/`_FLOWS_`) — `MemoryClient`/`DocsClient`/`FlowsClient` no necesitan ningún
+cambio de código, ya arman la URL final concatenando `base_url` + ruta relativa.
+
+<details>
+<summary>Alternativa: un subdominio por servicio (sin el gateway)</summary>
+
+Si preferís mantener cada servicio en su propio subdominio (como estaba antes de que
+existiera el gateway), apuntá cada uno directo a su puerto de host:
+
+```bash
 sudo tee /etc/caddy/Caddyfile > /dev/null <<'EOF'
 cerebro.luisjdev.com {
     reverse_proxy 127.0.0.1:8005
@@ -98,16 +121,21 @@ cerebro.luisjdev.com {
 docs-cerebro.luisjdev.com {
     reverse_proxy 127.0.0.1:8006
 }
+
+flows-cerebro.luisjdev.com {
+    reverse_proxy 127.0.0.1:8007
+}
 EOF
 sudo systemctl reload caddy
-curl -s https://cerebro.luisjdev.com/health
-curl -s https://docs-cerebro.luisjdev.com/health
 ```
 
+En ese caso no hace falta correr el contenedor `gateway` en absoluto.
+</details>
+
 > **¿Sin dominio?** Alternativa privada: instala [Tailscale](https://tailscale.com) en
-> el VPS y en tus máquinas; las APIs quedan accesibles solo dentro de tu tailnet vía
-> `http://<ip-tailscale>:8005` y `:8006` sin exponer nada a internet (en ese caso ata
-> los puertos de las APIs a la IP de tailscale o usa `tailscale serve`).
+> el VPS y en tus máquinas; el gateway queda accesible solo dentro de tu tailnet vía
+> `http://<ip-tailscale>:8080` sin exponer nada a internet (en ese caso atá el puerto
+> del gateway a la IP de tailscale o usá `tailscale serve`).
 
 ## 6. Actualizar un VPS existente a esta versión (monorepo + schemas)
 
@@ -171,23 +199,26 @@ seguir usando el sistema.
 Desde tu máquina local (el CLI habla con las APIs remotas):
 
 ```bash
-set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com
-set CEREBRO_DOCS_URL=https://docs-cerebro.luisjdev.com
+set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory
+set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/docs
+set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/flows
 set CEREBRO_TOKEN=<tu token root, el API_TOKEN de .env>
 
 # Token ESCOPADO a un solo servicio (cerebro-memory):
 cerebro memory token create claude-desktop --scopes read,write
 
-# Token TRANSVERSAL: un solo secreto (prefijo cbr_), registrado en AMBOS servicios
-# en la misma operación (ecosistema-cerebro.md SS13):
+# Token TRANSVERSAL: un solo secreto (prefijo cbr_), registrado en los servicios que
+# lo soporten en la misma operación (ecosistema-cerebro.md SS13):
 cerebro token create automatizacion-x --scopes read --contexts infraestructura
 ```
 
+(URLs de arriba: con el gateway del paso 5. Si desplegaste con subdominios separados en
+su lugar, usá esos -- ver la alternativa en ese mismo paso.)
+
 `cerebro token create` (transversal) imprime el secreto **una sola vez**; úsalo como
-`CEREBRO_TOKEN` (válido para memory y docs). `cerebro memory token create` genera en
-cambio un token válido solo para cerebro-memory. Ambos son revocables: `cerebro token
-revoke <nombre>` (transversal, revoca en las dos APIs) o `cerebro memory token revoke
-<nombre>` (solo memory).
+`CEREBRO_TOKEN`. `cerebro memory token create` genera en cambio un token válido solo
+para cerebro-memory. Ambos son revocables: `cerebro token revoke <nombre>` (transversal)
+o `cerebro memory token revoke <nombre>` (solo memory).
 
 Si `cerebro token create` falla en un servicio y tiene éxito en el otro (fallo
 parcial), el CLI lo reporta explícitamente por servicio y termina con error; reintenta
@@ -199,24 +230,24 @@ como legado, solo para cerebro-memory, si algún script viejo todavía las usa.
 ## 8. Conectar tus agentes (MCP local → APIs remotas)
 
 El servidor MCP corre en TU máquina (stdio) y habla con el VPS. Es un único binario
-(`cerebro-mcp`, paquete `cerebro-mcp`) que expone las 19 tools de ambos servicios
-(`memory_*` y `docs_*`). En `claude_desktop_config.json`:
+(`cerebro-mcp`, paquete `cerebro-mcp`) que expone las 36 tools de los tres servicios
+(`memory_*`, `docs_*`, `flow_*`). En `claude_desktop_config.json`:
 
 ```json
 "cerebro": {
   "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
   "env": {
-    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com",
-    "CEREBRO_DOCS_URL": "https://docs-cerebro.luisjdev.com",
+    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/memory",
+    "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/docs",
+    "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/flows",
     "CEREBRO_TOKEN": "<token transversal del agente, no el root>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }
 }
 ```
 
-`CEREBRO_DOCS_URL` no tiene fallback a una URL vieja (cerebro-docs es un servicio
-nuevo) — si lo omites, el cliente cae al default de desarrollo local
-(`http://localhost:8010`), que no sirve para un VPS remoto. Inclúyelo siempre.
+Ninguna de las tres URL tiene fallback a un valor útil para un VPS remoto (a lo sumo
+caen al default de desarrollo local) — inclúyelas siempre las tres explícitamente.
 
 ## 9. Backups automáticos (plan_v2 §9 / ecosistema-cerebro.md §9: restore probado o no es backup)
 

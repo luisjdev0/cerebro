@@ -1,0 +1,39 @@
+# Gateway interno del stack de cerebro (contenedor `cerebro-gateway` en
+# compose.yaml, perfil `full`). Rutea por prefijo a cada API interna y expone
+# UN solo puerto -- para que un Caddy externo (el del VPS de quien despliegue
+# esto, o el de cualquier reverse proxy) solo necesite un `reverse_proxy`
+# simple a este puerto, en vez de mantener un bloque por servicio (pedido de
+# Jose Luis, 2026-09-23). No reemplaza los puertos directos de cada API
+# (memory/docs/flows-api siguen accesibles tal cual para dev local o acceso
+# directo dentro de la red de compose) -- es una capa adicional, opcional.
+#
+# `handle_path` recorta el prefijo antes de reenviar, asi que
+# `/memory/contexts` llega al backend como `/contexts`, `/docs/categories`
+# como `/categories`, `/flows/flows/INC-1` como `/flows/INC-1` (el "flows"
+# repetido es el propio recurso top-level de esa API, no un error). Con esto,
+# `CEREBRO_MEMORY_URL=https://tu-dominio/memory` (mismo patron para
+# DOCS/FLOWS) alcanza para que MemoryClient/DocsClient/FlowsClient funcionen
+# sin ningun cambio de codigo -- ya arman las URLs concatenando base_url +
+# ruta relativa.
+
+:80 {
+	handle /health {
+		respond "cerebro gateway: ok" 200
+	}
+
+	handle_path /memory/* {
+		reverse_proxy cerebro-memory-api:8000
+	}
+
+	handle_path /docs/* {
+		reverse_proxy cerebro-docs-api:8000
+	}
+
+	handle_path /flows/* {
+		reverse_proxy cerebro-flows-api:8000
+	}
+
+	handle {
+		respond "cerebro gateway: usa /memory, /docs o /flows" 404
+	}
+}

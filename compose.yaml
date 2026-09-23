@@ -174,6 +174,39 @@ services:
       retries: 10
       start_period: 15s
 
+  # Gateway interno (pedido de Jose Luis, 2026-09-23): rutea /memory, /docs,
+  # /flows por prefijo a cada API y expone UN solo puerto, para que un Caddy
+  # EXTERNO (el del VPS de quien despliegue esto) solo necesite un
+  # reverse_proxy simple a este puerto, en vez de un bloque por servicio -- ver
+  # gateway/Caddyfile para el detalle del ruteo. Perfil full (igual que las
+  # APIs que fronteriza); no reemplaza los puertos directos de cada API
+  # (memory/docs/flows-api siguen ahi para dev local o acceso directo dentro
+  # de la red de compose), es una capa adicional y opcional.
+  gateway:
+    image: caddy:2-alpine
+    container_name: cerebro-gateway
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      cerebro-memory-api:
+        condition: service_healthy
+      cerebro-docs-api:
+        condition: service_healthy
+      cerebro-flows-api:
+        condition: service_healthy
+    volumes:
+      - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      # Host-side port parametrizado via CEREBRO_GATEWAY_HOST_PORT (default
+      # 8080) - mismo motivo que POSTGRES_HOST_PORT arriba.
+      - "127.0.0.1:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 volumes:
   knowledgeos-pgdata:
   cerebro-redis-data:
