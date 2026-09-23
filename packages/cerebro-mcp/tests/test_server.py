@@ -1,8 +1,8 @@
-"""cerebro-mcp es un adaptador delgado: cada tool debe llamar exactamente el metodo
-correcto del cliente (`_memory`/`_docs`, de `cerebro_clients`) con los argumentos
-correctos, y traducir errores del cliente a `{"error": ...}` -- sin agregar logica de
-negocio propia (ecosistema-cerebro.md SS15). Se verifica con mocks del cliente, sin
-necesidad de las APIs vivas ni de un cliente MCP real.
+"""cerebro-mcp is a thin adapter: each tool must call exactly the correct client
+method (`_memory`/`_docs`, from `cerebro_clients`) with the correct arguments,
+and translate client errors into `{"error": ...}` -- without adding its own
+business logic (ecosistema-cerebro.md SS15). It's verified with client mocks, without
+needing the live APIs or a real MCP client.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ class TestMemorySearch:
         )
         assert out["results"] == [{"id": "m1"}]
         assert out["ambiguous"] is False
-        assert out["related"] is None  # expand=True pero la API no devolvio 'related'
+        assert out["related"] is None  # expand=True but the API did not return 'related'
 
     def test_ambiguous_result_sets_message_and_disambiguation_slot(self, fake_clients):
         fake_memory, _, _ = fake_clients
@@ -83,7 +83,7 @@ class TestMemorySearch:
 
         fake_memory.resolve_disambiguation.assert_called_once_with("pending-1", "ctx")
         assert out["note"] is not None
-        assert server._last_disambiguation_id is None  # slot consumido
+        assert server._last_disambiguation_id is None  # slot consumed
 
     def test_connection_error_becomes_error_dict(self, fake_clients):
         fake_memory, _, _ = fake_clients
@@ -555,13 +555,13 @@ def test_docs_history_routes_to_client(fake_clients):
     assert "error" in out
 
 
-# =============================================================================== registro de tools
+# =============================================================================== tool registry
 
 
 def test_all_36_tools_are_registered():
-    """Las 10 memory_* + las 13 docs_* + las 13 flow_* nuevas (motor de
-    cerebro-flows: CRUD de definiciones + ejecucion) -- el inventario exacto que
-    espera el usuario (ecosistema-cerebro.md SS10)."""
+    """The 10 memory_* + the 13 docs_* + the 13 new flow_* (cerebro-flows engine:
+    definition CRUD + execution) -- the exact inventory the user
+    expects (ecosistema-cerebro.md SS10)."""
     tool_names = {
         "memory_search",
         "memory_remember",

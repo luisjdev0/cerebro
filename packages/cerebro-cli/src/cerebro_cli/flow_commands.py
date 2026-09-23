@@ -1,8 +1,8 @@
-"""Subcomandos `cerebro flow <subcomando>` (luisjdev-pendientes/cerebro-flows): CRUD
-de categorias/definiciones de flujo via `FlowsClient` (`cerebro_clients`), sin logica
-de negocio propia mas alla de leer YAML de un archivo y formatear la salida de
-consola. Sin comandos para EJECUTAR flujos (flow_start/flow_next) -- un flujo lo
-conduce un modelo turno a turno via las tools MCP, no tiene sentido tecleado a mano.
+"""`cerebro flow <subcommand>` subcommands (luisjdev-pendientes/cerebro-flows): CRUD
+for flow categories/definitions via `FlowsClient` (`cerebro_clients`), with no
+business logic of its own beyond reading YAML from a file and formatting console
+output. No commands to RUN flows (flow_start/flow_next) -- a flow is driven
+by a model turn by turn via the MCP tools; it makes no sense typed by hand.
 """
 
 from __future__ import annotations

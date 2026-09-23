@@ -1,9 +1,9 @@
-"""Parser dotenv minimo y precedencia de `load_repo_dotenv` (variable ya presente en
-el entorno nunca se pisa; `.env.production` gana sobre `.env`).
+"""Minimal dotenv parser and `load_repo_dotenv` precedence (a variable already present in
+the environment is never overwritten; `.env.production` wins over `.env`).
 
-Ningun test aqui llama al VPS real ni imprime un token -- todo corre contra
-archivos .env de prueba en tmp_path y diccionarios de entorno falsos, nunca contra
-`os.environ` real ni el `.env.production` real del repo.
+No test here calls the real VPS or prints a token -- everything runs against
+test .env files in tmp_path and fake environment dicts, never against the real
+`os.environ` nor the repo's real `.env.production`.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class TestLoadRepoDotenvPrecedence:
         (tmp_path / ".env").write_text("FOO=from-dotenv\n", encoding="utf-8")
         env = {"FOO": "from-shell-export"}
         load_repo_dotenv(tmp_path, env=env)
-        assert env["FOO"] == "from-shell-export"  # nunca se pisa
+        assert env["FOO"] == "from-shell-export"  # never overwritten
 
     def test_env_production_wins_over_env_when_both_define_same_key(self, tmp_path):
         (tmp_path / ".env.production").write_text("FOO=from-production\n", encoding="utf-8")
@@ -76,10 +76,10 @@ class TestLoadRepoDotenvPrecedence:
 
 
 class TestResolvesVpsUrlWithoutContactingIt:
-    """Demuestra que, con solo un .env.production presente y sin variables de entorno
-    manuales, `cerebro_clients.config.memory_base_url()` resuelve a la URL del VPS --
-    sin hacer NINGUNA llamada de red. Usa una URL/token FALSOS en un .env.production
-    de prueba en tmp_path, nunca el archivo real del repo ni una llamada HTTP real."""
+    """Demonstrates that, with only a .env.production present and no manual
+    environment variables, `cerebro_clients.config.memory_base_url()` resolves to the VPS URL --
+    without making ANY network call. Uses a FAKE URL/token in a test
+    .env.production in tmp_path, never the repo's real file nor a real HTTP call."""
 
     def test_memory_base_url_resolves_to_fake_vps_url_after_loading_env_production(self, tmp_path, monkeypatch):
         from cerebro_clients import config as clients_config
@@ -95,10 +95,10 @@ class TestResolvesVpsUrlWithoutContactingIt:
             encoding="utf-8",
         )
 
-        # Simula lo que hace main(): carga sin pisar nada del entorno real. Se aplica
-        # a un dict aparte y luego se vuelca a os.environ via monkeypatch.setenv (en
-        # vez de mutar os.environ directamente) para que pytest deshaga el cambio solo
-        # al terminar el test, sin filtrar la URL/token falsos a otros tests.
+        # Simulates what main() does: loads without overwriting anything in the real environment. It's applied
+        # to a separate dict and then flushed to os.environ via monkeypatch.setenv (instead
+        # of mutating os.environ directly) so pytest undoes the change automatically
+        # at the end of the test, without leaking the fake URL/token to other tests.
         loaded: dict[str, str] = {}
         load_repo_dotenv(tmp_path, env=loaded)
         for key, value in loaded.items():

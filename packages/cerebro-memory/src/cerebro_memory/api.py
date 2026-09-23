@@ -165,7 +165,7 @@ class DisambiguationStats(BaseModel):
     auto: int
     agent: int
     user: int
-    local_model: int  # Fase 4 (plan_v2.md SS8), OFF por defecto - ver README
+    local_model: int  # Phase 4 (plan_v2.md SS8), OFF by default - see README
     unresolved: int
 
 
@@ -185,10 +185,10 @@ class TokenCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     scopes: list[str] = Field(min_length=1)
     allowed_contexts: list[str] | None = None
-    # admin-only (este endpoint ya requiere scope admin): si se pasa, el servidor
-    # hashea ESTE valor en vez de generar uno -- usado por `cerebro token create`
-    # para registrar el MISMO secreto tambien en cerebro-docs (ecosistema-cerebro.md
-    # SS13, tokens transversales).
+    # admin-only (this endpoint already requires admin scope): if passed, the server
+    # hashes THIS value instead of generating one -- used by `cerebro token create`
+    # to register the SAME secret in cerebro-docs as well (ecosistema-cerebro.md
+    # SS13, cross-cutting tokens).
     value: str | None = Field(default=None, min_length=1)
 
 
@@ -219,7 +219,7 @@ class DisambiguationExportRow(BaseModel):
     created_at: datetime
 
 
-# --------------------------------------------------------------------------- Fase 3: grafo ligero
+# --------------------------------------------------------------------------- Phase 3: lightweight graph
 
 
 class EdgeCreate(BaseModel):
@@ -821,12 +821,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         resolved_only: bool = False,
     ):
-        """Vuelca `disambiguation_log` completo (o solo lo resuelto con
-        `resolved_only=true`) como {query, candidates, chosen_context, resolved_by,
-        created_at} -- el dataset crudo que `cerebro-memory export-disambiguations`
-        (CLI) convierte a JSONL para un futuro fine-tuning local (Fase 4,
-        plan_v2.md SS8). No filtra por agente ni pagina: es un export completo,
-        pensado para correr una vez que hay volumen real.
+        """Dumps the complete `disambiguation_log` (or only the resolved rows with
+        `resolved_only=true`) as {query, candidates, chosen_context, resolved_by,
+        created_at} -- the raw dataset that `cerebro-memory export-disambiguations`
+        (CLI) converts to JSONL for a future local fine-tuning (Phase 4,
+        plan_v2.md SS8). Does not filter by agent nor paginate: it's a full export,
+        meant to be run once there is real volume.
         """
         import json
 
@@ -963,7 +963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return {"id": str(memory_id), "hard": hard, "status": "deleted" if hard else "archived"}
 
-    # ---------------------------------------------------------------- Fase 3: grafo ligero
+    # ---------------------------------------------------------------- Phase 3: lightweight graph
 
     @app.post(
         "/memories/{memory_id}/edges",
@@ -1111,7 +1111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ],
         )
 
-    # ---------------------------------------------------------------- Fase 3: timeline
+    # ---------------------------------------------------------------- Phase 3: timeline
 
     @app.get("/timeline", response_model=TimelineResponse)
     async def timeline(
@@ -1122,10 +1122,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         to: datetime | None = None,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ):
-        """Memorias `episodic`/`decision`, ordenadas por fecha efectiva
-        (`occurred_at`, o `created_at` si no hay `occurred_at`) mas reciente primero -
-        pensado para "que paso en X las ultimas semanas". Filtros: `context` (slug),
-        `from`/`to` (rango de fecha efectiva), `limit` (default 50).
+        """`episodic`/`decision` memories, ordered by effective date
+        (`occurred_at`, or `created_at` if there is no `occurred_at`) most recent first -
+        meant for "what happened in X over the last few weeks". Filters: `context` (slug),
+        `from`/`to` (effective date range), `limit` (default 50).
         """
         if context is not None and not principal.context_allowed(context):
             raise HTTPException(

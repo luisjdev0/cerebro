@@ -1,9 +1,9 @@
-"""FastAPI app: categorias, definiciones de flujo (CRUD + versionado) y el motor de
-ejecucion "semaforo" (luisjdev-pendientes/cerebro-flows).
+"""FastAPI app: categories, flow definitions (CRUD + versioning) and the "traffic
+light" execution engine (luisjdev-pendientes/cerebro-flows).
 
-Auth: cada endpoint salvo /health requiere `Authorization: Bearer <API_TOKEN>` -
-mismo mecanismo exacto que cerebro-docs (`auth.py`, token root + tokens con scopes y
-`allowed_categories`).
+Auth: every endpoint except /health requires `Authorization: Bearer <API_TOKEN>` -
+the exact same mechanism as cerebro-docs (`auth.py`, root token + tokens with scopes
+and `allowed_categories`).
 """
 
 import logging
@@ -42,8 +42,8 @@ _CODE_SUFFIX_RE = re.compile(r"-(\d+)$")
 
 
 class StrictIn(BaseModel):
-    """Mismo criterio que cerebro-docs: un campo desconocido es 422, nunca se
-    ignora en silencio."""
+    """Same criterion as cerebro-docs: an unknown field is a 422, it is never
+    silently ignored."""
 
     model_config = ConfigDict(extra="forbid")
 

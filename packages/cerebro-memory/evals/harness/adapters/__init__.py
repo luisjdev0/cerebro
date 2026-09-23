@@ -1,14 +1,14 @@
 """
-Adaptadores de memoria para la suite de evaluación de cerebro-memory.
+Memory adapters for the cerebro-memory evaluation suite.
 
-Cada adaptador implementa la interfaz `MemoryAdapter` definida en
-`evals/harness/run_eval.py` y se registra aquí en `ADAPTERS` bajo el nombre
-que se usa en la flag `--adapter` del runner.
+Each adapter implements the `MemoryAdapter` interface defined in
+`evals/harness/run_eval.py` and is registered here in `ADAPTERS` under the
+name used in the runner's `--adapter` flag.
 
-Para añadir un adaptador nuevo:
-  1. Crea `evals/harness/adapters/<nombre>.py` (puedes copiar TEMPLATE.py).
-  2. Implementa `setup`, `insert`, `search` y `teardown`.
-  3. Impórtalo y regístralo abajo en `ADAPTERS`.
+To add a new adapter:
+  1. Create `evals/harness/adapters/<name>.py` (you can copy TEMPLATE.py).
+  2. Implement `setup`, `insert`, `search` and `teardown`.
+  3. Import it and register it below in `ADAPTERS`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 from .cerebro_memory_adapter import CerebroMemoryAdapter
 from .naive_keyword import NaiveKeywordAdapter
 
-# Nombre usado en `--adapter <nombre>` -> clase del adaptador (no instancia).
+# Name used in `--adapter <name>` -> adapter class (not an instance).
 ADAPTERS = {
     "naive": NaiveKeywordAdapter,
     "cerebro-memory": CerebroMemoryAdapter,

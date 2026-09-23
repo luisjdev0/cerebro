@@ -1,6 +1,6 @@
 """Integration tests: `slug_redirects` (luisjdev-pendientes/ecosistema-cerebro,
-"Redirects de slug"). Se saltan automaticamente si DATABASE_URL no responde (mismo
-patron que test_documents.py).
+"Slug redirects"). Automatically skipped if DATABASE_URL doesn't respond (same
+pattern as test_documents.py).
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ class TestDocumentSlugRename:
             json={"title": moved["title"], "content": moved["content"], "category": cat, "slug": "ya-no-esta-aqui"},
             headers=auth_headers,
         )
-        # un documento NUEVO reclama la coordenada vieja que dejo el redirect
+        # a NEW document claims the old coordinate left behind by the redirect
         real = _make_document(client, auth_headers, cat, title="El de verdad", slug="coordenada-disputada")
 
         resp = client.get(f"/documents/{cat}/coordenada-disputada", headers=auth_headers)

@@ -1,12 +1,12 @@
-"""Comandos de nivel ecosistema, sin prefijo de modulo (ecosistema-cerebro.md SS11):
+"""Ecosystem-level commands, with no module prefix (ecosistema-cerebro.md SS11):
 
-- `cerebro backup` / `cerebro restore`: pg_dump/psql via docker compose. Un solo
-  Postgres compartido (SS8) significa que un solo dump cubre ambos schemas
-  (`cerebro_memory` y `cerebro_docs`) en una operacion -- portado tal cual del
-  `cerebro_memory.cli` original, sin cambios de mecanismo (SS9).
-- `cerebro token create/revoke`: TRANSVERSAL (SS13) -- un secreto, registrado por
-  separado en ambas APIs. Ver `tokens.py` para el porque del estado pendiente que
-  hace que reintentar el mismo comando tras un fallo parcial sea seguro.
+- `cerebro backup` / `cerebro restore`: pg_dump/psql via docker compose. A single
+  shared Postgres (SS8) means a single dump covers both schemas
+  (`cerebro_memory` and `cerebro_docs`) in one operation -- ported as-is from the
+  original `cerebro_memory.cli`, with no mechanism changes (SS9).
+- `cerebro token create/revoke`: CROSS-CUTTING (SS13) -- one secret, registered
+  separately in both APIs. See `tokens.py` for why the pending state
+  makes it safe to retry the same command after a partial failure.
 """
 
 from __future__ import annotations
@@ -22,19 +22,19 @@ from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient,
 
 from cerebro_cli.tokens import clear_pending_value, generate_transversal_token, load_pending_value, save_pending_value
 
-# packages/cerebro-cli/src/cerebro_cli/shared_commands.py -> parents[4] es la raiz del
-# monorepo (donde vive compose.yaml) - mismo calculo que REPO_ROOT en el cli.py
-# original de cerebro-memory, solo que este archivo esta un nivel mas adentro.
+# packages/cerebro-cli/src/cerebro_cli/shared_commands.py -> parents[4] is the monorepo
+# root (where compose.yaml lives) - same calculation as REPO_ROOT in the original
+# cerebro_memory cli.py, just that this file is one level deeper.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
-# Directorio de salida por defecto de `cerebro backup`: DELIBERADAMENTE fuera del
-# arbol del repo (hermano de el, no dentro) -- ecosistema-cerebro.md SS15, criterio de
-# auditoria: un dump completo (incluye contenido de documentos, que SS2/SS9 aclaran
-# que puede llevar secretos pegados por error) no debe poder terminar commiteado por
-# accidente ni vivir bajo un directorio versionado.
+# `cerebro backup`'s default output directory: DELIBERATELY outside the
+# repo tree (a sibling of it, not inside) -- ecosistema-cerebro.md SS15, audit
+# criterion: a full dump (includes document content, which SS2/SS9 clarify
+# may carry secrets pasted in by mistake) must not be able to end up committed by
+# accident nor live under a versioned directory.
 DEFAULT_BACKUP_DIR = REPO_ROOT.parent / "cerebro-backups"
 
-POSTGRES_USER = "knowledgeos"  # nombre del servicio/usuario/DB en compose.yaml - sin cambios (SS5)
+POSTGRES_USER = "knowledgeos"  # service/user/DB name in compose.yaml - unchanged (SS5)
 POSTGRES_DB = "knowledgeos"
 
 
@@ -61,10 +61,10 @@ def cmd_backup(args: argparse.Namespace) -> None:
         print(f"Error en pg_dump (exit {result.returncode}): {result.stderr.decode(errors='replace')}", file=sys.stderr)
         sys.exit(1)
 
-    # El dump contiene todo el contenido de ambos schemas (incluye documentos de
-    # cerebro-docs, que por diseno pueden llevar secretos pegados por error - ver
-    # ecosistema-cerebro.md SS9) - nunca debe quedar con permisos de lectura para
-    # otros usuarios del sistema. Best-effort: no-op en Windows.
+    # The dump contains all the content of both schemas (includes cerebro-docs
+    # documents, which by design may carry secrets pasted in by mistake - see
+    # ecosistema-cerebro.md SS9) - it must never end up readable by
+    # other system users. Best-effort: no-op on Windows.
     try:
         os.chmod(out_file, 0o600)
     except OSError:
@@ -121,13 +121,13 @@ def cmd_token_create(
     memory_client: MemoryClient | None = None,
     docs_client: DocsClient | None = None,
 ) -> None:
-    """Registra UN secreto en cerebro-memory y cerebro-docs (SS13).
+    """Registers ONE secret in cerebro-memory and cerebro-docs (SS13).
 
-    Fallo parcial: reporta explicitamente el estado de cada servicio y termina con
-    exit code != 0 si alguno fallo. El secreto generado se persiste localmente
-    (`cerebro_cli.tokens`) hasta que AMBOS servicios confirman exito, para que
-    reintentar el mismo comando reuse el mismo secreto -- el registro es idempotente
-    por nombre en cada API (mismo nombre + mismo hash no duplica fila).
+    Partial failure: explicitly reports each service's status and exits with
+    exit code != 0 if any failed. The generated secret is persisted locally
+    (`cerebro_cli.tokens`) until BOTH services confirm success, so that
+    retrying the same command reuses the same secret -- registration is idempotent
+    by name in each API (same name + same hash doesn't duplicate the row).
     """
     scopes = _split_csv(args.scopes) or []
     contexts = _split_csv(args.contexts)
@@ -194,9 +194,9 @@ def cmd_token_revoke(
     memory_client: MemoryClient | None = None,
     docs_client: DocsClient | None = None,
 ) -> None:
-    """Revoca por nombre en ambos servicios (SS13). Un 404 (ya revocado/inexistente en
-    ese servicio) cuenta como exito -- el estado deseado ("no activo ahi") ya se
-    cumple, y hace que reintentar tras un fallo parcial tambien sea seguro."""
+    """Revokes by name in both services (SS13). A 404 (already revoked/nonexistent in
+    that service) counts as success -- the desired state ("not active there") is
+    already met, and it also makes retrying after a partial failure safe."""
     memory_client = memory_client or MemoryClient()
     docs_client = docs_client or DocsClient()
 

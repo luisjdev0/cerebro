@@ -1,7 +1,7 @@
-"""`MemoryClient` debe enrutar cada metodo al endpoint/verbo/params correcto de la API
-de cerebro-memory y no filtrar ninguna decision propia (p.ej. omitir parametros
-opcionales no dados, en vez de mandarlos como None/""). Usa un transporte httpx que
-graba requests -- sin necesidad de la API viva (ecosistema-cerebro.md SS15)."""
+"""`MemoryClient` must route each method to the correct endpoint/verb/params of the
+cerebro-memory API and must not leak any decision of its own (e.g. omit optional
+parameters that weren't given, instead of sending them as None/""). Uses an httpx
+transport that records requests -- no live API needed (ecosistema-cerebro.md SS15)."""
 
 from __future__ import annotations
 

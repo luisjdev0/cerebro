@@ -1,19 +1,19 @@
-"""Parseo de secciones por heading y aplicacion de parches parciales sobre el
-contenido Markdown de un documento (PATCH /documents/{id}/section,
+"""Parsing of sections by heading and applying partial patches to a document's
+Markdown content (PATCH /documents/{id}/section,
 ecosistema-cerebro.md SS12).
 
-Seccion = desde un heading hasta el siguiente heading del MISMO NIVEL O SUPERIOR (un
-'##' cierra en el proximo '##' o '#', pero nunca en un '###' anidado dentro de el).
-Esta deteccion de headings DUPLICA a proposito la logica de
-`cerebro_memory.markdown_importer.HEADING_RE` (decision de diseno del ecosistema: sin
-paquete compartido para algo tan chico, ver ecosistema-cerebro.md SS14) - se
-generaliza aqui a niveles 1-6 en vez de 1-2, porque cerebro-docs guarda documentos
-completos y no solo memorias destiladas de nivel superior.
+Section = from a heading to the next heading of the SAME LEVEL OR HIGHER (a
+'##' closes at the next '##' or '#', but never at a '###' nested inside it).
+This heading detection deliberately DUPLICATES the logic of
+`cerebro_memory.markdown_importer.HEADING_RE` (an ecosystem design decision: no
+shared package for something this small, see ecosistema-cerebro.md SS14) - it's
+generalized here to levels 1-6 instead of 1-2, because cerebro-docs stores full
+documents and not just top-level distilled memories.
 
-Heading no encontrado -> HeadingNotFoundError, salvo `create_if_missing=True`.
-Heading duplicado (ambiguo) -> AmbiguousHeadingError SIEMPRE, incluso con
-`create_if_missing=True` - nunca se adivina cual de los duplicados es el objetivo,
-mismo criterio que la tool `Edit` de Claude Code con `old_string`.
+Heading not found -> HeadingNotFoundError, unless `create_if_missing=True`.
+Duplicate (ambiguous) heading -> AmbiguousHeadingError ALWAYS, even with
+`create_if_missing=True` - it never guesses which of the duplicates is the target,
+same criterion as Claude Code's `Edit` tool with `old_string`.
 """
 
 from __future__ import annotations
@@ -24,14 +24,14 @@ from typing import Literal
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 
-# Normalizacion defensiva (luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section
-# reporta fallos de actualizacion"): si el caller pasa el heading CON el prefijo
-# markdown incluido (p.ej. "## Mi seccion" en vez de "Mi seccion"), find_section nunca
-# lo va a matchear -- los titulos que parsea find_headings ya vienen sin el prefijo
-# (HEADING_RE.group(2)). Recortarlo aqui evita ese error confuso sin cambiar el
-# contrato: un heading real que empiece con "#" literal (no como prefijo de nivel,
-# sino como texto) sigue sin poder representarse, pero ese caso no se ha visto en la
-# practica y HEADING_RE tampoco lo soportaria al parsear el documento.
+# Defensive normalization (luisjdev-pendientes/ecosistema-cerebro, "docs_patch_section
+# reports update failures"): if the caller passes the heading WITH the markdown
+# prefix included (e.g. "## My section" instead of "My section"), find_section will
+# never match it -- the titles find_headings parses already come without the prefix
+# (HEADING_RE.group(2)). Trimming it here avoids that confusing error without
+# changing the contract: a real heading that starts with a literal "#" (not as a
+# level prefix, but as text) still can't be represented, but that case hasn't been
+# seen in practice and HEADING_RE wouldn't support it either when parsing the document.
 _HEADING_PREFIX_RE = re.compile(r"^#{1,6}\s+")
 
 Operation = Literal["replace", "append", "insert_after", "insert_before", "delete"]
@@ -39,31 +39,31 @@ VALID_OPERATIONS: tuple[Operation, ...] = ("replace", "append", "insert_after", 
 
 
 class SectionError(ValueError):
-    """Base de los errores de parseo/parche de secciones."""
+    """Base for section parsing/patching errors."""
 
 
 class HeadingNotFoundError(SectionError):
-    """El heading pedido no existe en el documento (y create_if_missing es False)."""
+    """The requested heading doesn't exist in the document (and create_if_missing is False)."""
 
 
 class AmbiguousHeadingError(SectionError):
-    """El heading pedido aparece mas de una vez - nunca se adivina cual."""
+    """The requested heading appears more than once - it's never guessed which one."""
 
 
 class InvalidOperationError(SectionError):
-    """`operation` fuera del vocabulario valido (VALID_OPERATIONS)."""
+    """`operation` outside the valid vocabulary (VALID_OPERATIONS)."""
 
 
 @dataclass(frozen=True)
 class HeadingMatch:
     level: int         # 1-6
     title: str
-    start_line: int    # primera linea de la seccion (el heading mismo), 0-indexed
-    end_line: int       # linea EXCLUSIVA donde termina la seccion (siguiente heading de nivel <=, o EOF)
+    start_line: int    # first line of the section (the heading itself), 0-indexed
+    end_line: int       # EXCLUSIVE line where the section ends (next heading of level <=, or EOF)
 
 
 def find_headings(content: str) -> list[HeadingMatch]:
-    """Todos los headings del documento, con el rango de su seccion ya resuelto."""
+    """All the headings in the document, with their section range already resolved."""
     lines = content.splitlines()
     raw: list[tuple[int, int, str]] = []  # (line_index, level, title)
     for i, line in enumerate(lines):
@@ -83,8 +83,8 @@ def find_headings(content: str) -> list[HeadingMatch]:
 
 
 def find_section(content: str, heading: str) -> HeadingMatch:
-    """El heading debe matchear EXACTO (el texto tal cual, sin los `#`). Unico o falla
-    - ver AmbiguousHeadingError/HeadingNotFoundError."""
+    """The heading must match EXACTLY (the text as-is, without the `#`s). Unique or fails
+    - see AmbiguousHeadingError/HeadingNotFoundError."""
     matches = [h for h in find_headings(content) if h.title == heading]
     if not matches:
         raise HeadingNotFoundError(heading)
@@ -102,23 +102,24 @@ def apply_section_patch(
     create_if_missing: bool = False,
     new_heading_level: int = 2,
 ) -> str:
-    """Aplica `operation` sobre la seccion de `heading` y devuelve el contenido
-    completo resultante.
+    """Applies `operation` to the `heading` section and returns the full resulting
+    content.
 
-    - `replace`: sustituye el CUERPO de la seccion (todo lo que sigue a la linea del
-      heading, hasta el siguiente heading del mismo nivel o superior) por `body`. La
-      linea del heading no cambia.
-    - `append`: agrega `body` al final del cuerpo de la seccion, antes del siguiente
+    - `replace`: replaces the section's BODY (everything following the heading line,
+      up to the next heading of the same level or higher) with `body`. The
+      heading line doesn't change.
+    - `append`: appends `body` to the end of the section's body, before the next
       heading.
-    - `insert_after` / `insert_before`: inserta `body` (markdown crudo, puede traer su
-      propio heading) como bloque hermano justo despues/antes de la seccion completa
-      (heading incluido).
-    - `delete`: elimina la seccion completa (heading incluido).
+    - `insert_after` / `insert_before`: inserts `body` (raw markdown, may bring its
+      own heading) as a sibling block right after/before the entire section
+      (heading included).
+    - `delete`: removes the entire section (heading included).
 
-    Si el heading no existe y `create_if_missing=True`, se agrega una seccion nueva al
-    final del documento (nivel `new_heading_level`) con `body` como cuerpo - salvo
-    para `delete`, donde no hay nada que borrar y el contenido vuelve sin cambios.
-    Un heading AMBIGUO (duplicado) siempre falla, incluso con `create_if_missing`.
+    If the heading doesn't exist and `create_if_missing=True`, a new section is
+    appended to the end of the document (level `new_heading_level`) with `body` as
+    its content - except for `delete`, where there's nothing to delete and the
+    content comes back unchanged.
+    An AMBIGUOUS (duplicate) heading always fails, even with `create_if_missing`.
     """
     if operation not in VALID_OPERATIONS:
         raise InvalidOperationError(operation)

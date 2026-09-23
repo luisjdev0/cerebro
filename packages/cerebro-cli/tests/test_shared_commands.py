@@ -1,6 +1,6 @@
-"""`cerebro backup`/`restore` (mock de subprocess.run, sin docker real) y `cerebro
-token create/revoke` transversal (mock de MemoryClient/DocsClient) -- en particular la
-semantica de fallo parcial e idempotencia por reintento (ecosistema-cerebro.md SS13).
+"""`cerebro backup`/`restore` (mocked subprocess.run, no real docker) and cross-cutting
+`cerebro token create/revoke` (mocked MemoryClient/DocsClient) -- in particular the
+partial-failure and retry-idempotency semantics (ecosistema-cerebro.md SS13).
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ class TestTokenCreateTransversal:
 
         shared_commands.cmd_token_create(args, memory_client=memory_client, docs_client=docs_client)
 
-        # el MISMO secreto se paso a ambos servicios
+        # the SAME secret was passed to both services
         memory_value = memory_client.create_token.call_args.kwargs["value"]
         docs_value = docs_client.create_token.call_args.kwargs["value"]
         assert memory_value == docs_value
@@ -116,7 +116,7 @@ class TestTokenCreateTransversal:
 
         out = capsys.readouterr().out
         assert memory_value in out
-        assert tokens.load_pending_value("agente-x") is None  # limpiado tras exito total
+        assert tokens.load_pending_value("agente-x") is None  # cleared after full success
 
     def test_partial_failure_exits_nonzero_and_keeps_pending_state(self, capsys):
         memory_client = MagicMock()
@@ -131,10 +131,10 @@ class TestTokenCreateTransversal:
         out = capsys.readouterr().out
         assert "cerebro-memory: ok" in out
         assert "cerebro-docs" in out and "error" in out
-        assert tokens.load_pending_value("agente-y") is not None  # queda pendiente para reintentar
+        assert tokens.load_pending_value("agente-y") is not None  # stays pending for retry
 
     def test_retry_after_partial_failure_reuses_same_secret_and_completes(self, capsys):
-        # Primer intento: memory ok, docs falla.
+        # First attempt: memory ok, docs fails.
         memory_client_1 = MagicMock()
         docs_client_1 = MagicMock()
         docs_client_1.create_token.side_effect = CerebroConnectionError("http://docs", RuntimeError("refused"))
@@ -143,7 +143,7 @@ class TestTokenCreateTransversal:
             shared_commands.cmd_token_create(args, memory_client=memory_client_1, docs_client=docs_client_1)
         first_value = memory_client_1.create_token.call_args.kwargs["value"]
 
-        # Reintento (mismo comando): debe reusar el MISMO secreto, no generar uno nuevo.
+        # Retry (same command): must reuse the SAME secret, not generate a new one.
         memory_client_2 = MagicMock()
         docs_client_2 = MagicMock()
         shared_commands.cmd_token_create(args, memory_client=memory_client_2, docs_client=docs_client_2)
@@ -179,7 +179,7 @@ class TestTokenRevokeTransversal:
         docs_client = MagicMock()
         docs_client.revoke_token.side_effect = _api_error(404, "no active token")
         args = argparse.Namespace(name="agente-x")
-        # no debe lanzar SystemExit - un 404 es "ya estaba revocado", exito equivalente.
+        # must not raise SystemExit - a 404 means "was already revoked", equivalent to success.
         shared_commands.cmd_token_revoke(args, memory_client=memory_client, docs_client=docs_client)
 
     def test_real_failure_on_one_service_exits_nonzero(self):

@@ -1,9 +1,9 @@
-"""Unitarios del hook de resolver de ambiguedad (Fase 4, plan_v2.md SS8).
+"""Unit tests for the ambiguity resolver hook (Phase 4, plan_v2.md SS8).
 
-`NullResolver` y `OllamaResolver` no tocan Postgres - Ollama se mockea via
-`httpx.AsyncClient`, asi que esto corre sin ninguna infraestructura externa (ni
-Postgres ni un Ollama real). Ver tests/test_context_engine.py para el resto del
-Context Engine (Fase 2).
+`NullResolver` and `OllamaResolver` do not touch Postgres - Ollama is mocked via
+`httpx.AsyncClient`, so this runs without any external infrastructure (neither
+Postgres nor a real Ollama). See tests/test_context_engine.py for the rest of
+the Context Engine (Phase 2).
 """
 
 from __future__ import annotations

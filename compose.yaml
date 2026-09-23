@@ -1,27 +1,29 @@
 services:
   postgres:
     image: pgvector/pgvector:pg17
-    # Nombre de contenedor actualizado al rebrand, pero el volumen y las credenciales
-    # de abajo (knowledgeos-pgdata, POSTGRES_USER/PASSWORD/DB) se dejan EXACTAMENTE
-    # como estaban a propósito: son datos reales ya persistidos en ese volumen desde
-    # antes del monorepo (packages/cerebro-memory). Renombrarlos aqui no migra los
-    # datos - solo los deja huerfanos (Postgres/Docker no reconoceria el volumen
-    # "nuevo" como el mismo, y un `docker compose up` crearia uno vacio).
+    # Container name updated for the rebrand, but the volume and the credentials
+    # below (knowledgeos-pgdata, POSTGRES_USER/PASSWORD/DB) are left EXACTLY as
+    # they were on purpose: this is real data already persisted in that volume
+    # from before the monorepo (packages/cerebro-memory). Renaming them here
+    # doesn't migrate the data - it just orphans it (Postgres/Docker wouldn't
+    # recognize the "new" volume as the same one, and a `docker compose up`
+    # would create an empty one).
     container_name: cerebro-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: knowledgeos
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD in .env}
       POSTGRES_DB: knowledgeos
     ports:
       # bind to localhost only - this database is not meant to be reachable from outside the host.
-      # Host-side port parametrizado via POSTGRES_HOST_PORT (default 5432, igual que antes) -
-      # en un host que ya tiene otro Postgres ocupando 5432 (ej. el servidor de pruebas
-      # compartido 192.168.0.101, con su propio contenedor "pgdb" en ese puerto), basta con
-      # poner POSTGRES_HOST_PORT=5433 (o el que este libre) en el .env de ESE servidor - el
-      # puerto interno del contenedor (5432, el lado derecho) no cambia, y la DSN que usan
-      # cerebro-memory-api/cerebro-docs-api tampoco (se conectan por nombre de servicio
-      # "postgres" dentro de la red de compose, no por este puerto de host).
+      # Host-side port made configurable via POSTGRES_HOST_PORT (default 5432, same as before) -
+      # on a host that already has another Postgres occupying 5432 (e.g. the
+      # shared test server 192.168.0.101, with its own "pgdb" container on that
+      # port), it's enough to set POSTGRES_HOST_PORT=5433 (or whatever's free) in
+      # THAT server's .env - the container's internal port (5432, the right-hand
+      # side) doesn't change, and neither does the DSN that cerebro-memory-api/
+      # cerebro-docs-api use (they connect by the "postgres" service name within
+      # the compose network, not by this host port).
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - knowledgeos-pgdata:/var/lib/postgresql/data
@@ -31,21 +33,21 @@ services:
       timeout: 5s
       retries: 10
 
-  # Redis (luisjdev-pendientes/cerebro-flows SS5): guarda SOLO el puntero mutable de
-  # una ejecucion de flujo (flow_run:<run_id>), nunca la definicion completa -- por
-  # eso basta con un solo nodo, sin cluster/replicas. Sin `profile`, igual que
-  # postgres: arranca con el `docker compose up -d` de siempre, disponible tambien
-  # para el dev local sin Docker de cerebro-flows-api (`python -m cerebro_flows.main`)
-  # y para futuros modulos del ecosistema que necesiten estado rapido/efimero -- no
-  # es exclusivo de flows, solo es su primer consumidor.
+  # Redis (luisjdev-pendientes/cerebro-flows SS5): stores ONLY the mutable
+  # pointer of a flow run (flow_run:<run_id>), never the full definition -- so
+  # a single node is enough, no cluster/replicas needed. No `profile`, same as
+  # postgres: starts with the usual `docker compose up -d`, also available for
+  # local dev of cerebro-flows-api outside Docker (`python -m cerebro_flows.main`)
+  # and for future ecosystem modules that need fast/ephemeral state -- it's not
+  # exclusive to flows, just its first consumer.
   redis:
     image: redis:7-alpine
     container_name: cerebro-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
-      # Host-side port parametrizado via REDIS_HOST_PORT (default 6379) - mismo
-      # motivo que POSTGRES_HOST_PORT arriba.
+      # Host-side port made configurable via REDIS_HOST_PORT (default 6379) - same
+      # reason as POSTGRES_HOST_PORT above.
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - cerebro-redis-data:/data
@@ -93,8 +95,8 @@ services:
       # mapping and healthcheck below expect.
       APP_PORT: 8000
     ports:
-      # Host-side port parametrizado via CEREBRO_MEMORY_HOST_PORT (default 8005, igual que
-      # antes) - mismo motivo que POSTGRES_HOST_PORT arriba: el interno (8000) no cambia.
+      # Host-side port made configurable via CEREBRO_MEMORY_HOST_PORT (default 8005, same as
+      # before) - same reason as POSTGRES_HOST_PORT above: the internal one (8000) doesn't change.
       - "127.0.0.1:${CEREBRO_MEMORY_HOST_PORT:-8005}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
@@ -130,8 +132,8 @@ services:
       DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
       APP_PORT: 8000
     ports:
-      # Host-side port parametrizado via CEREBRO_DOCS_HOST_PORT (default 8006, igual que
-      # antes) - mismo motivo que POSTGRES_HOST_PORT arriba: el interno (8000) no cambia.
+      # Host-side port made configurable via CEREBRO_DOCS_HOST_PORT (default 8006, same as
+      # before) - same reason as POSTGRES_HOST_PORT above: the internal one (8000) doesn't change.
       - "127.0.0.1:${CEREBRO_DOCS_HOST_PORT:-8006}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
@@ -140,10 +142,10 @@ services:
       retries: 10
       start_period: 15s
 
-  # cerebro-flows API (luisjdev-pendientes/cerebro-flows): mismo Postgres compartido
-  # (schema cerebro_flows) + Redis nuevo de arriba. Mismo patron exacto que
-  # cerebro-memory-api/cerebro-docs-api (profile, healthcheck, depends_on) mas la
-  # dependencia extra de redis.
+  # cerebro-flows API (luisjdev-pendientes/cerebro-flows): same shared Postgres
+  # (cerebro_flows schema) + the new Redis above. Exact same pattern as
+  # cerebro-memory-api/cerebro-docs-api (profile, healthcheck, depends_on) plus
+  # the extra redis dependency.
   cerebro-flows-api:
     build:
       context: ./packages/cerebro-flows
@@ -163,9 +165,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       APP_PORT: 8000
     ports:
-      # Host-side port parametrizado via CEREBRO_FLOWS_HOST_PORT (default 8007,
-      # siguiente libre despues de memory=8005/docs=8006) - mismo motivo que
-      # POSTGRES_HOST_PORT arriba.
+      # Host-side port made configurable via CEREBRO_FLOWS_HOST_PORT (default 8007,
+      # next free one after memory=8005/docs=8006) - same reason as
+      # POSTGRES_HOST_PORT above.
       - "127.0.0.1:${CEREBRO_FLOWS_HOST_PORT:-8007}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
@@ -174,14 +176,13 @@ services:
       retries: 10
       start_period: 15s
 
-  # Gateway interno (pedido de Jose Luis, 2026-09-23): rutea /memory, /docs,
-  # /flows por prefijo a cada API y expone UN solo puerto, para que un Caddy
-  # EXTERNO (el del VPS de quien despliegue esto) solo necesite un
-  # reverse_proxy simple a este puerto, en vez de un bloque por servicio -- ver
-  # gateway/Caddyfile para el detalle del ruteo. Perfil full (igual que las
-  # APIs que fronteriza); no reemplaza los puertos directos de cada API
-  # (memory/docs/flows-api siguen ahi para dev local o acceso directo dentro
-  # de la red de compose), es una capa adicional y opcional.
+  # Internal gateway (requested by Jose Luis, 2026-09-23): routes /memory, /docs,
+  # /flows by prefix to each API and exposes A SINGLE port, so an EXTERNAL Caddy
+  # (whoever's VPS deploys this) only needs one simple reverse_proxy to this
+  # port, instead of one block per service -- see gateway/Caddyfile for routing
+  # detail. Full profile (same as the APIs it fronts); doesn't replace each
+  # API's direct ports (memory/docs/flows-api stay there for local dev or direct
+  # access within the compose network), it's an additional, optional layer.
   gateway:
     image: caddy:2-alpine
     container_name: cerebro-gateway
@@ -197,8 +198,8 @@ services:
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
-      # Host-side port parametrizado via CEREBRO_GATEWAY_HOST_PORT (default
-      # 8080) - mismo motivo que POSTGRES_HOST_PORT arriba.
+      # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
+      # 8080) - same reason as POSTGRES_HOST_PORT above.
       - "127.0.0.1:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]

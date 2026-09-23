@@ -1,6 +1,6 @@
-"""Integration tests: CRUD de categorias/documentos, unicidad, cascada, versionado,
-concurrencia y busqueda full-text. Se saltan automaticamente si DATABASE_URL no
-responde (mismo patron que cerebro-memory/tests/test_supersedence.py).
+"""Integration tests: categories/documents CRUD, uniqueness, cascading, versioning,
+concurrency, and full-text search. Automatically skipped if DATABASE_URL doesn't
+respond (same pattern as cerebro-memory/tests/test_supersedence.py).
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from cerebro_docs.config import get_settings
 
 
 async def _connect(dsn: str) -> asyncpg.Connection:
-    """Conexion ad-hoc (fuera del pool de la app) para inspeccionar
-    `document_versions` directamente - con el mismo search_path que usa `db.py`, ya
-    que todo el servicio vive en el schema `cerebro_docs`, nunca en `public`."""
+    """Ad-hoc connection (outside the app's pool) for inspecting
+    `document_versions` directly - with the same search_path `db.py` uses, since
+    the whole service lives in the `cerebro_docs` schema, never in `public`."""
     return await asyncpg.connect(dsn=dsn, server_settings={"search_path": "cerebro_docs, public"})
 
 
@@ -91,9 +91,9 @@ class TestCategoriesCrud:
         assert resp.status_code == 200, resp.text
         assert resp.json()["slug"] == new_slug
 
-        # la ruta vieja sigue resolviendo (via slug_redirects, poblado en bulk para
-        # TODOS los documentos de la categoria renombrada) pero avisa que se movio -
-        # ver TestSlugRedirects para el detalle de este mecanismo.
+        # the old route keeps resolving (via slug_redirects, populated in bulk for
+        # ALL documents in the renamed category) but warns that it moved -
+        # see TestSlugRedirects for the detail of this mechanism.
         old_route = client.get(f"/documents/{old_slug}/doc-estable", headers=auth_headers)
         assert old_route.status_code == 200, old_route.text
         assert old_route.json()["id"] == doc["id"]
@@ -120,7 +120,7 @@ class TestCategoriesCrud:
     def test_delete_category_with_force_cascades_to_documents_and_versions(self, client, auth_headers):
         slug = _make_category(client, auth_headers)
         doc = _make_document(client, auth_headers, slug)
-        # deja al menos una version en el historial antes de la cascada
+        # leaves at least one version in the history before the cascade
         client.patch(
             f"/documents/{doc['id']}",
             json={"title": doc["title"], "content": "contenido editado", "category": slug},
@@ -215,9 +215,9 @@ class TestVersioning:
         assert r3.status_code == 200, r3.text
         assert r3.json()["content"] == "v3"
 
-        # v1 y v2 deben seguir en document_versions con numeracion correcta (via psql,
-        # ya que no hay endpoint de lectura de versiones en v1 - ver
-        # ecosistema-cerebro.md SS12, "sin endpoint de restore en v1").
+        # v1 and v2 must still be in document_versions with correct numbering (via psql,
+        # since there's no version-reading endpoint in v1 - see
+        # ecosistema-cerebro.md SS12, "no restore endpoint in v1").
         settings = get_settings()
 
         async def _fetch_versions():
@@ -330,26 +330,25 @@ class TestVersioning:
 
 class TestConcurrentUpdates:
     async def test_two_concurrent_full_replaces_both_survive_in_history(self):
-        """Dos PATCH /documents/{id} casi simultaneos (asyncio.gather) no deben
-        perder ninguna de las dos escrituras: Postgres serializa sobre el lock de
-        `SELECT ... FOR UPDATE` (ecosistema-cerebro.md SS12) y cada uno archiva el
-        contenido previo antes de aplicar el suyo, asi que el historial termina con
-        AMBOS snapshots (el original + la primera escritura que gano la carrera), y
-        el contenido final es una de las dos escrituras - ninguna se pierde en
-        silencio.
+        """Two near-simultaneous PATCH /documents/{id} (asyncio.gather) must not
+        lose either write: Postgres serializes over the `SELECT ... FOR UPDATE`
+        lock (ecosistema-cerebro.md SS12) and each one archives the prior content
+        before applying its own, so the history ends up with BOTH snapshots (the
+        original + the first write that won the race), and the final content is
+        one of the two writes - neither is silently lost.
 
-        Corre como test async propio (en vez de usar el fixture `client` sincrono)
-        para que la creacion del pool y las dos requests concurrentes compartan el
-        MISMO event loop - asyncpg ata sus conexiones al loop donde se crearon, y
-        `TestClient` sincrono las crea en un loop de fondo distinto al de
-        `asyncio.gather` en el test.
+        Runs as its own async test (instead of using the synchronous `client`
+        fixture) so that pool creation and the two concurrent requests share the
+        SAME event loop - asyncpg ties its connections to the loop they were
+        created on, and the synchronous `TestClient` creates them on a background
+        loop different from the test's `asyncio.gather`.
         """
         import httpx
 
         settings = get_settings()
-        # Chequeo de alcanzabilidad in-line (no la funcion `_db_reachable` de arriba,
-        # que llama `asyncio.run()` internamente - no se puede anidar un event loop
-        # dentro de otro, y este test YA corre dentro de uno via pytest-asyncio).
+        # Inline reachability check (not the `_db_reachable` function above,
+        # which calls `asyncio.run()` internally - you can't nest one event loop
+        # inside another, and this test ALREADY runs inside one via pytest-asyncio).
         try:
             probe = await asyncpg.connect(dsn=settings.database_url, timeout=8)
             await probe.close()
@@ -396,9 +395,9 @@ class TestConcurrentUpdates:
                 uuid.UUID(doc["id"]),
             )
 
-        # dos escrituras concurrentes sobre un documento con 0 versiones previas (la
-        # creacion no cuenta) dejan exactamente 2 snapshots: el original, y el
-        # contenido de quien gano la carrera de escritura.
+        # two concurrent writes on a document with 0 prior versions (creation
+        # doesn't count) leave exactly 2 snapshots: the original, and the
+        # content of whichever write won the race.
         assert len(versions) == 2
         assert [v["version_number"] for v in versions] == [1, 2]
         contents = {v["content"] for v in versions}
@@ -427,7 +426,7 @@ class TestSearch:
             assert resp.status_code == 200, resp.text
             assert resp.json() == []
 
-        # la tabla sigue intacta despues de los intentos hostiles
+        # the table is still intact after the hostile attempts
         still_there = client.get(f"/documents/{cat}/documento-normal", headers=auth_headers)
         assert still_there.status_code == 200, still_there.text
 
@@ -460,7 +459,7 @@ class TestSearch:
 
 
 class TestStats:
-    """Mirror minimo de GET /stats de cerebro-memory (ecosistema-cerebro.md SS11)."""
+    """Minimal mirror of cerebro-memory's GET /stats (ecosistema-cerebro.md SS11)."""
 
     def test_stats_counts_increase_after_creating_category_and_documents(self, client, auth_headers):
         before = client.get("/stats", headers=auth_headers)
@@ -616,7 +615,7 @@ class TestHiddenCategories:
         resp = client.patch(f"/categories/{slug}", json={"hidden": False}, headers=auth_headers)
         assert resp.status_code == 409, resp.text
 
-        # sigue oculta despues del intento fallido
+        # still hidden after the failed attempt
         listed = client.get("/categories", headers=auth_headers)
         assert slug not in {c["slug"] for c in listed.json()}
 
@@ -666,8 +665,8 @@ class TestDocumentVersionsEndpoint:
         assert resp.status_code == 404, resp.text
 
     def test_history_route_does_not_collide_with_get_document_by_category_slug(self, client, auth_headers):
-        """Regresion: /documents/{document_id}/versions debe ganarle a
-        /documents/{category}/{slug} en el orden de rutas (ver api.py)."""
+        """Regression: /documents/{document_id}/versions must win over
+        /documents/{category}/{slug} in route ordering (see api.py)."""
         cat = _make_category(client, auth_headers)
         doc = _make_document(client, auth_headers, cat)
         resp = client.get(f"/documents/{doc['id']}/versions", headers=auth_headers)

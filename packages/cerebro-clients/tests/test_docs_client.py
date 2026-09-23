@@ -1,6 +1,6 @@
-"""`DocsClient` debe enrutar cada metodo al endpoint/verbo/params correcto de la API
-de cerebro-docs y no filtrar ninguna decision propia -- mismo criterio que
-test_memory_client.py (ver su docstring), sin necesidad de la API viva."""
+"""`DocsClient` must route each method to the correct endpoint/verb/params of the
+cerebro-docs API and must not leak any decision of its own -- same criterion as
+test_memory_client.py (see its docstring), no live API needed."""
 
 from __future__ import annotations
 
@@ -119,8 +119,8 @@ class TestDocuments:
         assert transport.last["params"] == {"limit": "20", "offset": "0"}
 
     def test_list_documents_with_category_and_q_is_the_same_endpoint_as_search(self):
-        # docs_list y docs_search (cerebro-mcp/cerebro-cli) son dos superficies sobre
-        # ESTE mismo metodo/endpoint - no hay logica de negocio duplicada aqui.
+        # docs_list and docs_search (cerebro-mcp/cerebro-cli) are two surfaces over
+        # THIS same method/endpoint - there's no duplicated business logic here.
         transport = RecordingTransport(response_json=[])
         make_client(transport).list_documents(category="eco", q="busqueda", limit=5, offset=10)
         params = transport.last["params"]

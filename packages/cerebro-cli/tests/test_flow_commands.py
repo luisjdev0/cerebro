@@ -1,5 +1,5 @@
-"""`cerebro flow <subcomando>` debe enrutar al `FlowsClient` correcto -- sin logica de
-negocio propia mas alla de leer YAML de archivo y formatear la salida."""
+"""`cerebro flow <subcommand>` must route to the correct `FlowsClient` -- with no
+business logic of its own beyond reading YAML from a file and formatting output."""
 
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cerebro-flows"
 version = "0.1.0"
-description = "cerebro-flows - motor de flujos tipo semaforo: revela un procedimiento YAML paso a paso a un modelo (parte del ecosistema cerebro)"
+description = "cerebro-flows - traffic-light workflow engine: reveals a YAML procedure to a model one step at a time (part of the cerebro ecosystem)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

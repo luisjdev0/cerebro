@@ -1,9 +1,9 @@
-"""Regresion del endurecimiento `extra="forbid"` en los modelos de entrada (StrictIn).
+"""Regression test for the `extra="forbid"` hardening on the input models (StrictIn).
 
-Sin el forbid, un typo del cliente en el nombre de un campo (p.ej. `content` en vez
-de `body` al parchear una seccion) caia en silencio al default del campo real y
-VACIABA la seccion - detectado en la prueba de humo del 2026-08-12. Un campo
-desconocido debe ser 422, nunca ignorarse.
+Without the forbid, a client typo in a field name (e.g. `content` instead
+of `body` when patching a section) would silently fall through to the real field's
+default and WIPE OUT the section - caught in the smoke test on 2026-08-12. An
+unknown field must be a 422, never ignored.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class TestUnknownFieldsAreRejected:
         )
         assert resp.status_code == 422, resp.text
 
-        # y el documento sigue intacto
+        # and the document is still intact
         after = client.get(f"/documents/{cat}/{doc['slug']}", headers=auth_headers)
         assert "cuerpo original" in after.json()["content"]
 

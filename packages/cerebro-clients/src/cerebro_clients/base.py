@@ -1,12 +1,12 @@
-"""Transporte HTTP compartido entre `MemoryClient` y `DocsClient`.
+"""HTTP transport shared between `MemoryClient` and `DocsClient`.
 
-Ambos son wrappers DELGADOS 1:1 sobre los endpoints HTTP de sus respectivas APIs
-(ecosistema-cerebro.md SS4/SS14): sin validaciones propias, sin reintentos
-inteligentes, sin traduccion de errores a mensajes "amigables" para un LLM -- eso vive
-en las capas de presentacion (`cerebro-mcp`, `cerebro-cli`), no aqui. Lo unico que
-este modulo hace con un error es propagarlo con un mensaje claro (status code + el
-`detail` del servidor si vino en JSON) en vez de dejar pasar un `httpx.HTTPStatusError`
-crudo o, peor, tragarselo en silencio.
+Both are THIN 1:1 wrappers over the HTTP endpoints of their respective APIs
+(ecosistema-cerebro.md SS4/SS14): no validation of their own, no smart
+retries, no translation of errors into "friendly" messages for an LLM -- that lives
+in the presentation layers (`cerebro-mcp`, `cerebro-cli`), not here. The only thing
+this module does with an error is propagate it with a clear message (status code + the
+server's `detail` if it came as JSON) instead of letting a raw `httpx.HTTPStatusError`
+pass through or, worse, swallowing it silently.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ import httpx
 
 
 class CerebroAPIError(RuntimeError):
-    """Una respuesta HTTP >= 400 de cerebro-memory o cerebro-docs.
+    """An HTTP response >= 400 from cerebro-memory or cerebro-docs.
 
-    `status_code` y `detail` quedan accesibles sin que el caller tenga que volver a
-    parsear `response` -- `detail` es lo que el servidor mando en `{"detail": ...}`
-    si la respuesta era JSON, o el texto crudo si no.
+    `status_code` and `detail` are accessible without the caller having to re-parse
+    `response` -- `detail` is what the server sent in `{"detail": ...}`
+    if the response was JSON, or the raw text if not.
     """
 
     def __init__(self, status_code: int, detail: Any, *, response: httpx.Response):
@@ -32,7 +32,7 @@ class CerebroAPIError(RuntimeError):
 
 
 class CerebroConnectionError(RuntimeError):
-    """No se pudo alcanzar la API en absoluto (DNS, conexion rechazada, timeout...)."""
+    """Could not reach the API at all (DNS, connection refused, timeout...)."""
 
     def __init__(self, base_url: str, exc: httpx.RequestError):
         self.base_url = base_url
@@ -41,8 +41,8 @@ class CerebroConnectionError(RuntimeError):
 
 
 class BaseClient:
-    """`httpx.Client` sincrono con auth Bearer + `X-Agent-Name`, y traduccion minima
-    de errores de red/HTTP a las dos excepciones de arriba -- nunca las traga."""
+    """Synchronous `httpx.Client` with Bearer auth + `X-Agent-Name`, and minimal
+    translation of network/HTTP errors into the two exceptions above -- never swallows them."""
 
     def __init__(
         self,
@@ -53,10 +53,10 @@ class BaseClient:
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
     ):
-        # `transport` no es config real de produccion: es un gancho para pruebas
-        # (httpx.MockTransport, ver tests/) que reemplaza el transporte de red real
-        # sin necesitar una API viva -- ecosistema-cerebro.md SS15 ("mocks/transport
-        # de httpx, sin necesidad de APIs vivas").
+        # `transport` is not real production config: it's a hook for tests
+        # (httpx.MockTransport, see tests/) that replaces the real network transport
+        # without needing a live API -- ecosistema-cerebro.md SS15 ("httpx mocks/transport,
+        # no live APIs needed").
         self.base_url = base_url.rstrip("/")
         headers = {"X-Agent-Name": agent_name}
         if token:

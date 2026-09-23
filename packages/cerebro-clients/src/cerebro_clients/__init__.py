@@ -1,7 +1,7 @@
-"""cerebro-clients: SDK delgado httpx compartido por cerebro-mcp y cerebro-cli.
+"""cerebro-clients: thin httpx SDK shared by cerebro-mcp and cerebro-cli.
 
-Ver `ecosistema-cerebro.md` SS4/SS14: unico caso legitimo de codigo compartido entre
-los clientes -- mismas llamadas HTTP, dos transportes distintos (MCP stdio, CLI).
+See `ecosistema-cerebro.md` SS4/SS14: the only legitimate case of code shared between
+the clients -- same HTTP calls, two different transports (MCP stdio, CLI).
 """
 
 from cerebro_clients.base import CerebroAPIError, CerebroConnectionError

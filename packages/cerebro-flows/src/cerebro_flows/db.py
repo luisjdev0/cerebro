@@ -1,14 +1,14 @@
-"""asyncpg pool + tiny migration runner + cliente Redis.
+"""asyncpg pool + tiny migration runner + Redis client.
 
-Mismo runner "estricto" que `cerebro_docs.db` (ver su docstring): crea el schema
-`cerebro_flows` y su propia `schema_migrations` calificada ANTES de correr cualquier
-migracion, para que una instalacion fresca quede toda en `cerebro_flows` en un solo
-arranque sin depender de que el search_path ya sea correcto.
+Same "strict" runner as `cerebro_docs.db` (see its docstring): it creates the
+`cerebro_flows` schema and its own qualified `schema_migrations` table BEFORE
+running any migration, so a fresh install lands entirely in `cerebro_flows` in a
+single startup without depending on the search_path already being correct.
 
-Redis (SS5 del documento de diseno) solo guarda el puntero MUTABLE de una ejecucion
-(`flow_run:<run_id>`) -- nunca la definicion completa del flujo, que se relee de
-Postgres en cada paso. Un solo cliente async, reusado por toda la app (mismo patron
-que el pool de asyncpg).
+Redis (SS5 of the design document) only stores the MUTABLE pointer of an execution
+(`flow_run:<run_id>`) -- never the full flow definition, which is reread from
+Postgres on every step. A single async client, reused by the whole app (same
+pattern as the asyncpg pool).
 """
 
 from __future__ import annotations

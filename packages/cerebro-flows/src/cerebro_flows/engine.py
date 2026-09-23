@@ -1,16 +1,18 @@
-"""Motor de ejecucion "semaforo" (luisjdev-pendientes/cerebro-flows SS3-4). El modelo
-nunca recibe el YAML completo -- cada funcion de aqui revela solo el paso que toca.
+"""The "traffic light" execution engine (luisjdev-pendientes/cerebro-flows SS3-4).
+The model never receives the full YAML -- each function here reveals only the step
+whose turn it is.
 
-Redis (`flow_run:<run_id>`) guarda SOLO el puntero mutable de donde esta la
-ejecucion; la definicion se relee y reparsea de Postgres en cada paso (nunca se
-cachea el procedure completo en Redis, ver SS5 del documento de diseno). Postgres
-(`flow_run_events`) es el rastro de auditoria, escrito incrementalmente en cada
-transicion real -- sobrevive aunque el run se abandone y expire por TTL en Redis.
+Redis (`flow_run:<run_id>`) stores ONLY the mutable pointer of where the execution
+currently is; the definition is reread and reparsed from Postgres on every step
+(the full procedure is never cached in Redis, see SS5 of the design document).
+Postgres (`flow_run_events`) is the audit trail, written incrementally on every
+real transition -- it survives even if the run is abandoned and its Redis TTL
+expires.
 
-El primer "paso" que devuelve `start_run` es sintetico (`id="__prerequisites__"`),
-generado de la lista `tools:` del YAML -- el chequeo en si lo hace el modelo
-(intentar ToolSearch, avisar si de verdad falta algo); el servidor solo lo obliga a
-aparecer primero en el protocolo (SS4).
+The first "step" that `start_run` returns is synthetic (`id="__prerequisites__"`),
+generated from the YAML's `tools:` list -- the actual check is done by the model
+(try ToolSearch, flag it if something is genuinely missing); the server only forces
+it to appear first in the protocol (SS4).
 """
 
 from __future__ import annotations
@@ -30,31 +32,32 @@ PREREQUISITES_STEP_ID = "__prerequisites__"
 
 
 class FlowNotFoundError(LookupError):
-    """No existe ninguna definicion de flujo activa con ese `code`."""
+    """No active flow definition exists with that `code`."""
 
 
 class RunNotFoundError(LookupError):
-    """El `run_id` no existe, o su puntero en Redis expiro por inactividad (el
-    mensaje distingue ambos casos consultando `flow_runs` en Postgres)."""
+    """The `run_id` doesn't exist, or its Redis pointer expired from inactivity
+    (the message distinguishes both cases by querying `flow_runs` in Postgres)."""
 
 
 class RunAlreadyFinishedError(ValueError):
-    """El run ya esta `completed`/`aborted` -- no admite mas transiciones."""
+    """The run is already `completed`/`aborted` -- it doesn't accept any more
+    transitions."""
 
 
 class InvalidDecisionError(ValueError):
-    """El step actual es `decision` y el `decision` reportado no es una de sus
-    `branches` validas."""
+    """The current step is `decision` and the reported `decision` isn't one of its
+    valid `branches`."""
 
 
 class CheckpointPendingError(ValueError):
-    """El step actual tiene un checkpoint sin aprobar/rechazar -- `flow_next` no
-    puede avanzar hasta `approve_checkpoint`/`reject_checkpoint`."""
+    """The current step has a checkpoint that hasn't been approved/rejected --
+    `flow_next` can't advance until `approve_checkpoint`/`reject_checkpoint`."""
 
 
 class NotAtCheckpointError(ValueError):
-    """`approve_checkpoint`/`reject_checkpoint` llamado sobre un step sin checkpoint
-    (o ya resuelto)."""
+    """`approve_checkpoint`/`reject_checkpoint` called on a step with no checkpoint
+    (or one already resolved)."""
 
 
 def _redis_key(run_id: str) -> str:
@@ -157,10 +160,10 @@ async def start_run(
         await _log_event(pool, run_id, "step_entered", PREREQUISITES_STEP_ID)
         return {"run_id": run_id, "status": "in_progress", "step": _prerequisites_step(parsed.tools)}
 
-    # Sin prerequisitos: entra directo al `entry` -- reusa `_enter_step` para que un
-    # entry que ya es terminal (flujo de un solo paso) se marque `completed` igual
-    # que cualquier otra transicion hacia un step terminal, en vez de quedar
-    # `in_progress` colgado con un step que nunca se va a poder "avanzar".
+    # No prerequisites: go straight into `entry` -- reuse `_enter_step` so that an
+    # entry which is already terminal (a single-step flow) gets marked `completed`
+    # just like any other transition into a terminal step, instead of being left
+    # `in_progress` stuck on a step that can never be "advanced".
     return await _enter_step(pool, redis_client, settings, run_id, pointer, parsed, parsed.entry, "step_entered")
 
 

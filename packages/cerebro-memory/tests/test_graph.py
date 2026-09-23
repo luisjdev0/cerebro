@@ -1,4 +1,4 @@
-"""Tests for the Fase 3 grafo ligero (`cerebro_memory.graph`, plan_v2.md SS8).
+"""Tests for the Phase 3 lightweight graph (`cerebro_memory.graph`, plan_v2.md SS8).
 
 `test_validate_relation_*` below are unit tests over `validate_relation`, a pure
 function (no I/O), same spirit as tests/test_rrf.py and tests/test_context_engine.py.

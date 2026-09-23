@@ -1,15 +1,15 @@
 """
-Esqueleto de adaptador para conectar un sistema de memoria real
-(mem0, graphiti, letta, o el propio cerebro-memory) a la suite de evaluación.
+Adapter skeleton for connecting a real memory system
+(mem0, graphiti, letta, or cerebro-memory itself) to the evaluation suite.
 
-CÓMO USAR ESTE ARCHIVO
+HOW TO USE THIS FILE
 -----------------------
-1. Copia este archivo a `evals/harness/adapters/<nombre_sistema>.py`
-   (p.ej. `mem0.py`, `graphiti.py`, `letta.py`).
-2. Renombra la clase `TemplateAdapter` a algo como `Mem0Adapter`.
-3. Rellena los TODOs de cada método con las llamadas reales a la API/SDK
-   del sistema.
-4. Regístralo en `evals/harness/adapters/__init__.py`:
+1. Copy this file to `evals/harness/adapters/<system_name>.py`
+   (e.g. `mem0.py`, `graphiti.py`, `letta.py`).
+2. Rename the `TemplateAdapter` class to something like `Mem0Adapter`.
+3. Fill in the TODOs in each method with the real API/SDK calls
+   for the system.
+4. Register it in `evals/harness/adapters/__init__.py`:
 
        from .mem0 import Mem0Adapter
        ADAPTERS = {
@@ -17,10 +17,10 @@ CÓMO USAR ESTE ARCHIVO
            "mem0": Mem0Adapter,
        }
 
-5. Corre `python evals/harness/run_eval.py --adapter mem0`.
+5. Run `python evals/harness/run_eval.py --adapter mem0`.
 
-NO implementes lógica real en ESTE archivo (TEMPLATE.py) — es solo el
-esqueleto de referencia. No se registra en ADAPTERS ni se ejecuta.
+Do NOT implement real logic in THIS file (TEMPLATE.py) — it is only the
+reference skeleton. It is not registered in ADAPTERS and is not executed.
 """
 
 from __future__ import annotations
@@ -29,89 +29,89 @@ from base import MemoryAdapter
 
 
 class TemplateAdapter(MemoryAdapter):
-    """Reemplaza este docstring con una descripción del sistema real
-    (qué API/SDK usa, si corre local o remoto, requisitos de auth, etc.)."""
+    """Replace this docstring with a description of the real system
+    (which API/SDK it uses, whether it runs locally or remotely, auth requirements, etc.)."""
 
     def __init__(self) -> None:
-        # TODO: guarda aquí config del cliente (api_key, base_url, project_id,
-        # nombre de colección/namespace a usar para este run, etc.). No
-        # hardcodees credenciales: léelas de variables de entorno.
+        # TODO: store client config here (api_key, base_url, project_id,
+        # collection/namespace name to use for this run, etc.). Do not
+        # hardcode credentials: read them from environment variables.
         #
-        # Ejemplo (mem0):
-        #   self.client = None  # se crea en setup()
-        #   self.user_id = "eval-run"  # namespace/aislamiento para no
-        #                               # mezclar con memorias reales
+        # Example (mem0):
+        #   self.client = None  # created in setup()
+        #   self.user_id = "eval-run"  # namespace/isolation to avoid
+        #                               # mixing with real memories
         #
-        # Ejemplo (graphiti):
+        # Example (graphiti):
         #   self.graphiti = None
         #   self.group_id = "eval-run"
         #
-        # Ejemplo (letta):
+        # Example (letta):
         #   self.client = None
         #   self.agent_id = None
         pass
 
     def setup(self) -> None:
-        """Inicializa el cliente/conexión y deja el sistema listo para insertar.
+        """Initializes the client/connection and leaves the system ready to insert.
 
         TODO:
-          - mem0: instanciar `Memory()` o `MemoryClient(api_key=...)`.
-          - graphiti: instanciar `Graphiti(neo4j_uri, user, password)` y
-            llamar a `build_indices_and_constraints()` si aplica.
-          - letta: crear cliente `Letta(...)` y, si el adaptador prueba
-            memoria de un agente, crear/recuperar el agente de evaluación.
+          - mem0: instantiate `Memory()` or `MemoryClient(api_key=...)`.
+          - graphiti: instantiate `Graphiti(neo4j_uri, user, password)` and
+            call `build_indices_and_constraints()` if applicable.
+          - letta: create a `Letta(...)` client and, if the adapter tests
+            an agent's memory, create/retrieve the evaluation agent.
 
-        Importante: si el sistema persiste datos entre corridas, usa un
-        namespace/colección dedicado a evals (ver `self.user_id` /
-        `self.group_id` arriba) para no contaminar memorias reales ni
-        arrastrar resultados de una corrida anterior.
+        Important: if the system persists data across runs, use a
+        namespace/collection dedicated to evals (see `self.user_id` /
+        `self.group_id` above) so as not to contaminate real memories or
+        carry over results from a previous run.
         """
-        raise NotImplementedError("TODO: inicializar el cliente del sistema real")
+        raise NotImplementedError("TODO: initialize the real system's client")
 
     def insert(self, memory: dict) -> None:
-        """Inserta una memoria del corpus (evals/memories.yaml) en el sistema real.
+        """Inserts a memory from the corpus (evals/memories.yaml) into the real system.
 
-        `memory` trae: id, context, type, title, content, status (y cualquier
-        otro campo que se añada al corpus más adelante).
+        `memory` carries: id, context, type, title, content, status (and any
+        other field added to the corpus later).
 
         TODO:
-          - Decide cómo mapear `context` (p.ej. "cliente-acme") al concepto
-            de aislamiento del sistema (namespace, tag, subgrafo, agent_id...).
-          - Decide cómo mapear `type` (semantic/episodic/procedural/decision)
-            si el sistema distingue tipos de memoria.
-          - Guarda `memory["id"]` como metadata para poder devolverlo tal
-            cual en `search()` — el harness compara por ese id, no por texto.
+          - Decide how to map `context` (e.g. "cliente-acme") to the system's
+            isolation concept (namespace, tag, subgraph, agent_id...).
+          - Decide how to map `type` (semantic/episodic/procedural/decision)
+            if the system distinguishes memory types.
+          - Store `memory["id"]` as metadata so it can be returned as-is
+            in `search()` — the harness compares by that id, not by text.
 
-        Ejemplo (mem0, muy simplificado):
+        Example (mem0, very simplified):
             self.client.add(
                 memory["content"],
                 user_id=self.user_id,
                 metadata={"eval_id": memory["id"], "context": memory["context"]},
             )
         """
-        raise NotImplementedError("TODO: insertar la memoria en el sistema real")
+        raise NotImplementedError("TODO: insert the memory into the real system")
 
     def search(self, query: str, k: int) -> list[str]:
-        """Busca `query` en el sistema real y devuelve hasta `k` ids del corpus.
+        """Searches for `query` in the real system and returns up to `k` corpus ids.
 
         TODO:
-          - Llama al endpoint/método de búsqueda del sistema (p.ej.
+          - Call the system's search endpoint/method (e.g.
             `self.client.search(query, user_id=self.user_id, limit=k)`).
-          - Extrae `eval_id` de la metadata de cada resultado (el id que
-            guardaste en `insert()`), NO el id interno del sistema.
-          - Devuelve la lista en orden de relevancia descendente, largo <= k.
+          - Extract `eval_id` from each result's metadata (the id you
+            stored in `insert()`), NOT the system's internal id.
+          - Return the list in descending relevance order, length <= k.
 
-        Si el sistema real no soporta un top-k exacto, trunca aquí.
+        If the real system does not support an exact top-k, truncate here.
         """
-        raise NotImplementedError("TODO: buscar y mapear resultados a ids del corpus")
+        raise NotImplementedError("TODO: search and map results to corpus ids")
 
     def teardown(self) -> None:
-        """Limpia el estado creado en setup()/insert() para dejar el sistema limpio.
+        """Cleans up the state created in setup()/insert() to leave the system clean.
 
         TODO:
-          - Borra el namespace/colección/grupo de evaluación si el sistema
-            persiste en disco o en un servicio remoto (para que la próxima
-            corrida empiece desde cero y las métricas sean reproducibles).
-          - Cierra conexiones (drivers de DB, sesiones HTTP, etc.).
+          - Delete the evaluation namespace/collection/group if the system
+            persists to disk or a remote service (so the next run starts
+            from scratch and metrics stay reproducible).
+          - Close connections (DB drivers, HTTP sessions, etc.).
         """
-        raise NotImplementedError("TODO: limpiar datos de la corrida y cerrar conexiones")
+        raise NotImplementedError("TODO: clean up run data and close connections")

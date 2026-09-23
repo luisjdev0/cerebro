@@ -1,11 +1,11 @@
 """Tests for token auth with scopes (`cerebro_docs.auth`).
 
 `TestPrincipal*` and `test_hash_token_*`/`test_generate_token_*` are unit tests over
-pure functions/dataclasses (no I/O) - mismo espiritu que
+pure functions/dataclasses (no I/O) - same spirit as
 cerebro-memory/tests/test_auth.py.
 
-El resto necesita Postgres real (tabla `api_tokens`, cadena completa de dependencias
-FastAPI) y se salta automaticamente si DATABASE_URL no responde.
+The rest needs a real Postgres (`api_tokens` table, full FastAPI dependency
+chain) and is automatically skipped if DATABASE_URL doesn't respond.
 """
 
 from __future__ import annotations
@@ -200,10 +200,10 @@ class TestTokenLifecycle:
 
 
 class TestTokenValueField:
-    """`value` (ecosistema-cerebro.md SS13, tokens transversales): admin puede pasar
-    el secreto en claro para que el servidor lo hashee, en vez de generar uno -
-    permite registrar el MISMO token en cerebro-memory y cerebro-docs. Idempotente
-    por nombre: reintentar con el mismo `value` no duplica ni falla."""
+    """`value` (ecosistema-cerebro.md SS13, cross-cutting tokens): admin can pass
+    the secret in plaintext so the server hashes it, instead of generating one -
+    this allows registering the SAME token in cerebro-memory and cerebro-docs. Idempotent
+    by name: retrying with the same `value` doesn't duplicate or fail."""
 
     def test_create_with_value_uses_that_exact_secret(self, client, root_headers):
         name = f"test-token-value-{uuid.uuid4().hex[:8]}"

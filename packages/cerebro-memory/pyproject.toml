@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cerebro-memory"
 version = "1.0.0"
-description = "cerebro-memory - self-hosted persistent memory service for AI agents (parte del ecosistema cerebro)"
+description = "cerebro-memory - self-hosted persistent memory service for AI agents (part of the cerebro ecosystem)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

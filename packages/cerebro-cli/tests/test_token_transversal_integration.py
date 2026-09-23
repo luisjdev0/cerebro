@@ -1,10 +1,10 @@
-"""UN test de integracion real (ecosistema-cerebro.md SS15): levanta cerebro-memory
-en :8005 y cerebro-docs en :8010 como subprocesos reales (mismo Postgres local de
-siempre), y ejercita `cerebro token create`/`cerebro token revoke` TRANSVERSAL
-(SS13) contra ellas de punta a punta -- sin mocks de cliente ni de transporte.
+"""ONE real integration test (ecosistema-cerebro.md SS15): spins up cerebro-memory
+on :8005 and cerebro-docs on :8010 as real subprocesses (the same local Postgres as
+always), and exercises CROSS-CUTTING `cerebro token create`/`cerebro token revoke`
+(SS13) against them end to end -- with no client or transport mocks.
 
-Se salta automaticamente si Postgres no responde en DATABASE_URL (mismo patron que el
-resto de tests de integracion del ecosistema).
+Skips automatically if Postgres doesn't respond at DATABASE_URL (same pattern as the
+rest of the ecosystem's integration tests).
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ TEST_API_TOKEN = f"test-root-token-{uuid.uuid4().hex[:8]}"
 
 def _db_reachable() -> bool:
     async def _check() -> None:
-        # Misma DSN por defecto que usan las apps (compose.yaml SS8) - la resolvemos
-        # via cerebro_memory.config para no duplicar el default.
+        # Same default DSN the apps use (compose.yaml SS8) - we resolve it
+        # via cerebro_memory.config so as not to duplicate the default.
         from cerebro_memory.config import get_settings
 
         conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
@@ -100,8 +100,8 @@ def live_apis():
 
 @pytest.fixture(autouse=True)
 def isolated_pending_dir(tmp_path, monkeypatch):
-    # Aislado por test para que el estado pendiente de un test no contamine el
-    # siguiente (ver cerebro_cli.tokens).
+    # Isolated per test so one test's pending state doesn't contaminate the
+    # next one (see cerebro_cli.tokens).
     monkeypatch.setattr(tokens, "PENDING_TOKENS_DIR", tmp_path / "pending-tokens")
 
 
@@ -125,10 +125,10 @@ class TestTokenCreateTransversalLive:
         name = f"itest-token-{uuid.uuid4().hex[:8]}"
         args = argparse.Namespace(name=name, scopes="read,write", contexts=None, categories=None)
 
-        shared_commands.cmd_token_create(args)  # clientes reales, resueltos por env vars
+        shared_commands.cmd_token_create(args)  # real clients, resolved via env vars
 
         printed = capsys.readouterr().out
-        # el secreto impreso debe funcionar contra AMBOS servicios
+        # the printed secret must work against BOTH services
         secret_line = [line.strip() for line in printed.splitlines() if line.strip().startswith("cbr_")]
         assert secret_line, printed
         secret = secret_line[0]
@@ -145,8 +145,8 @@ class TestTokenCreateTransversalLive:
 
     def test_partial_failure_reports_per_service_and_exits_nonzero(self, live_apis, monkeypatch):
         name = f"itest-partial-{uuid.uuid4().hex[:8]}"
-        # Apunta cerebro-docs a un puerto sin nada escuchando - simula el servicio
-        # caido sin tocar el subproceso de memory, que sigue sano.
+        # Point cerebro-docs at a port with nothing listening - simulates the service
+        # being down without touching the memory subprocess, which stays healthy.
         monkeypatch.setenv("CEREBRO_DOCS_URL", "http://localhost:1")
         args = argparse.Namespace(name=name, scopes="read", contexts=None, categories=None)
 
@@ -154,7 +154,7 @@ class TestTokenCreateTransversalLive:
             shared_commands.cmd_token_create(args)
         assert exc_info.value.code != 0
 
-        # memory SI quedo registrado
+        # memory DID end up registered
         root_memory = _root_memory_client()
         names = {t["name"] for t in root_memory.list_tokens()}
         assert name in names
@@ -166,15 +166,15 @@ class TestTokenCreateTransversalLive:
         with pytest.raises(SystemExit):
             shared_commands.cmd_token_create(args)
 
-        # ahora cerebro-docs vuelve a estar disponible - reintenta EXACTAMENTE el
-        # mismo comando (mismo name/scopes), debe completar sin duplicar la fila de
-        # memory ni requerir un secreto nuevo.
+        # now cerebro-docs is available again - retries EXACTLY the
+        # same command (same name/scopes); it must complete without duplicating memory's
+        # row or requiring a new secret.
         monkeypatch.setenv("CEREBRO_DOCS_URL", f"http://localhost:{DOCS_PORT}")
         shared_commands.cmd_token_create(args)
 
         root_memory = _root_memory_client()
         matching = [t for t in root_memory.list_tokens() if t["name"] == name]
-        assert len(matching) == 1  # nunca se duplico la fila
+        assert len(matching) == 1  # the row was never duplicated
 
         root_docs = _root_docs_client()
         matching_docs = [t for t in root_docs.list_tokens() if t["name"] == name]

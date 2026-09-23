@@ -1,7 +1,7 @@
-"""Context Engine (Fase 2, plan_v2.md SS7): decide search *scope* before the final
+"""Context Engine (Phase 2, plan_v2.md SS7): decide search *scope* before the final
 retrieval runs.
 
-No LLM calls happen here - the whole point of Fase 2 is that the "auxiliary model" is
+No LLM calls happen here - the whole point of Phase 2 is that the "auxiliary model" is
 the model already in the conversation (see plan_v2.md SS7 point 1). This module only
 does cheap, deterministic scoring over a preliminary unfiltered retrieval:
 
@@ -98,31 +98,31 @@ class ContextCandidate:
         }
 
 
-# ----------------------------------------------------------------- Fase 4: resolver
-# Punto de enchufe para un clasificador local opcional (plan_v2.md SS8, Fase 4). El
-# plan es honesto: hoy NO existe el dataset (~500 desambiguaciones reales) para
-# entrenar/evaluar nada, asi que esto es solo la INFRAESTRUCTURA -- el resolver por
-# defecto (NullResolver) no cambia el comportamiento actual en absoluto: sigue
-# devolviendo la ambiguedad al agente que llama (Fase 2, SS7). Ver README "Clasificador
-# local opcional" para la condicion de activacion en serio.
+# ----------------------------------------------------------------- Phase 4: resolver
+# Plug-in point for an optional local classifier (plan_v2.md SS8, Phase 4). The
+# plan is honest: today the dataset (~500 real disambiguations) does NOT exist to
+# train/evaluate anything, so this is only the INFRASTRUCTURE -- the default
+# resolver (NullResolver) does not change current behavior at all: it keeps
+# returning the ambiguity to the calling agent (Phase 2, SS7). See README "Optional
+# local classifier" for the condition to seriously activate it.
 
 
 class AmbiguityResolver(abc.ABC):
-    """Interfaz para resolver una ambiguedad de contexto sin devolverla al agente que
-    llama. `decide_scope` la invoca SOLO cuando el scoring determinista ya decidio que
-    el caso es ambiguo (nunca reemplaza el scoring barato de la Fase 2, solo actua
-    despues de que este ya fallo en decidir)."""
+    """Interface to resolve a context ambiguity without returning it to the calling
+    agent. `decide_scope` invokes it ONLY when the deterministic scoring has already
+    decided that the case is ambiguous (it never replaces Phase 2's cheap scoring,
+    it only acts after that scoring has already failed to decide)."""
 
     @abc.abstractmethod
     async def resolve(self, query: str, candidates: list[ContextCandidate]) -> str | None:
-        """Devuelve el slug del candidato elegido, o None si no hay respuesta
-        confiable (en cuyo caso el flujo cae de vuelta a `mode == "ambiguous"`, sin
-        ningun cambio respecto a hoy)."""
+        """Returns the slug of the chosen candidate, or None if there is no reliable
+        answer (in which case the flow falls back to `mode == "ambiguous"`, with no
+        change relative to today)."""
 
 
 class NullResolver(AmbiguityResolver):
-    """Default. Nunca resuelve nada -> el flujo actual (ambiguedad al agente) queda
-    exactamente igual. Activar cualquier otro resolver es opt-in explicito via
+    """Default. Never resolves anything -> the current flow (ambiguity to the agent)
+    stays exactly the same. Enabling any other resolver is explicit opt-in via
     CONTEXT_ENGINE_RESOLVER."""
 
     async def resolve(self, query: str, candidates: list[ContextCandidate]) -> str | None:
@@ -130,15 +130,15 @@ class NullResolver(AmbiguityResolver):
 
 
 class OllamaResolver(AmbiguityResolver):
-    """OPCIONAL: clasificador local vía Ollama (`/api/generate`), activado solo con
+    """OPTIONAL: local classifier via Ollama (`/api/generate`), enabled only with
     `CONTEXT_ENGINE_RESOLVER=ollama` (+ `OLLAMA_URL`, `OLLAMA_MODEL`).
 
-    No es un fine-tune (eso es exactamente lo que la Fase 4 condiciona a tener ~500
-    ejemplos reales, ver plan_v2.md SS8) -- es un modelo generico con un prompt corto
-    de clasificacion. Por eso nunca debe tratarse como mas confiable que devolver la
-    ambiguedad al agente: cualquier fallo (Ollama caido, timeout, respuesta no
-    parseable, slug que no está entre los candidatos) cae en silencio a `None`, que es
-    exactamente lo que hace NullResolver -- esto JAMAS debe poder romper una búsqueda.
+    This is not a fine-tune (that's exactly what Phase 4 is conditioned on having
+    ~500 real examples for, see plan_v2.md SS8) -- it's a generic model with a short
+    classification prompt. That's why it must never be treated as more reliable than
+    returning the ambiguity to the agent: any failure (Ollama down, timeout, response
+    not parseable, slug not among the candidates) falls silently back to `None`, which
+    is exactly what NullResolver does -- this must NEVER be able to break a search.
     """
 
     def __init__(self, url: str, model: str, timeout: float = 2.0) -> None:
@@ -158,7 +158,7 @@ class OllamaResolver(AmbiguityResolver):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-        except Exception:  # noqa: BLE001 - nunca romper la busqueda por un modelo local
+        except Exception:  # noqa: BLE001 - never break the search over a local model
             logger.debug("OllamaResolver: fallo la llamada a Ollama, fallback a None", exc_info=True)
             return None
 
@@ -192,7 +192,7 @@ class OllamaResolver(AmbiguityResolver):
         by_slug = {c.slug.lower(): c.slug for c in candidates}
         if cleaned in by_slug:
             return by_slug[cleaned]
-        # tolera una respuesta corta que solo menciona el slug dentro de mas texto
+        # tolerate a short response that only mentions the slug within more text
         for slug_lower, slug in by_slug.items():
             if slug_lower in cleaned:
                 return slug
@@ -200,8 +200,8 @@ class OllamaResolver(AmbiguityResolver):
 
 
 def build_ambiguity_resolver(settings: Settings) -> AmbiguityResolver:
-    """Factory leída por `decide_scope`. `settings.context_engine_resolver` es
-    `"none"` por defecto (NullResolver) -- ver README, "Clasificador local opcional"."""
+    """Factory read by `decide_scope`. `settings.context_engine_resolver` is
+    `"none"` by default (NullResolver) -- see README, "Optional local classifier"."""
     kind = (settings.context_engine_resolver or "none").strip().lower()
     if kind == "ollama":
         return OllamaResolver(url=settings.ollama_url, model=settings.ollama_model)
@@ -372,7 +372,7 @@ async def decide_scope(
     allowed_contexts: list[str] | None = None,
 ) -> ScopeDecision:
     """Full decision: preliminary retrieval -> score -> threshold -> log -> (ambiguous:
-    fetch per-candidate evidence, then optionally hand off to `resolver` - Fase 4,
+    fetch per-candidate evidence, then optionally hand off to `resolver` - Phase 4,
     OFF by default). Writes one row to `disambiguation_log` always.
 
     `resolver` defaults to `build_ambiguity_resolver(settings)` when omitted (mainly
@@ -481,15 +481,15 @@ async def decide_scope(
         agent=agent,
     )
 
-    # Fase 4 (OFF por defecto): solo se llega aqui si el scoring determinista de la
-    # Fase 2 ya decidio que es ambiguo. resolver es NullResolver a menos que
-    # CONTEXT_ENGINE_RESOLVER=ollama este seteado -- en ese caso siempre devuelve None
-    # y este bloque es un no-op exacto (mismo comportamiento que sin esta tarea).
+    # Phase 4 (OFF by default): this is only reached if Phase 2's deterministic
+    # scoring has already decided it's ambiguous. resolver is NullResolver unless
+    # CONTEXT_ENGINE_RESOLVER=ollama is set -- in that case it always returns None
+    # and this block is an exact no-op (same behavior as without this task).
     resolver = resolver if resolver is not None else build_ambiguity_resolver(settings)
     if not isinstance(resolver, NullResolver):
         try:
             resolved_slug = await resolver.resolve(query, candidates)
-        except Exception:  # noqa: BLE001 - un resolver roto nunca debe tumbar la busqueda
+        except Exception:  # noqa: BLE001 - a broken resolver must never take down the search
             logger.warning("ambiguity resolver raised, falling back to ambiguous", exc_info=True)
             resolved_slug = None
 

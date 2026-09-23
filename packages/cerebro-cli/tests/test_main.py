@@ -1,6 +1,6 @@
-"""Smoke tests del arbol de subcomandos: cada linea de la especificacion
-(ecosistema-cerebro.md SS11 + la tarea) debe parsear y despachar a la funcion
-correcta, sin ejecutar ninguna llamada de red real."""
+"""Smoke tests for the subcommand tree: every line of the spec
+(ecosistema-cerebro.md SS11 + the task) must parse and dispatch to the correct
+function, without making any real network call."""
 
 from __future__ import annotations
 

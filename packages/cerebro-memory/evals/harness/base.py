@@ -1,10 +1,10 @@
 """
-Interfaz común que debe implementar cualquier sistema de memoria evaluado por
-la suite de cerebro-memory (evals/harness/run_eval.py).
+Common interface that any memory system evaluated by the cerebro-memory suite
+(evals/harness/run_eval.py) must implement.
 
-Vive en su propio módulo (en vez de dentro de run_eval.py) para que los
-adaptadores en evals/harness/adapters/ puedan importarla sin crear un import
-circular con el runner.
+Lives in its own module (instead of inside run_eval.py) so that the adapters
+in evals/harness/adapters/ can import it without creating a circular import
+with the runner.
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from abc import ABC, abstractmethod
 
 
 class MemoryAdapter(ABC):
-    """Contrato mínimo entre el harness de evaluación y un sistema de memoria.
+    """Minimal contract between the evaluation harness and a memory system.
 
-    El runner (run_eval.py) llama a estos métodos en este orden exacto para
-    cada corrida:
+    The runner (run_eval.py) calls these methods in this exact order for
+    each run:
 
         adapter.setup()
         for memory in memories:
@@ -25,40 +25,40 @@ class MemoryAdapter(ABC):
             ids = adapter.search(case["query"], k=5)
         adapter.teardown()
 
-    Un adaptador puede envolver un índice en memoria (como NaiveKeywordAdapter),
-    una llamada HTTP a un servicio externo, o una librería como mem0/graphiti/letta.
+    An adapter can wrap an in-memory index (like NaiveKeywordAdapter),
+    an HTTP call to an external service, or a library like mem0/graphiti/letta.
     """
 
     @abstractmethod
     def setup(self) -> None:
-        """Prepara el adaptador antes de insertar memorias.
+        """Prepares the adapter before inserting memories.
 
-        Úsalo para abrir conexiones, crear colecciones/índices, autenticar
-        contra un servicio, etc. Se llama una sola vez al inicio de la corrida.
+        Use it to open connections, create collections/indexes, authenticate
+        against a service, etc. Called only once at the start of the run.
         """
         raise NotImplementedError
 
     @abstractmethod
     def insert(self, memory: dict) -> None:
-        """Inserta una memoria en el sistema bajo prueba.
+        """Inserts a memory into the system under test.
 
-        `memory` es un dict con, como mínimo, las claves del corpus en
+        `memory` is a dict with, at minimum, the corpus keys from
         evals/memories.yaml: id, context, type, title, content, status.
-        El adaptador decide cómo mapear esos campos a su propio modelo
-        (metadata, namespace, colección, etc.).
+        The adapter decides how to map those fields to its own model
+        (metadata, namespace, collection, etc.).
         """
         raise NotImplementedError
 
     @abstractmethod
     def search(self, query: str, k: int) -> list[str]:
-        """Busca `query` y devuelve hasta `k` ids de memoria, mejor resultado primero.
+        """Searches for `query` and returns up to `k` memory ids, best result first.
 
-        Debe devolver una lista de los `id` tal como se insertaron (no objetos
-        completos), en orden de relevancia descendente. Longitud <= k.
+        Must return a list of the `id`s exactly as inserted (not full
+        objects), in descending relevance order. Length <= k.
         """
         raise NotImplementedError
 
     @abstractmethod
     def teardown(self) -> None:
-        """Libera recursos al final de la corrida (cerrar conexiones, borrar índices temporales, etc.)."""
+        """Releases resources at the end of the run (close connections, delete temporary indexes, etc.)."""
         raise NotImplementedError

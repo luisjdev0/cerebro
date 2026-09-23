@@ -1,14 +1,15 @@
-"""Parseo y validacion estructural del YAML de un flujo
-(luisjdev-pendientes/cerebro-flows SS2). El YAML es la fuente de verdad del
-`procedure` (el grafo de pasos); el id correlativo humano ("INC-22") y el numero de
-version son asignados por el servidor al guardar (`flow_definitions.code`/
-`flow_definition_versions.version_number`), NO se leen de aqui -- por eso este
-schema no incluye `id`/`version` de nivel raiz, solo la estructura del flujo en si.
+"""Parsing and structural validation of a flow's YAML
+(luisjdev-pendientes/cerebro-flows SS2). The YAML is the source of truth for the
+`procedure` (the graph of steps); the human-readable sequential id ("INC-22") and
+the version number are assigned by the server on save (`flow_definitions.code`/
+`flow_definition_versions.version_number`), they are NOT read from here -- that's
+why this schema doesn't include a root-level `id`/`version`, only the flow's
+structure itself.
 
-Error explicito, nunca adivinar (mismo criterio que `cerebro_docs.sections`): un
-`next`/`branches`/`checkpoint.on_reject` que apunte a un step inexistente, un step
-`decision` sin `branches`, un step no-terminal sin `next`, etc. son todos
-`InvalidFlowSchemaError` con el step/campo exacto en el mensaje.
+Explicit errors, never guessing (same criterion as `cerebro_docs.sections`): a
+`next`/`branches`/`checkpoint.on_reject` that points to a nonexistent step, a
+`decision` step with no `branches`, a non-terminal step with no `next`, etc. are
+all `InvalidFlowSchemaError` with the exact step/field in the message.
 """
 
 from __future__ import annotations
@@ -23,13 +24,14 @@ StepType = Literal["task", "decision", "delegate"]
 
 
 class _FlowYamlLoader(yaml.SafeLoader):
-    """`yaml.safe_load` normal, salvo que NO interpreta `yes`/`no`/`on`/`off` como
-    booleanos (el "Norway problem" de YAML 1.1) -- una branch de decision llamada
-    "yes"/"no" (el caso mas natural para una decision de si/no) debe quedar como el
-    string literal, no colapsar a `True`/`False`. `true`/`false` SI se resuelven a
-    booleanos como siempre (los usamos a proposito en `terminal`/`checkpoint.required`);
-    ademas pydantic coacciona strings como "true"/"false" a bool igual si hiciera
-    falta, asi que no se pierde nada quitando solo yes/no/on/off."""
+    """A normal `yaml.safe_load`, except it does NOT interpret `yes`/`no`/`on`/`off`
+    as booleans (the "Norway problem" of YAML 1.1) -- a decision branch named
+    "yes"/"no" (the most natural case for a yes/no decision) must stay as the
+    literal string, not collapse into `True`/`False`. `true`/`false` DO still
+    resolve to booleans as usual (we use them on purpose in
+    `terminal`/`checkpoint.required`); and pydantic coerces strings like
+    "true"/"false" to bool anyway if needed, so nothing is lost by only removing
+    yes/no/on/off."""
 
 
 _FlowYamlLoader.yaml_implicit_resolvers = {
@@ -44,8 +46,9 @@ _FlowYamlLoader.add_implicit_resolver(
 
 
 class InvalidFlowSchemaError(ValueError):
-    """El YAML no es valido: ni parseable, ni pydantic-valido, ni referencialmente
-    consistente (ver `validate_flow_yaml`). El mensaje siempre es puntual."""
+    """The YAML isn't valid: either not parseable, not pydantic-valid, or not
+    referentially consistent (see `validate_flow_yaml`). The message is always
+    specific."""
 
 
 class StrictModel(BaseModel):
@@ -76,8 +79,9 @@ class Metadata(StrictModel):
     status: str = "active"
     created_at: str | None = None
     updated_at: str | None = None
-    # URIs a cerebro-docs (p.ej. "cerebro-docs://categoria/slug") resueltas por quien
-    # consume el paso, no por el motor -- ver SS9 del documento de diseno.
+    # URIs to cerebro-docs (e.g. "cerebro-docs://category/slug") resolved by
+    # whoever consumes the step, not by the engine -- see SS9 of the design
+    # document.
     references: list[str] = Field(default_factory=list)
 
 
@@ -202,9 +206,9 @@ class FlowDefinitionSchema(StrictModel):
 
 
 def validate_flow_yaml(text: str) -> FlowDefinitionSchema:
-    """Parsea y valida un YAML de flujo completo. Nunca adivina: cualquier problema
-    (YAML mal formado, campo faltante/desconocido, referencia rota) es
-    `InvalidFlowSchemaError` con el detalle puntual."""
+    """Parses and validates a complete flow YAML. Never guesses: any problem
+    (malformed YAML, missing/unknown field, broken reference) becomes an
+    `InvalidFlowSchemaError` with the specific detail."""
     try:
         raw: Any = yaml.load(text, Loader=_FlowYamlLoader)
     except yaml.YAMLError as exc:

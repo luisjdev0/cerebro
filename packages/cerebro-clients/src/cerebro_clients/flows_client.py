@@ -1,8 +1,8 @@
-"""`FlowsClient`: wrapper 1:1 sobre la API HTTP de cerebro-flows.
+"""`FlowsClient`: 1:1 wrapper over the cerebro-flows HTTP API.
 
-Mismo criterio que `DocsClient`/`MemoryClient` (ver sus docstrings): cero logica de
-negocio, cada metodo hace una request y devuelve el JSON decodificado o deja
-propagar `CerebroAPIError`/`CerebroConnectionError`.
+Same criterion as `DocsClient`/`MemoryClient` (see their docstrings): zero business
+logic, each method makes one request and returns the decoded JSON or lets
+`CerebroAPIError`/`CerebroConnectionError` propagate.
 """
 
 from __future__ import annotations

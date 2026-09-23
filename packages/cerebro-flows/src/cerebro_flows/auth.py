@@ -1,8 +1,9 @@
-"""Token auth with scopes - espejo exacto de `cerebro_docs.auth` (ver su docstring
-para el detalle del razonamiento), aqui con `allowed_categories` sobre categorias de
-flujo. NO es la "gestion de usuarios con scopes" que el documento de diseno deja
-fuera de alcance (esa es sobre entidades de usuario con jerarquia user/owner/admin) -
-es el mismo mecanismo de tokens ya usado en memory/docs, reusado por consistencia.
+"""Token auth with scopes - an exact mirror of `cerebro_docs.auth` (see its
+docstring for the detailed reasoning), here with `allowed_categories` over flow
+categories. This is NOT the "user management with scopes" that the design document
+leaves out of scope (that one is about user entities with a user/owner/admin
+hierarchy) - it's the same token mechanism already used in memory/docs, reused for
+consistency.
 """
 
 from __future__ import annotations

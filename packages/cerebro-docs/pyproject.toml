@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cerebro-docs"
 version = "0.1.0"
-description = "cerebro-docs - repositorio de documentos Markdown completos, categorizables y versionados (parte del ecosistema cerebro)"
+description = "cerebro-docs - repository of complete, categorizable, versioned Markdown documents (part of the cerebro ecosystem)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

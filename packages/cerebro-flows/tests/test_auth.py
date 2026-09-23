@@ -1,5 +1,5 @@
-"""Tests for token auth with scopes (`cerebro_flows.auth`) - espejo de
-cerebro-docs/tests/test_auth.py (mismo mecanismo exacto, ver su docstring).
+"""Tests for token auth with scopes (`cerebro_flows.auth`) - a mirror of
+cerebro-docs/tests/test_auth.py (the exact same mechanism, see its docstring).
 """
 
 from __future__ import annotations

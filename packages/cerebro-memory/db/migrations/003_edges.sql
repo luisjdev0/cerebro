@@ -1,25 +1,25 @@
--- KnowledgeOS Fase 3 - Relaciones / grafo ligero (plan_v2.md seccion 8, Fase 3)
+-- KnowledgeOS Phase 3 - Relationships / lightweight graph (plan_v2.md section 8, Phase 3)
 --
--- memory_edges: aristas explicitas entre memorias, EN POSTGRES -- nada de base de
--- grafos dedicada (regla del proyecto). Vocabulario de relaciones controlado (CHECK)
--- en vez de TEXT libre, para que el grafo se mantenga consultable/consistente:
---   relates_to   - asociacion generica sin direccion causal/temporal fuerte
---   caused_by    - `from_memory` fue causado por `to_memory` (p.ej. decision -> causa)
---   part_of      - `from_memory` es parte de `to_memory` (p.ej. procedimiento -> proyecto)
---   contradicts  - `from_memory` contradice a `to_memory`
---   follows      - `from_memory` ocurrio despues de / como consecuencia de `to_memory`
---                  (p.ej. episodio -> consecuencia)
+-- memory_edges: explicit edges between memories, IN POSTGRES -- no dedicated
+-- graph database (project rule). Controlled relationship vocabulary (CHECK)
+-- instead of free TEXT, so the graph stays queryable/consistent:
+--   relates_to   - generic association with no strong causal/temporal direction
+--   caused_by    - `from_memory` was caused by `to_memory` (e.g. decision -> cause)
+--   part_of      - `from_memory` is part of `to_memory` (e.g. procedure -> project)
+--   contradicts  - `from_memory` contradicts `to_memory`
+--   follows      - `from_memory` occurred after / as a consequence of `to_memory`
+--                  (e.g. episode -> consequence)
 --
--- Notas de diseno:
--- - UNIQUE (from_memory, to_memory, relation): misma arista (misma direccion, misma
---   relacion) no se duplica; la API devuelve 409 si se intenta.
--- - CHECK from_memory <> to_memory: una memoria no puede enlazarse a si misma.
--- - ON DELETE CASCADE en ambas FKs: si una memoria se borra en duro (hard delete),
---   sus aristas (en cualquiera de las dos direcciones) mueren con ella -- no quedan
---   aristas huerfanas apuntando a un id que ya no existe.
--- - `superseded_by` (memories) sigue siendo la unica relacion de versionado; no se
---   materializa como edge (ver GET /memories/{id}/related, que la expone como
---   relacion virtual 'supersedes' sin escribirla aqui).
+-- Design notes:
+-- - UNIQUE (from_memory, to_memory, relation): the same edge (same direction, same
+--   relation) is not duplicated; the API returns 409 if one is attempted.
+-- - CHECK from_memory <> to_memory: a memory cannot link to itself.
+-- - ON DELETE CASCADE on both FKs: if a memory is hard-deleted, its edges (in
+--   either direction) die with it -- no orphaned edges are left pointing to an id
+--   that no longer exists.
+-- - `superseded_by` (memories) remains the only versioning relationship; it is not
+--   materialized as an edge (see GET /memories/{id}/related, which exposes it as a
+--   virtual 'supersedes' relationship without writing it here).
 
 CREATE TABLE memory_edges (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -27,7 +27,7 @@ CREATE TABLE memory_edges (
     to_memory    UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     relation     TEXT NOT NULL CHECK (relation IN ('relates_to', 'caused_by', 'part_of', 'contradicts', 'follows')),
     note         TEXT,
-    created_by   TEXT NOT NULL,               -- agente que creo la arista (X-Agent-Name)
+    created_by   TEXT NOT NULL,               -- agent that created the edge (X-Agent-Name)
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT memory_edges_no_self_link CHECK (from_memory <> to_memory),
     CONSTRAINT memory_edges_unique_triple UNIQUE (from_memory, to_memory, relation)

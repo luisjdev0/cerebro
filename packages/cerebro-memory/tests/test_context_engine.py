@@ -1,4 +1,4 @@
-"""Unit tests for the Context Engine's scoring/threshold logic (Fase 2, plan_v2.md SS7).
+"""Unit tests for the Context Engine's scoring/threshold logic (Phase 2, plan_v2.md SS7).
 
 `score_contexts` and `decide_from_scores` are pure functions (no I/O - they take
 already-fetched preliminary results / preferences and return decisions), so these

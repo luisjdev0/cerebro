@@ -1,27 +1,27 @@
-"""Servidor MCP unico del ecosistema cerebro (transporte stdio).
+"""Single MCP server for the cerebro ecosystem (stdio transport).
 
-Adaptador DELGADO sobre `cerebro_clients` (`MemoryClient`/`DocsClient`): cada tool
-llama un metodo del cliente y traduce el resultado -- o la excepcion
-(`CerebroAPIError`/`CerebroConnectionError`) -- a algo util para el LLM que la invoca.
-No hay logica de negocio aqui (ecosistema-cerebro.md SS10): toda vive en las APIs de
-cerebro-memory/cerebro-docs, para que `cerebro-cli` comparta exactamente el mismo
-camino via `cerebro_clients`.
+THIN adapter over `cerebro_clients` (`MemoryClient`/`DocsClient`): each tool
+calls a client method and translates the result -- or the exception
+(`CerebroAPIError`/`CerebroConnectionError`) -- into something useful for the LLM that calls it.
+There is no business logic here (ecosistema-cerebro.md SS10): all of it lives in the
+cerebro-memory/cerebro-docs APIs, so that `cerebro-cli` shares exactly the same
+path via `cerebro_clients`.
 
-Prefijos `memory_*` / `docs_*` (SS10) para no confundir las dos familias de tools --
-las `memory_*` son un port 1:1 de las que ya existian en el `mcp_server.py` original
-de cerebro-memory (mismos nombres, mismos schemas/descripciones: los agentes del
-usuario ya las conocen), y las `docs_*` son nuevas.
+`memory_*` / `docs_*` prefixes (SS10) to avoid confusing the two tool families --
+the `memory_*` ones are a 1:1 port of the ones that already existed in the original
+`mcp_server.py` of cerebro-memory (same names, same schemas/descriptions: the user's
+agents already know them), and the `docs_*` ones are new.
 
-Config por variables de entorno -- ver `cerebro_clients.config` (SS4/SS13):
-    CEREBRO_MEMORY_URL / CEREBRO_DOCS_URL   URLs base de cada API
-    CEREBRO_TOKEN                            token unico compartido entre ambas
-    CEREBRO_AGENT_NAME                       identidad de este cliente MCP
+Config via environment variables -- see `cerebro_clients.config` (SS4/SS13):
+    CEREBRO_MEMORY_URL / CEREBRO_DOCS_URL   base URLs of each API
+    CEREBRO_TOKEN                            single token shared between both
+    CEREBRO_AGENT_NAME                       identity of this MCP client
     KNOWLEDGEOS_API_URL / KNOWLEDGEOS_API_TOKEN / KNOWLEDGEOS_AGENT_NAME
-                                              fallback de compatibilidad (solo memory)
+                                              compatibility fallback (memory only)
 
-Arranque:
+Startup:
     python -m cerebro_mcp.server
-    # o, tras `pip install -e .`, el entry point de consola:
+    # or, after `pip install -e .`, the console entry point:
     cerebro-mcp
 """
 
@@ -39,33 +39,33 @@ _memory = MemoryClient()
 _docs = DocsClient()
 _flows = FlowsClient()
 
-# Process-memory de la ultima desambiguacion *sin resolver* (Fase 2 Context Engine,
-# plan_v2.md SS7). Ver el docstring de memory_search() para el comportamiento de
-# auto-resolucion que esto habilita. Deliberadamente un solo slot, no una
-# pila/historial: solo necesita puentear "busqueda ambigua" -> "la SIGUIENTE busqueda
-# del agente con un contexto explicito", que es el patron que produce naturalmente un
-# agente que llama tools.
+# Process-memory of the last *unresolved* disambiguation (Phase 2 Context Engine,
+# plan_v2.md SS7). See the memory_search() docstring for the auto-resolution
+# behavior this enables. Deliberately a single slot, not a
+# stack/history: it only needs to bridge "ambiguous search" -> "the NEXT search
+# from the agent with an explicit context", which is the pattern that an
+# agent calling tools naturally produces.
 _last_disambiguation_id: str | None = None
 
 mcp = FastMCP(
     name="cerebro",
     instructions=(
-        "Ecosistema cerebro para agentes de IA: memoria persistente (memory_*) y "
-        "repositorio de documentos Markdown (docs_*). Usa memory_search para "
-        "recuperar hechos, decisiones y eventos guardados antes de responder algo "
-        "que dependa del historial del usuario; usa memory_remember para guardar "
-        "informacion nueva relevante a largo plazo. Toda memoria vive en un "
-        "'contexto' (proyecto, cliente, dominio de vida); llama memory_contexts para "
-        "ver los contextos disponibles antes de escribir si no estas seguro de cual "
-        "usar. Usa docs_save/docs_get/docs_search para documentos Markdown completos "
-        "(guias, definiciones, notas largas) que NO deben destilarse a memorias -- "
-        "cerebro-docs es un repositorio de documentos, no memoria formal; llama "
-        "docs_categories para ver las categorias disponibles antes de guardar. Usa "
-        "flow_* para procesos/checklists con pasos, decisiones y checkpoints de "
-        "aprobacion -- flow_start/flow_next revelan el flujo paso a paso (nunca leas "
-        "una definicion completa para 'seguirla' manualmente), y flow_validate/"
-        "flow_save/flow_update te dejan autorar flujos nuevos iterando sobre errores "
-        "puntuales antes de guardarlos."
+        "cerebro ecosystem for AI agents: persistent memory (memory_*) and a "
+        "repository of Markdown documents (docs_*). Use memory_search to "
+        "retrieve saved facts, decisions and events before answering anything "
+        "that depends on the user's history; use memory_remember to save "
+        "new information relevant in the long term. Every memory lives in a "
+        "'context' (project, client, life domain); call memory_contexts to "
+        "see the available contexts before writing if you're not sure which "
+        "one to use. Use docs_save/docs_get/docs_search for complete Markdown "
+        "documents (guides, definitions, long notes) that should NOT be distilled "
+        "into memories -- cerebro-docs is a document repository, not formal memory; "
+        "call docs_categories to see the available categories before saving. Use "
+        "flow_* for processes/checklists with steps, decisions and approval "
+        "checkpoints -- flow_start/flow_next reveal the flow one step at a time "
+        "(never read a full definition to 'follow' it manually), and flow_validate/"
+        "flow_save/flow_update let you author new flows iterating over specific "
+        "errors before saving them."
     ),
 )
 
@@ -132,74 +132,74 @@ def memory_search(
     limit: int = 5,
     expand: bool = False,
 ) -> dict[str, Any]:
-    """Busca memorias guardadas por contenido (retrieval hibrido: vector + texto completo).
+    """Searches saved memories by content (hybrid retrieval: vector + full text).
 
-    Usala antes de responder cualquier pregunta que pueda depender de algo que el
-    usuario ya conto antes (preferencias, decisiones pasadas, hechos sobre su vida o
-    sus proyectos) -- es mas confiable que asumir o que revisar el historial de la
-    conversacion actual, que se pierde entre sesiones.
+    Use it before answering any question that might depend on something the
+    user already said before (preferences, past decisions, facts about their life or
+    their projects) -- it's more reliable than assuming or reviewing the history of
+    the current conversation, which is lost between sessions.
 
-    Que es un "contexto": cada memoria pertenece a un contexto (p.ej. un proyecto de
-    software, un cliente, un dominio de vida como "salud" o "finanzas-personales").
-    Sirve para aislar informacion que NO deberia mezclarse: dos contextos pueden
-    compartir vocabulario (p.ej. "gastos" aparece tanto en un proyecto de finanzas
-    como en las finanzas personales reales del usuario) sin ser relevantes entre si.
+    What a "context" is: every memory belongs to a context (e.g. a software
+    project, a client, a life domain like "health" or "personal-finances").
+    It's used to isolate information that should NOT be mixed together: two contexts can
+    share vocabulary (e.g. "expenses" appears both in a finance project
+    and in the user's real personal finances) without being relevant to each other.
 
-    Scoping automatico (Context Engine, Fase 2): si NO pasas `context`, la busqueda usa
-    `scope=auto` en la API. Un scorer barato y determinista (sin LLM) decide si un
-    contexto domina claramente:
-      - Si domina, la busqueda ya viene filtrada a ese contexto (`scope_decision.mode
-        == "auto"`) -- no necesitas hacer nada mas.
-      - Si es ambiguo (`scope_decision.mode == "ambiguous"`), `results` viene vacio a
-        proposito (para no mezclar memorias de contextos distintos a ciegas) y en su
-        lugar recibes `candidates` (2-4 contextos posibles con su descripcion y score)
-        y `results_by_candidate` (2-3 resultados reales de cada uno, como evidencia).
-        El campo `message` ya trae esto formateado en texto listo para razonar o
-        mostrar. Decide tu (con el contexto de la conversacion) o pregunta al usuario,
-        y repite la llamada pasando `context=<slug>` del que corresponda.
+    Automatic scoping (Context Engine, Phase 2): if you do NOT pass `context`, the search uses
+    `scope=auto` in the API. A cheap, deterministic scorer (no LLM) decides whether a
+    context clearly dominates:
+      - If it dominates, the search already comes filtered to that context (`scope_decision.mode
+        == "auto"`) -- you don't need to do anything else.
+      - If it's ambiguous (`scope_decision.mode == "ambiguous"`), `results` comes back empty on
+        purpose (so as not to blindly mix memories from different contexts) and instead
+        you get `candidates` (2-4 possible contexts with their description and score)
+        and `results_by_candidate` (2-3 real results from each, as evidence).
+        The `message` field already brings this formatted as text ready to reason about or
+        show. Decide yourself (using the conversation's context) or ask the user,
+        and repeat the call passing `context=<slug>` of the matching one.
 
-    Aprendizaje automatico: este servidor MCP recuerda en memoria de proceso el
-    `disambiguation_id` de la ultima busqueda ambigua. Si tu SIGUIENTE llamada a
-    memory_search pasa `context` explicito, el servidor asume que asi resolviste esa
-    ambiguedad y llama automaticamente a `POST /disambiguations/{id}/resolve` con ese
-    contexto -- sin que tengas que hacer nada extra. Eso hace crecer
-    `context_preferences` en el servidor (los tokens de esa query suman peso hacia el
-    contexto elegido), asi que preguntas parecidas en el futuro tienden a resolverse
-    solas (`mode == "auto"`) en vez de volver a ser ambiguas. El "slot" se limpia
-    despues de esa siguiente llamada (se resuelva o no), asi que solo cubre el patron
-    "ambigua -> repregunto con context" inmediato, no busquedas sueltas mas tarde.
+    Automatic learning: this MCP server remembers in process memory the
+    `disambiguation_id` of the last ambiguous search. If your NEXT call to
+    memory_search passes an explicit `context`, the server assumes that's how you resolved that
+    ambiguity and automatically calls `POST /disambiguations/{id}/resolve` with that
+    context -- without you having to do anything extra. That grows
+    `context_preferences` on the server (the tokens of that query add weight towards the
+    chosen context), so similar questions in the future tend to resolve
+    on their own (`mode == "auto"`) instead of being ambiguous again. The "slot" is cleared
+    after that next call (whether it resolves anything or not), so it only covers the
+    immediate "ambiguous -> re-ask with context" pattern, not standalone searches later on.
 
-    Relaciones (Fase 3): si pasas `expand=True`, la respuesta incluye ademas un bloque
-    `related` -- los vecinos a 1 salto (memory_link explicitos + la cadena de
-    supersedencia) de los 3 primeros `results`, deduplicados y con un maximo de 5.
-    `related` NUNCA se mezcla con `results`: son memorias conectadas por relacion, no
-    resultados de la busqueda en si, asi que no deben tratarse con la misma confianza
-    de relevancia semantica. Cada entrada trae `relation`, `direction` ("outgoing" si
-    el resultado apunta hacia el vecino, "incoming" si es al reves), `virtual` (True
-    solo para la cadena de supersedencia derivada, que no vive en una arista real) y
-    `cross_context` (True si el vecino pertenece a un contexto distinto del que ya
-    resolvio esta busqueda -- solo ocurre via una arista explicita creada con
-    memory_link, nunca por casualidad). Util para enriquecer una respuesta con
-    "esto esta relacionado con..." sin disparar una busqueda aparte.
+    Relations (Phase 3): if you pass `expand=True`, the response also includes a
+    `related` block -- the 1-hop neighbors (explicit memory_link edges + the
+    supersession chain) of the first 3 `results`, deduplicated and capped at 5.
+    `related` is NEVER mixed with `results`: they are memories connected by a relation, not
+    results of the search itself, so they should not be treated with the same confidence
+    of semantic relevance. Each entry carries `relation`, `direction` ("outgoing" if
+    the result points to the neighbor, "incoming" if it's the other way around), `virtual` (True
+    only for the derived supersession chain, which doesn't live as a real edge) and
+    `cross_context` (True if the neighbor belongs to a different context than the one that already
+    resolved this search -- only happens via an explicit edge created with
+    memory_link, never by coincidence). Useful for enriching a response with
+    "this is related to..." without triggering a separate search.
 
     Args:
-        query: la pregunta o texto a buscar, en lenguaje natural.
-        context: slug de un contexto para acotar la busqueda a el (recomendado si ya
-            sabes de que contexto se trata, o si estas resolviendo una ambiguedad
-            anterior). Si no lo sabes, omitelo y deja que el Context Engine decida.
-        type: filtra por tipo de memoria: "semantic" (hechos/preferencias estables),
-            "episodic" (eventos puntuales), "procedural" (como hacer algo) o
-            "decision" (una decision tomada y su motivo). Opcional.
-        limit: maximo de resultados a devolver (default 5).
-        expand: si True, añade el bloque `related` descrito arriba (default False).
+        query: the question or text to search for, in natural language.
+        context: slug of a context to scope the search to it (recommended if you
+            already know which context it is about, or if you're resolving a previous
+            ambiguity). If you don't know it, omit it and let the Context Engine decide.
+        type: filters by memory type: "semantic" (stable facts/preferences),
+            "episodic" (one-off events), "procedural" (how to do something) or
+            "decision" (a decision made and its reasoning). Optional.
+        limit: maximum number of results to return (default 5).
+        expand: if True, adds the `related` block described above (default False).
 
     Returns:
-        dict con `results` (lista de memorias, vacia si `ambiguous` es True),
-        `scope_decision` (la decision cruda de la API), `ambiguous` (bool, azucar
-        sobre `scope_decision.mode`), `message` (str, presente solo si `ambiguous` es
-        True: texto ya formateado para decidir o mostrar al usuario), `note` (str o
-        None, confirma cuando se aprendio una preferencia por resolver una
-        ambiguedad anterior) y `related` (lista, solo presente si `expand=True`).
+        dict with `results` (list of memories, empty if `ambiguous` is True),
+        `scope_decision` (the raw decision from the API), `ambiguous` (bool, sugar
+        over `scope_decision.mode`), `message` (str, present only if `ambiguous` is
+        True: text already formatted to decide or show to the user), `note` (str or
+        None, confirms when a preference was learned by resolving a
+        previous ambiguity) and `related` (list, present only if `expand=True`).
     """
     global _last_disambiguation_id
 
@@ -217,8 +217,8 @@ def memory_search(
     related = data.get("related")
     mode = scope_decision.get("mode")
 
-    # Consume el slot pendiente en ESTA llamada (se use o no abajo) para que solo
-    # cubra una llamada siguiente - ver docstring.
+    # Consume the pending slot in THIS call (whether it's used below or not) so it only
+    # covers one following call - see docstring.
     pending_id = _last_disambiguation_id
     _last_disambiguation_id = None
 
@@ -265,34 +265,34 @@ def memory_remember(
     title: str | None = None,
     importance: float | None = None,
 ) -> dict[str, Any]:
-    """Guarda una memoria nueva de forma persistente (sobrevive entre sesiones/reinicios).
+    """Saves a new memory persistently (survives between sessions/restarts).
 
-    Usala cuando el usuario comparta algo que valga la pena recordar a largo plazo:
-    un hecho ("uso Next.js en mi proyecto X"), una preferencia, una decision con su
-    motivo, o un evento relevante. No la uses para detalles efimeros de la
-    conversacion actual que no tienen valor futuro.
+    Use it when the user shares something worth remembering long-term:
+    a fact ("I use Next.js in my project X"), a preference, a decision with its
+    reasoning, or a relevant event. Don't use it for ephemeral details of the
+    current conversation that have no future value.
 
-    `context` y `type` son OBLIGATORIOS -- la ambiguedad se resuelve una sola vez al
-    escribir, no en cada busqueda futura. Si no sabes que contexto usar, llama primero
-    a memory_contexts() para ver los disponibles y sus descripciones, y elige el que
-    mejor encaje (o crea uno nuevo con memory_create_context si de verdad no existe
-    ninguno adecuado).
+    `context` and `type` are REQUIRED -- ambiguity is resolved once, at write time,
+    not on every future search. If you don't know which context to use, call
+    memory_contexts() first to see the available ones and their descriptions, and pick the
+    one that fits best (or create a new one with memory_create_context if none of the
+    existing ones truly fit).
 
-    IMPORTANTE: nunca pases secretos reales (contraseñas, API keys, tokens) en
-    `content` -- la API los rechaza automaticamente y te pedira guardar una
-    referencia tipo `secret://entorno/nombre` en su lugar.
+    IMPORTANT: never pass real secrets (passwords, API keys, tokens) in
+    `content` -- the API rejects them automatically and will ask you to save a
+    reference like `secret://environment/name` instead.
 
     Args:
-        content: el texto de la memoria, 1-3 frases con el hecho/evento/decision.
-        context: slug de un contexto existente (obligatorio).
-        type: uno de "semantic", "episodic", "procedural", "decision" (obligatorio).
-        title: titulo corto opcional; si se omite, se deriva del contenido.
-        importance: 0.0-1.0, que tan importante es esta memoria (opcional, default 0.5).
+        content: the memory's text, 1-3 sentences with the fact/event/decision.
+        context: slug of an existing context (required).
+        type: one of "semantic", "episodic", "procedural", "decision" (required).
+        title: optional short title; if omitted, it's derived from the content.
+        importance: 0.0-1.0, how important this memory is (optional, default 0.5).
 
     Returns:
-        dict con la memoria creada (incluye su `id`), o `error` con un mensaje
-        accionable si algo fallo (p.ej. contexto inexistente: lista los contextos
-        disponibles y sugiere crear uno).
+        dict with the memory created (includes its `id`), or `error` with an
+        actionable message if something failed (e.g. nonexistent context: lists the
+        available contexts and suggests creating one).
     """
     if type not in MEMORY_TYPES:
         return {"error": f"type invalido: '{type}'. Debe ser uno de: {', '.join(MEMORY_TYPES)}."}
@@ -326,23 +326,23 @@ def memory_remember(
 
 @mcp.tool()
 def memory_update(memory_id: str, content: str) -> dict[str, Any]:
-    """Actualiza el contenido de una memoria existente cuando un hecho cambio.
+    """Updates the content of an existing memory when a fact changed.
 
-    cerebro-memory nunca edita en el sitio: crea una memoria nueva con el contenido
-    actualizado y marca la anterior como "superseded" (reemplazada), preservando el
-    historial completo. Usala cuando algo que guardaste antes dejo de ser cierto
-    (p.ej. cambio una tarifa, un presupuesto, la version de un sistema) en vez de
-    crear una memoria nueva suelta que competiria con la vieja en las busquedas.
+    cerebro-memory never edits in place: it creates a new memory with the
+    updated content and marks the previous one as "superseded", preserving the
+    complete history. Use it when something you saved before stopped being true
+    (e.g. a rate, a budget, or a system version changed) instead of
+    creating a loose new memory that would compete with the old one in searches.
 
     Args:
-        memory_id: UUID de la memoria activa a reemplazar (el `id` devuelto por
-            memory_search o memory_remember).
-        content: el contenido nuevo y correcto.
+        memory_id: UUID of the active memory to replace (the `id` returned by
+            memory_search or memory_remember).
+        content: the new, correct content.
 
     Returns:
-        dict con la memoria nueva creada (`memory`, con su propio `id`), o `error`
-        si la memoria no existe o ya no esta activa (p.ej. archivada o ya
-        reemplazada previamente).
+        dict with the new memory created (`memory`, with its own `id`), or `error`
+        if the memory doesn't exist or is no longer active (e.g. archived or already
+        superseded previously).
     """
     try:
         memory = _memory.update_memory(memory_id, content)
@@ -362,22 +362,22 @@ def memory_update(memory_id: str, content: str) -> dict[str, Any]:
 
 @mcp.tool()
 def memory_forget(memory_id: str, hard: bool = False) -> dict[str, Any]:
-    """Elimina una memoria: por defecto la archiva (recuperable), opcionalmente la borra en duro.
+    """Deletes a memory: by default archives it (recoverable), optionally hard-deletes it.
 
-    Usala cuando el usuario pida explicitamente olvidar algo, o cuando una memoria
-    quedo obsoleta y ya no debe aparecer en busquedas futuras. Por defecto (`hard=False`)
-    la memoria queda archivada (deja de aparecer en resultados normales, pero no se
-    pierde). Usa `hard=True` solo si el usuario pide un borrado real e irreversible
-    (p.ej. porque se guardo algo sensible por error).
+    Use it when the user explicitly asks to forget something, or when a memory
+    became obsolete and should no longer appear in future searches. By default (`hard=False`)
+    the memory is archived (stops appearing in normal results, but isn't
+    lost). Use `hard=True` only if the user asks for a real, irreversible deletion
+    (e.g. because something sensitive was saved by mistake).
 
     Args:
-        memory_id: UUID de la memoria a olvidar.
-        hard: si True, borra la fila en duro (irreversible). Si False (default),
-            solo la archiva.
+        memory_id: UUID of the memory to forget.
+        hard: if True, hard-deletes the row (irreversible). If False (default),
+            only archives it.
 
     Returns:
-        dict de confirmacion con `id`, `hard` y `status`, o `error` si la memoria
-        no existe.
+        dict with confirmation containing `id`, `hard` and `status`, or `error` if the
+        memory doesn't exist.
     """
     try:
         return _memory.delete_memory(memory_id, hard=hard)
@@ -398,52 +398,52 @@ def memory_link(
     relation: str,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """Crea una relacion explicita y dirigida entre dos memorias existentes (grafo ligero).
+    """Creates an explicit, directed relation between two existing memories (lightweight graph).
 
-    cerebro-memory no es solo una lista de memorias sueltas: `memory_link` deja constancia
-    de COMO se conectan dos hechos/eventos/decisiones que ya guardaste, para que
-    `memory_related` y el bloque `related` de `memory_search` (con `expand=True`)
-    puedan recuperarlas juntas despues.
+    cerebro-memory isn't just a list of loose memories: `memory_link` records
+    HOW two facts/events/decisions you already saved connect to each other, so that
+    `memory_related` and the `related` block of `memory_search` (with `expand=True`)
+    can retrieve them together later.
 
-    Vocabulario de relaciones (`relation`, obligatorio, uno de estos 5 -- no hay
-    texto libre, es a proposito para que el grafo se mantenga consultable):
-      - "relates_to": asociacion generica, sin direccion causal ni temporal fuerte.
-        Usala cuando dos memorias claramente se tocan pero ninguna de las otras
-        cuatro relaciones encaja mejor.
-      - "caused_by": `from_memory_id` fue CAUSADO por `to_memory_id`. El caso tipico:
-        una decision (`from`) enlazada a la razon/evento que la motivo (`to`) --
-        p.ej. "decidimos migrar a Postgres" caused_by "el proveedor de Mongo subio
-        precios".
-      - "part_of": `from_memory_id` es PARTE de `to_memory_id`. El caso tipico: un
-        procedimiento (`from`) enlazado al proyecto al que pertenece (`to`) --
-        p.ej. "como hacer deploy" part_of "proyecto expense-tracker".
-      - "contradicts": `from_memory_id` CONTRADICE a `to_memory_id`. Util cuando
-        detectas dos memorias activas en conflicto que no son una supersedencia clara
-        (si si lo es, usa memory_update en vez de esto -- ver mas abajo).
-      - "follows": `from_memory_id` ocurrio DESPUES de / como CONSECUENCIA de
-        `to_memory_id`, sin que uno haya "causado" estrictamente al otro. El caso
-        tipico: un episodio (`from`) enlazado a su consecuencia posterior (`to`) --
-        p.ej. "se cayo el servidor" follows "se agoto el disco".
+    Relation vocabulary (`relation`, required, one of these 5 -- no
+    free text, this is intentional so the graph stays queryable):
+      - "relates_to": generic association, with no strong causal or temporal direction.
+        Use it when two memories clearly touch each other but none of the other
+        four relations fits better.
+      - "caused_by": `from_memory_id` was CAUSED BY `to_memory_id`. The typical case:
+        a decision (`from`) linked to the reason/event that motivated it (`to`) --
+        e.g. "we decided to migrate to Postgres" caused_by "the Mongo provider raised
+        prices".
+      - "part_of": `from_memory_id` is PART OF `to_memory_id`. The typical case: a
+        procedure (`from`) linked to the project it belongs to (`to`) --
+        e.g. "how to deploy" part_of "expense-tracker project".
+      - "contradicts": `from_memory_id` CONTRADICTS `to_memory_id`. Useful when
+        you detect two active memories in conflict that aren't a clear supersession
+        (if it is, use memory_update instead of this -- see below).
+      - "follows": `from_memory_id` happened AFTER / as a CONSEQUENCE of
+        `to_memory_id`, without one having strictly "caused" the other. The
+        typical case: an episode (`from`) linked to its later consequence (`to`) --
+        e.g. "the server went down" follows "disk space ran out".
 
-    Cuando enlazar (patrones mas comunes): decisiones -> sus causas (`caused_by`),
-    procedimientos -> el proyecto al que pertenecen (`part_of`), episodios -> sus
-    consecuencias (`follows`). No uses esta tool para versionar una memoria que
-    cambio (eso es `memory_update`, que crea una nueva version y marca la anterior
-    como reemplazada) -- `memory_link` es para relaciones entre memorias que siguen
-    siendo independientes y vigentes.
+    When to link (most common patterns): decisions -> their causes (`caused_by`),
+    procedures -> the project they belong to (`part_of`), episodes -> their
+    consequences (`follows`). Don't use this tool to version a memory that
+    changed (that's `memory_update`, which creates a new version and marks the previous one
+    as superseded) -- `memory_link` is for relations between memories that remain
+    independent and current.
 
     Args:
-        from_memory_id: UUID de la memoria de origen de la relacion.
-        to_memory_id: UUID de la memoria de destino. Debe ser distinta de
+        from_memory_id: UUID of the relation's source memory.
+        to_memory_id: UUID of the target memory. Must be different from
             `from_memory_id`.
-        relation: una de "relates_to", "caused_by", "part_of", "contradicts",
-            "follows" (ver arriba).
-        note: comentario opcional explicando la relacion (p.ej. por que se enlazaron).
+        relation: one of "relates_to", "caused_by", "part_of", "contradicts",
+            "follows" (see above).
+        note: optional comment explaining the relation (e.g. why they were linked).
 
     Returns:
-        dict con la arista creada (`edge`, incluye su `id`), o `error` si el
-        vocabulario es invalido, alguna memoria no existe, o la relacion ya existia
-        (mismo par + misma relacion -- no se duplica).
+        dict with the edge created (`edge`, includes its `id`), or `error` if the
+        vocabulary is invalid, either memory doesn't exist, or the relation already existed
+        (same pair + same relation -- it isn't duplicated).
     """
     try:
         edge = _memory.create_edge(from_memory_id, to_memory_id, relation, note=note)
@@ -465,29 +465,29 @@ def memory_link(
 
 @mcp.tool()
 def memory_related(memory_id: str, relation: str | None = None) -> dict[str, Any]:
-    """Lista los vecinos a 1 salto de una memoria: relaciones explicitas + supersedencia.
+    """Lists the 1-hop neighbors of a memory: explicit relations + supersession.
 
-    Devuelve, para `memory_id`, todas las memorias conectadas directamente en
-    cualquier direccion: tanto las aristas creadas con `memory_link` como -- de forma
-    automatica, sin que nadie las haya creado a mano -- la cadena de versiones
-    (`relation == "supersedes"`) si esa memoria fue reemplazada por otra mas nueva o
-    reemplazo a una mas vieja (ver `memory_update`).
+    Returns, for `memory_id`, all memories directly connected in
+    any direction: both the edges created with `memory_link` and -- automatically,
+    without anyone having created them by hand -- the version chain
+    (`relation == "supersedes"`) if that memory was replaced by a newer one or
+    replaced an older one (see `memory_update`).
 
-    Cada entrada trae `relation`, `direction` ("outgoing" si `memory_id` es el origen
-    de esa relacion, "incoming" si es el destino), `virtual` (True solo para las
-    entradas de supersedencia derivadas, que no son una arista real en la base de
-    datos) y `memory` (la memoria vecina completa).
+    Each entry carries `relation`, `direction` ("outgoing" if `memory_id` is the source
+    of that relation, "incoming" if it's the target), `virtual` (True only for the
+    derived supersession entries, which aren't a real edge in the database)
+    and `memory` (the full neighbor memory).
 
     Args:
-        memory_id: UUID de la memoria cuyos vecinos quieres ver.
-        relation: filtra a un solo tipo de relacion -- uno de "relates_to",
-            "caused_by", "part_of", "contradicts", "follows", o "supersedes" (para
-            ver solo la cadena de versiones). Si se omite, devuelve todo.
+        memory_id: UUID of the memory whose neighbors you want to see.
+        relation: filters to a single relation type -- one of "relates_to",
+            "caused_by", "part_of", "contradicts", "follows", or "supersedes" (to
+            see only the version chain). If omitted, returns everything.
 
     Returns:
-        dict con `related`: lista de vecinos (puede estar vacia si la memoria no
-        tiene relaciones), o `error` si la memoria no existe o `relation` no es
-        valido.
+        dict with `related`: list of neighbors (may be empty if the memory has
+        no relations), or `error` if the memory doesn't exist or `relation` isn't
+        valid.
     """
     try:
         data = _memory.get_related(memory_id, relation=relation)
@@ -512,26 +512,26 @@ def memory_timeline(
     to_date: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Devuelve una linea de tiempo de eventos y decisiones, la mas reciente primero.
+    """Returns a timeline of events and decisions, most recent first.
 
-    Util para responder preguntas tipo "¿que paso en <contexto> las ultimas semanas?"
-    o "¿que decisiones se tomaron en el proyecto X en <rango de fechas>?" -- junta
-    memorias de tipo "episodic" (eventos puntuales) y "decision" (decisiones tomadas),
-    ordenadas por su fecha efectiva (`occurred_at` si se especifico al guardarlas, si
-    no `created_at`).
+    Useful for answering questions like "what happened in <context> in the last few
+    weeks?" or "what decisions were made in project X within <date range>?" -- it
+    combines memories of type "episodic" (one-off events) and "decision" (decisions made),
+    ordered by their effective date (`occurred_at` if specified when saving them, otherwise
+    `created_at`).
 
     Args:
-        context: slug de un contexto para acotar la linea de tiempo a el (opcional;
-            si se omite, junta eventos/decisiones de todos los contextos).
-        from_date: fecha/hora ISO 8601 (p.ej. "2026-07-01" o
-            "2026-07-01T00:00:00Z") -- solo eventos con fecha efectiva >= esta.
-        to_date: igual que `from_date` pero como limite superior (<=).
-        limit: maximo de items a devolver (default 50).
+        context: slug of a context to scope the timeline to it (optional;
+            if omitted, combines events/decisions from all contexts).
+        from_date: ISO 8601 date/time (e.g. "2026-07-01" or
+            "2026-07-01T00:00:00Z") -- only events with an effective date >= this one.
+        to_date: same as `from_date` but as an upper bound (<=).
+        limit: maximum number of items to return (default 50).
 
     Returns:
-        dict con `items`: lista de memorias con su `effective_date` (la fecha usada
-        para ordenar), mas reciente primero. `error` si `context` no existe o alguna
-        fecha es invalida.
+        dict with `items`: list of memories with their `effective_date` (the date used
+        for ordering), most recent first. `error` if `context` doesn't exist or a
+        date is invalid.
     """
     try:
         data = _memory.get_timeline(context=context, from_date=from_date, to_date=to_date, limit=limit)
@@ -549,19 +549,18 @@ def memory_timeline(
 
 @mcp.tool()
 def memory_contexts() -> dict[str, Any]:
-    """Lista todos los contextos existentes, con su tipo (`kind`) y descripcion.
+    """Lists all existing contexts, with their type (`kind`) and description.
 
-    Un "contexto" es el espacio de aislamiento de una memoria: un proyecto de
-    software, un cliente, un dominio de vida (salud, finanzas personales,
-    aprendizaje...). Llama esta tool:
-      - antes de memory_remember, si no sabes en que contexto debe ir algo nuevo;
-      - cuando memory_search sin `context` te devuelva resultados de varios
-        contextos mezclados y necesites decidir cual es el correcto;
-      - al empezar a trabajar con un usuario nuevo, para entender como organiza su
-        conocimiento.
+    A "context" is a memory's isolation space: a software project, a client, a life
+    domain (health, personal finances, learning...). Call this tool:
+      - before memory_remember, if you don't know which context something new should go in;
+      - when memory_search without `context` returns results from several
+        contexts mixed together and you need to decide which is the correct one;
+      - when starting to work with a new user, to understand how they organize their
+        knowledge.
 
     Returns:
-        dict con `contexts`: lista de {id, slug, name, kind, description, created_at}.
+        dict with `contexts`: list of {id, slug, name, kind, description, created_at}.
     """
     try:
         contexts = _memory.list_contexts()
@@ -577,24 +576,24 @@ def memory_contexts() -> dict[str, Any]:
 
 @mcp.tool()
 def memory_create_context(slug: str, name: str, kind: str, description: str | None = None) -> dict[str, Any]:
-    """Crea un contexto nuevo (proyecto, cliente o dominio de vida) para organizar memorias.
+    """Creates a new context (project, client, or life domain) to organize memories.
 
-    Necesaria para el "bootstrapping": si estas ayudando a un usuario a empezar a usar
-    cerebro-memory y ninguno de los contextos existentes (revisa con memory_contexts)
-    encaja con lo que quiere guardar, crea uno nuevo antes de llamar a
-    memory_remember. Evita crear contextos redundantes -- revisa primero si ya existe
-    algo equivalente.
+    Needed for "bootstrapping": if you're helping a user start using
+    cerebro-memory and none of the existing contexts (check with memory_contexts)
+    fits what they want to save, create a new one before calling
+    memory_remember. Avoid creating redundant contexts -- check first whether
+    something equivalent already exists.
 
     Args:
-        slug: identificador corto y estable en minusculas con guiones, p.ej.
-            "finanzas-personales" o "cliente-acme". Debe ser unico.
-        name: nombre legible para humanos, p.ej. "Finanzas personales".
-        kind: tipo de contexto, p.ej. "proyecto", "cliente" o "dominio".
-        description: descripcion breve de que tipo de informacion va en este
-            contexto (ayuda a decidir despues donde clasificar cosas nuevas).
+        slug: short, stable identifier in lowercase with hyphens, e.g.
+            "personal-finances" or "client-acme". Must be unique.
+        name: human-readable name, e.g. "Personal finances".
+        kind: type of context, e.g. "project", "client" or "domain".
+        description: brief description of what kind of information goes in this
+            context (helps decide later where to classify new things).
 
     Returns:
-        dict con el contexto creado (`context`), o `error` si el slug ya existe.
+        dict with the context created (`context`), or `error` if the slug already exists.
     """
     try:
         context = _memory.create_context(slug, name, kind, description=description)
@@ -612,18 +611,18 @@ def memory_create_context(slug: str, name: str, kind: str, description: str | No
 
 @mcp.tool()
 def memory_stats() -> dict[str, Any]:
-    """Muestra estadisticas del sistema: memorias, desambiguaciones y preferencias aprendidas.
+    """Shows system statistics: memories, disambiguations, and learned preferences.
 
-    Util para que el usuario vea al Context Engine (Fase 2) "aprender" con el tiempo:
-    cuantas busquedas ambiguas se resolvieron automaticamente vs. cuantas necesitaron
-    que un agente eligiera, y que terminos ya se asociaron a que contextos.
+    Useful so the user can see the Context Engine (Phase 2) "learn" over time:
+    how many ambiguous searches were resolved automatically vs. how many needed
+    an agent to choose, and which terms are already associated with which contexts.
 
     Returns:
-        dict con `stats`: {
+        dict with `stats`: {
           memories_by_context: [{context, status, count}, ...],
           disambiguations: {total, auto, agent, user, local_model, unresolved},
-          preferences_learned: [{context, term, weight}, ...] (top 100 por peso),
-        }, o `error` si algo fallo.
+          preferences_learned: [{context, term, weight}, ...] (top 100 by weight),
+        }, or `error` if something failed.
     """
     try:
         stats = _memory.get_stats()
@@ -644,36 +643,36 @@ def memory_stats() -> dict[str, Any]:
 def docs_create_category(
     slug: str, name: str, description: str | None = None, hidden: bool = False, locked: bool = False
 ) -> dict[str, Any]:
-    """Crea una categoria nueva para organizar documentos Markdown completos.
+    """Creates a new category to organize complete Markdown documents.
 
-    Igual flujo que memory_create_context: cerebro-docs organiza documentos en
-    categorias (tabla formal, no texto libre) para poder redistribuirlas despues sin
-    tocar los documentos que contienen (renombrar una categoria es gratis para sus
-    documentos, ver docs_categories). Necesaria antes de docs_save si ninguna
-    categoria existente encaja.
+    Same flow as memory_create_context: cerebro-docs organizes documents into
+    categories (a formal table, not free text) so they can be redistributed later without
+    touching the documents they contain (renaming a category is free for its
+    documents, see docs_categories). Needed before docs_save if no
+    existing category fits.
 
-    `hidden=True` la excluye de docs_categories()/docs_list()/docs_search() sin
-    filtro explicito -- sigue siendo alcanzable creando/leyendo documentos con su
-    slug exacto. Usa esto para categorias de referencia interna que no deben
-    aparecer en un listado normal (p.ej. prompts de subagente de un flujo). Si
-    ademas pasas `locked=True`, la categoria queda oculta PARA SIEMPRE -- ningun
-    admin va a poder revelarla despues (no hay tool para eso), asi que solo tiene
-    sentido para categorias que por diseno nunca deben ser navegables. `locked=True`
-    sin `hidden=True` es invalido.
+    `hidden=True` excludes it from docs_categories()/docs_list()/docs_search() without
+    an explicit filter -- it's still reachable by creating/reading documents with its
+    exact slug. Use this for internal-reference categories that shouldn't
+    appear in a normal listing (e.g. subagent prompts of a flow). If
+    you also pass `locked=True`, the category stays hidden FOREVER -- no
+    admin will be able to reveal it later (there's no tool for that), so it only makes
+    sense for categories that by design should never be browsable. `locked=True`
+    without `hidden=True` is invalid.
 
     Args:
-        slug: identificador corto y estable en minusculas con guiones, p.ej.
-            "ecosistema" o "runbooks". Debe ser unico.
-        name: nombre legible para humanos, p.ej. "Ecosistema cerebro".
-        description: descripcion breve de que tipo de documentos va en esta
-            categoria (ayuda a decidir despues donde guardar algo nuevo).
-        hidden: si True, no aparece en listados (default False).
-        locked: si True, `hidden` queda fijo para siempre (default False; requiere
+        slug: short, stable identifier in lowercase with hyphens, e.g.
+            "ecosystem" or "runbooks". Must be unique.
+        name: human-readable name, e.g. "cerebro ecosystem".
+        description: brief description of what kind of documents go in this
+            category (helps decide later where to save something new).
+        hidden: if True, doesn't appear in listings (default False).
+        locked: if True, `hidden` stays fixed forever (default False; requires
             `hidden=True`).
 
     Returns:
-        dict con la categoria creada (`category`), o `error` si el slug ya existe o
-        `locked=True` sin `hidden=True`.
+        dict with the category created (`category`), or `error` if the slug already exists or
+        `locked=True` without `hidden=True`.
     """
     try:
         category = _docs.create_category(slug, name, description=description, hidden=hidden, locked=locked)
@@ -693,14 +692,14 @@ def docs_create_category(
 
 @mcp.tool()
 def docs_categories() -> dict[str, Any]:
-    """Lista todas las categorias de documentos existentes, con su descripcion.
+    """Lists all existing document categories, with their description.
 
-    Llama esta tool antes de docs_save si no sabes en que categoria debe ir un
-    documento nuevo, o cuando docs_search/docs_list te devuelvan resultados de varias
-    categorias y necesites decidir cual es la correcta.
+    Call this tool before docs_save if you don't know which category a new
+    document should go in, or when docs_search/docs_list return results from several
+    categories and you need to decide which is the correct one.
 
     Returns:
-        dict con `categories`: lista de {id, slug, name, description, created_at,
+        dict with `categories`: list of {id, slug, name, description, created_at,
         updated_at}.
     """
     try:
@@ -717,33 +716,33 @@ def docs_categories() -> dict[str, Any]:
 
 @mcp.tool()
 def docs_save(title: str, content: str, category: str, slug: str | None = None) -> dict[str, Any]:
-    """Guarda un documento Markdown COMPLETO nuevo (sin destilar ni truncar).
+    """Saves a COMPLETE new Markdown document (not distilled or truncated).
 
-    A diferencia de memory_remember (que guarda hechos/decisiones destilados de 1-3
-    frases), docs_save guarda el documento integro tal cual -- cerebro-docs es un
-    repositorio de documentos, no memoria formal. Usala para guias, definiciones,
-    runbooks, notas largas o cualquier Markdown que el usuario quiera poder recuperar
-    completo despues, en vez de resumido.
+    Unlike memory_remember (which saves distilled facts/decisions in 1-3
+    sentences), docs_save saves the entire document as-is -- cerebro-docs is a
+    document repository, not formal memory. Use it for guides, definitions,
+    runbooks, long notes, or any Markdown the user wants to be able to retrieve
+    in full later, instead of summarized.
 
-    `category` es OBLIGATORIA y debe ser una categoria existente -- revisa con
-    docs_categories() y crea una nueva con docs_create_category si de verdad no
-    existe ninguna adecuada.
+    `category` is REQUIRED and must be an existing category -- check with
+    docs_categories() and create a new one with docs_create_category if none of the
+    existing ones truly fit.
 
-    Colision de slug: si el slug (dado o autogenerado del titulo) ya existe en esa
-    categoria, esta tool falla con un error explicito que apunta al documento
-    existente y sugiere docs_update -- nunca auto-sufija (`-2`, `-3`) ni sobrescribe
-    en silencio.
+    Slug collision: if the slug (given or auto-generated from the title) already exists in that
+    category, this tool fails with an explicit error pointing to the
+    existing document and suggesting docs_update -- it never auto-suffixes (`-2`, `-3`) nor
+    silently overwrites.
 
     Args:
-        title: titulo del documento.
-        content: el Markdown completo, sin truncar.
-        category: slug de una categoria existente (obligatorio).
-        slug: identificador corto opcional para la ruta del documento
-            (`/{category}/{slug}`); si se omite, se autogenera del titulo.
+        title: the document's title.
+        content: the complete Markdown, untruncated.
+        category: slug of an existing category (required).
+        slug: optional short identifier for the document's path
+            (`/{category}/{slug}`); if omitted, it's auto-generated from the title.
 
     Returns:
-        dict con el documento creado (`document`, incluye su `id`), o `error` si la
-        categoria no existe o el slug ya esta en uso en esa categoria.
+        dict with the document created (`document`, includes its `id`), or `error` if the
+        category doesn't exist or the slug is already in use in that category.
     """
     try:
         document = _docs.create_document(title, content, category, slug=slug)
@@ -774,25 +773,25 @@ def docs_save(title: str, content: str, category: str, slug: str | None = None) 
 
 @mcp.tool()
 def docs_get(category: str, slug: str) -> dict[str, Any]:
-    """Lee un documento completo por su ruta exacta `/{category}/{slug}`.
+    """Reads a complete document by its exact path `/{category}/{slug}`.
 
-    Usala cuando ya sabes exactamente que documento quieres (p.ej. porque lo
-    encontraste antes con docs_search/docs_list, o el usuario te dio ambos slugs
-    directamente). Si solo tienes una referencia imprecisa ("el documento del
-    despliegue"), usa docs_search en vez de esta.
+    Use it when you already know exactly which document you want (e.g. because you
+    found it earlier with docs_search/docs_list, or the user gave you both slugs
+    directly). If you only have an imprecise reference ("the deployment
+    document"), use docs_search instead of this one.
 
-    Si la ruta pedida se renombro (el documento o su categoria cambiaron de slug), el
-    resultado igual trae el documento (via redirect interno) pero con un `alert` al
-    inicio pidiendote dejar de usar la ruta vieja y corregirla en cualquier lado donde
-    la tuvieras guardada -- tratalo como instruccion, no solo como aviso informativo.
+    If the requested path was renamed (the document or its category changed slug), the
+    result still brings the document (via internal redirect) but with an `alert` at
+    the start asking you to stop using the old path and correct it wherever
+    you had it saved -- treat it as an instruction, not just an informational notice.
 
     Args:
-        category: slug de la categoria del documento.
-        slug: slug del documento dentro de esa categoria.
+        category: slug of the document's category.
+        slug: slug of the document within that category.
 
     Returns:
-        dict con el documento (`document`, incluye `content` completo), o `error`
-        si no existe ningun documento en esa ruta.
+        dict with the document (`document`, includes complete `content`), or `error`
+        if no document exists at that path.
     """
     try:
         document = _docs.get_document(category, slug)
@@ -807,11 +806,11 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
 
     redirected_from = document.get("redirected_from")
     if redirected_from:
-        # El documento real siempre gana sobre un redirect -- esto solo pasa cuando
-        # '{category}/{slug}' ya no tiene match directo. La alerta va DIRIGIDA AL
-        # MODELO, no solo informativa: debe dejar de usar la ruta vieja de ahora en
-        # adelante y, si la tenia guardada en una memoria o documento, corregirla ahi
-        # tambien -- no solo reportarsela al usuario.
+        # The real document always wins over a redirect -- this only happens when
+        # '{category}/{slug}' no longer has a direct match. The alert is DIRECTED AT
+        # THE MODEL, not just informational: it must stop using the old path from now
+        # on and, if it had it saved in a memory or document, correct it there
+        # too -- not just report it to the user.
         return {
             "alert": (
                 f"AVISO: la ruta '{category}/{slug}' que pediste ya no existe -- este documento se movio a "
@@ -827,23 +826,23 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
 
 @mcp.tool()
 def docs_search(query: str, category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    """Busca documentos por texto (full-text simple, sin embeddings) -- para referencias imprecisas.
+    """Searches documents by text (simple full-text, no embeddings) -- for imprecise references.
 
-    Usala cuando el usuario se refiere a un documento sin dar su ruta exacta (p.ej.
-    "el documento del desarrollo x", "la guia de despliegue") -- busca en titulo Y
-    contenido. Si ya sabes la categoria y el slug exactos, usa docs_get en vez de
-    esta (es mas directo). Nunca incluye documentos archivados -- para esos, usa
+    Use it when the user refers to a document without giving its exact path (e.g.
+    "the document about development x", "the deployment guide") -- it searches in title AND
+    content. If you already know the exact category and slug, use docs_get instead of
+    this one (it's more direct). Never includes archived documents -- for those, use
     docs_list_archived.
 
     Args:
-        query: texto a buscar (full-text sobre titulo + contenido).
-        category: slug de una categoria para acotar la busqueda a ella (opcional).
-        limit: maximo de resultados por pagina (default 20, maximo 100).
-        offset: cuantos resultados saltar, para paginar (default 0).
+        query: text to search for (full-text over title + content).
+        category: slug of a category to scope the search to it (optional).
+        limit: maximum results per page (default 20, maximum 100).
+        offset: how many results to skip, for paging (default 0).
 
     Returns:
-        dict con `documents`: lista de documentos (cada uno con `score` de
-        relevancia), o `error` si algo fallo.
+        dict with `documents`: list of documents (each with a relevance `score`),
+        or `error` if something failed.
     """
     try:
         documents = _docs.list_documents(category=category, q=query, limit=limit, offset=offset)
@@ -861,20 +860,20 @@ def docs_search(query: str, category: str | None = None, limit: int = 20, offset
 
 @mcp.tool()
 def docs_list(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    """Lista documentos, mas recientes primero (sin filtro de texto -- ver docs_search para eso).
+    """Lists documents, most recent first (no text filter -- see docs_search for that).
 
-    Usala para explorar que documentos existen en una categoria, o en todo el
-    repositorio si se omite `category`. Ordenado por `updated_at` descendente. Nunca
-    incluye documentos archivados -- para esos, usa docs_list_archived.
+    Use it to explore what documents exist in a category, or across the whole
+    repository if `category` is omitted. Ordered by `updated_at` descending. Never
+    includes archived documents -- for those, use docs_list_archived.
 
     Args:
-        category: slug de una categoria para acotar el listado a ella (opcional; si
-            se omite, lista de todas las categorias visibles).
-        limit: maximo de resultados por pagina (default 20, maximo 100).
-        offset: cuantos resultados saltar, para paginar (default 0).
+        category: slug of a category to scope the listing to it (optional; if
+            omitted, lists from all visible categories).
+        limit: maximum results per page (default 20, maximum 100).
+        offset: how many results to skip, for paging (default 0).
 
     Returns:
-        dict con `documents`: lista de documentos, o `error` si algo fallo.
+        dict with `documents`: list of documents, or `error` if something failed.
     """
     try:
         documents = _docs.list_documents(category=category, limit=limit, offset=offset)
@@ -892,26 +891,26 @@ def docs_list(category: str | None = None, limit: int = 20, offset: int = 0) -> 
 
 @mcp.tool()
 def docs_update(document_id: str, title: str, content: str, category: str, slug: str | None = None) -> dict[str, Any]:
-    """Reemplazo COMPLETO de un documento existente (incluye poder moverlo de categoria).
+    """COMPLETE replacement of an existing document (including moving it between categories).
 
-    cerebro-docs nunca sobrescribe sin dejar rastro: antes de aplicar el reemplazo,
-    archiva un snapshot del contenido anterior en el historial de versiones (sin
-    endpoint de restore en v1 -- es una red de seguridad contra sobrescritura
-    accidental, no un sistema de versionado navegable). Para editar solo una parte
-    del documento sin reescribirlo entero, usa docs_patch_section en vez de esta.
+    cerebro-docs never overwrites without leaving a trace: before applying the replacement,
+    it archives a snapshot of the previous content in the version history (no
+    restore endpoint in v1 -- it's a safety net against accidental
+    overwrites, not a browsable versioning system). To edit only part
+    of the document without rewriting it entirely, use docs_patch_section instead of this one.
 
     Args:
-        document_id: UUID del documento a reemplazar.
-        title: titulo nuevo (reemplaza el anterior).
-        content: contenido Markdown nuevo COMPLETO (reemplaza el anterior entero).
-        category: slug de la categoria destino -- puede ser distinta de la actual
-            para mover el documento (debe existir).
-        slug: slug nuevo opcional; si se omite, conserva el slug actual del
-            documento (sujeto igual a la unicidad de `(category, slug)`).
+        document_id: UUID of the document to replace.
+        title: new title (replaces the previous one).
+        content: COMPLETE new Markdown content (replaces the entire previous one).
+        category: slug of the destination category -- can be different from the current
+            one to move the document (must exist).
+        slug: optional new slug; if omitted, keeps the document's current
+            slug (still subject to the `(category, slug)` uniqueness constraint).
 
     Returns:
-        dict con el documento actualizado (`document`), o `error` si no existe, la
-        categoria destino no existe, o el nuevo slug ya esta en uso en ella.
+        dict with the updated document (`document`), or `error` if it doesn't exist, the
+        destination category doesn't exist, or the new slug is already in use there.
     """
     try:
         document = _docs.update_document(document_id, title, content, category, slug=slug)
@@ -938,54 +937,54 @@ def docs_patch_section(
     create_if_missing: bool = False,
     new_heading_level: int = 2,
 ) -> dict[str, Any]:
-    """Parche PARCIAL de un documento por seccion (desde un heading hasta el siguiente del mismo nivel o superior).
+    """PARTIAL patch of a document by section (from a heading down to the next one at the same level or higher).
 
-    Usala para editar solo una parte de un documento largo sin tener que releer y
-    reenviar el Markdown completo (eso es docs_update). Una "seccion" es todo lo que
-    va desde una linea de heading (`#`, `##`, ..., `######`) hasta el siguiente
-    heading del MISMO nivel o superior (un `##` cierra en el proximo `##` o `#`, pero
-    nunca en un `###` anidado dentro de el).
+    Use it to edit only part of a long document without having to reread and
+    resend the entire Markdown (that's docs_update). A "section" is everything that
+    goes from a heading line (`#`, `##`, ..., `######`) up to the next
+    heading at the SAME level or higher (a `##` closes at the next `##` or `#`, but
+    never at a `###` nested within it).
 
-    Vocabulario de `operation` (obligatorio, uno de estos 5 -- no hay texto libre):
-      - "replace": sustituye el CUERPO de la seccion (todo lo que sigue a la linea
-        del heading, hasta el siguiente heading de nivel <=) por `body`. La linea del
-        heading no cambia.
-      - "append": agrega `body` al final del cuerpo de la seccion, antes del
-        siguiente heading.
-      - "insert_after": inserta `body` (Markdown crudo, puede traer su propio
-        heading) como bloque hermano justo DESPUES de la seccion completa (heading
-        incluido).
-      - "insert_before": igual que insert_after pero ANTES de la seccion completa.
-      - "delete": elimina la seccion completa (heading incluido). `body` se ignora.
+    `operation` vocabulary (required, one of these 5 -- no free text):
+      - "replace": replaces the BODY of the section (everything that follows the
+        heading line, up to the next heading of level <=) with `body`. The
+        heading line doesn't change.
+      - "append": adds `body` to the end of the section's body, before the
+        next heading.
+      - "insert_after": inserts `body` (raw Markdown, may bring its own
+        heading) as a sibling block right AFTER the complete section (heading
+        included).
+      - "insert_before": same as insert_after but BEFORE the complete section.
+      - "delete": removes the complete section (heading included). `body` is ignored.
 
-    Heading unico-o-error (mismo criterio que la tool Edit con `old_string`): el
-    `heading` debe matchear EXACTO el texto de un heading del documento (sin los
-    `#`). Si aparece MAS DE UNA VEZ en el documento (ambiguo), esta tool SIEMPRE
-    falla -- nunca adivina cual de los duplicados es el objetivo, incluso con
-    `create_if_missing=True`. Si no aparece NINGUNA vez, falla tambien salvo que
-    pases `create_if_missing=True`, en cuyo caso se agrega una seccion nueva al
-    final del documento (nivel `new_heading_level`) con `body` como cuerpo -- excepto
-    para `operation="delete"`, donde no hay nada que crear ni borrar.
+    Unique-heading-or-error (same criterion as the Edit tool with `old_string`): the
+    `heading` must EXACTLY match the text of a heading in the document (without the
+    `#`). If it appears MORE THAN ONCE in the document (ambiguous), this tool ALWAYS
+    fails -- it never guesses which of the duplicates is the target, even with
+    `create_if_missing=True`. If it doesn't appear AT ALL, it also fails unless you
+    pass `create_if_missing=True`, in which case a new section is added at the
+    end of the document (at level `new_heading_level`) with `body` as its content -- except
+    for `operation="delete"`, where there's nothing to create or delete.
 
-    Como docs_update, archiva primero un snapshot del contenido anterior en el
-    historial de versiones antes de aplicar el parche.
+    Like docs_update, it first archives a snapshot of the previous content in the
+    version history before applying the patch.
 
     Args:
-        document_id: UUID del documento a parchear.
-        heading: texto exacto del heading objetivo (sin los `#`).
-        operation: una de "replace", "append", "insert_after", "insert_before",
-            "delete" (ver arriba).
-        body: contenido Markdown a insertar/usar segun `operation` (ignorado en
+        document_id: UUID of the document to patch.
+        heading: exact text of the target heading (without the `#`).
+        operation: one of "replace", "append", "insert_after", "insert_before",
+            "delete" (see above).
+        body: Markdown content to insert/use depending on `operation` (ignored for
             "delete").
-        create_if_missing: si True y el heading no existe, lo crea al final del
-            documento en vez de fallar (default False).
-        new_heading_level: nivel del heading nuevo (1-6) si `create_if_missing` lo
-            crea (default 2, i.e. `##`).
+        create_if_missing: if True and the heading doesn't exist, creates it at the
+            end of the document instead of failing (default False).
+        new_heading_level: level of the new heading (1-6) if `create_if_missing`
+            creates it (default 2, i.e. `##`).
 
     Returns:
-        dict con el documento actualizado (`document`), o `error` si el documento no
-        existe, el heading es ambiguo, no existe y `create_if_missing` es False, o
-        `operation` no es una de las 5 validas.
+        dict with the updated document (`document`), or `error` if the document
+        doesn't exist, the heading is ambiguous, doesn't exist and `create_if_missing` is False, or
+        `operation` isn't one of the 5 valid ones.
     """
     if operation not in SECTION_OPERATIONS:
         return {"error": f"operation invalida: '{operation}'. Debe ser una de: {', '.join(SECTION_OPERATIONS)}."}
@@ -1017,19 +1016,19 @@ def docs_patch_section(
 
 @mcp.tool()
 def docs_delete(document_id: str) -> dict[str, Any]:
-    """Borra un documento (y, en cascada, todo su historial de versiones).
+    """Deletes a document (and, in cascade, its entire version history).
 
-    IRREVERSIBLE -- si lo que el usuario quiere es sacar un documento de circulacion
-    sin perderlo para siempre, usa docs_archive en vez de esta (equivalente a
-    memory_forget: por defecto archiva, no borra). Usa docs_delete solo cuando el
-    usuario pida explicitamente borrar. Si tienes dudas sobre cual de las dos quiere,
-    confirma antes de llamar cualquiera.
+    IRREVERSIBLE -- if what the user wants is to take a document out of circulation
+    without losing it forever, use docs_archive instead of this one (equivalent to
+    memory_forget: archives by default, doesn't delete). Use docs_delete only when the
+    user explicitly asks to delete. If you're unsure which of the two they want,
+    confirm before calling either one.
 
     Args:
-        document_id: UUID del documento a borrar.
+        document_id: UUID of the document to delete.
 
     Returns:
-        dict de confirmacion con `id` y `status`, o `error` si el documento no existe.
+        dict with confirmation containing `id` and `status`, or `error` if the document doesn't exist.
     """
     try:
         return _docs.delete_document(document_id)
@@ -1045,16 +1044,16 @@ def docs_delete(document_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def docs_archive(document_id: str) -> dict[str, Any]:
-    """Archiva un documento (soft-delete): deja de aparecer en docs_list/docs_search,
-    pero sigue accesible por su ruta exacta con docs_get y se puede revertir con
-    docs_unarchive. Equivalente de cerebro-docs a memory_forget -- preferila sobre
-    docs_delete cuando el usuario quiere "quitar de en medio" algo sin perderlo.
+    """Archives a document (soft-delete): it stops appearing in docs_list/docs_search,
+    but remains accessible by its exact path with docs_get and can be reverted with
+    docs_unarchive. cerebro-docs's equivalent of memory_forget -- prefer it over
+    docs_delete when the user wants to "get something out of the way" without losing it.
 
     Args:
-        document_id: UUID del documento a archivar.
+        document_id: UUID of the document to archive.
 
     Returns:
-        dict con el documento actualizado (`document`), o `error` si no existe.
+        dict with the updated document (`document`), or `error` if it doesn't exist.
     """
     try:
         document = _docs.archive_document(document_id)
@@ -1072,13 +1071,13 @@ def docs_archive(document_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def docs_unarchive(document_id: str) -> dict[str, Any]:
-    """Revierte un docs_archive: el documento vuelve a aparecer en docs_list/docs_search.
+    """Reverts a docs_archive: the document appears again in docs_list/docs_search.
 
     Args:
-        document_id: UUID del documento a desarchivar.
+        document_id: UUID of the document to unarchive.
 
     Returns:
-        dict con el documento actualizado (`document`), o `error` si no existe.
+        dict with the updated document (`document`), or `error` if it doesn't exist.
     """
     try:
         document = _docs.unarchive_document(document_id)
@@ -1096,18 +1095,18 @@ def docs_unarchive(document_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def docs_list_archived(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    """Enumera documentos archivados (docs_list/docs_search nunca los muestran).
+    """Lists archived documents (docs_list/docs_search never show them).
 
-    Usala para encontrar algo que se archivo antes, o para decidir si desarchivar
-    (docs_unarchive) o borrar definitivamente (docs_delete) algo viejo.
+    Use it to find something that was archived earlier, or to decide whether to unarchive
+    (docs_unarchive) or permanently delete (docs_delete) something old.
 
     Args:
-        category: slug de una categoria para acotar el listado (opcional).
-        limit: maximo de resultados por pagina (default 20, maximo 100).
-        offset: cuantos resultados saltar, para paginar (default 0).
+        category: slug of a category to scope the listing (optional).
+        limit: maximum results per page (default 20, maximum 100).
+        offset: how many results to skip, for paging (default 0).
 
     Returns:
-        dict con `documents`: lista de documentos archivados, o `error` si algo fallo.
+        dict with `documents`: list of archived documents, or `error` if something failed.
     """
     try:
         documents = _docs.list_archived_documents(category=category, limit=limit, offset=offset)
@@ -1125,19 +1124,19 @@ def docs_list_archived(category: str | None = None, limit: int = 20, offset: int
 
 @mcp.tool()
 def docs_history(document_id: str) -> dict[str, Any]:
-    """Lista el historial de versiones anteriores de un documento (snapshots
-    guardados automaticamente antes de cada docs_update/docs_patch_section).
+    """Lists the history of previous versions of a document (snapshots
+    saved automatically before each docs_update/docs_patch_section).
 
-    Solo lectura -- no hay restore automatico. Para recuperar contenido de una
-    version vieja, cópialo del resultado y guardalo con docs_update.
+    Read-only -- there's no automatic restore. To recover content from an
+    old version, copy it from the result and save it with docs_update.
 
     Args:
-        document_id: UUID del documento.
+        document_id: UUID of the document.
 
     Returns:
-        dict con `versions`: lista ordenada de mas reciente a mas vieja (cada una con
-        `version_number`, `category`, `title`, `content`, `created_at`), o `error` si
-        el documento no existe.
+        dict with `versions`: list ordered from most recent to oldest (each with
+        `version_number`, `category`, `title`, `content`, `created_at`), or `error` if
+        the document doesn't exist.
     """
     try:
         versions = _docs.get_document_versions(document_id)
@@ -1158,23 +1157,23 @@ def docs_history(document_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_create_category(slug: str, code: str, name: str, description: str | None = None) -> dict[str, Any]:
-    """Crea una categoria de flujos nueva (luisjdev-pendientes/cerebro-flows).
+    """Creates a new flow category (luisjdev-pendientes/cerebro-flows).
 
-    Una categoria de cerebro-flows NO es lo mismo que una categoria de cerebro-docs
-    -- son modulos independientes. Aqui una categoria es tambien el prefijo del id
-    correlativo de sus flujos: una categoria con `code="INC"` genera flujos
-    "INC-1", "INC-2", etc. al guardarlos sin `code` explicito.
+    A cerebro-flows category is NOT the same as a cerebro-docs category
+    -- they are independent modules. Here a category is also the prefix of the
+    sequential id of its flows: a category with `code="INC"` generates flows
+    "INC-1", "INC-2", etc. when saving them without an explicit `code`.
 
     Args:
-        slug: identificador corto y estable en minusculas con guiones, p.ej.
-            "incident" o "onboarding". Debe ser unico.
-        code: prefijo corto en mayusculas para los ids de sus flujos, p.ej. "INC".
-            Debe ser unico.
-        name: nombre legible para humanos, p.ej. "Incidencias".
-        description: descripcion breve de que tipo de procesos va en esta categoria.
+        slug: short, stable identifier in lowercase with hyphens, e.g.
+            "incident" or "onboarding". Must be unique.
+        code: short uppercase prefix for its flows' ids, e.g. "INC".
+            Must be unique.
+        name: human-readable name, e.g. "Incidents".
+        description: brief description of what kind of processes go in this category.
 
     Returns:
-        dict con la categoria creada (`category`), o `error` si el slug o el code ya existen.
+        dict with the category created (`category`), or `error` if the slug or the code already exist.
     """
     try:
         category = _flows.create_category(slug, code, name, description=description)
@@ -1192,13 +1191,13 @@ def flow_create_category(slug: str, code: str, name: str, description: str | Non
 
 @mcp.tool()
 def flow_categories() -> dict[str, Any]:
-    """Lista todas las categorias de flujos existentes, con su `code` (prefijo de id).
+    """Lists all existing flow categories, with their `code` (id prefix).
 
-    Llama esta tool antes de flow_save si no sabes en que categoria debe ir un flujo
-    nuevo, o si necesitas el `code` de una categoria para predecir el id que le tocara.
+    Call this tool before flow_save if you don't know which category a new flow
+    should go in, or if you need a category's `code` to predict the id it will get.
 
     Returns:
-        dict con `categories`: lista de {id, slug, code, name, description, created_at, updated_at}.
+        dict with `categories`: list of {id, slug, code, name, description, created_at, updated_at}.
     """
     try:
         categories = _flows.list_categories()
@@ -1214,21 +1213,21 @@ def flow_categories() -> dict[str, Any]:
 
 @mcp.tool()
 def flow_validate(yaml_content: str) -> dict[str, Any]:
-    """Valida un YAML de definicion de flujo SIN guardarlo -- para autoria iterativa.
+    """Validates a flow-definition YAML WITHOUT saving it -- for iterative authoring.
 
-    Usala mientras redactas o editas un flujo, antes de comprometerlo con flow_save/
-    flow_update: corre exactamente la misma validacion que esos dos harian (referencial
-    incluida -- todo `next`/`branches`/`checkpoint.on_reject` debe apuntar a un step
-    real que exista en `procedure`, cada step debe tener exactamente uno de
-    `next`/`branches`/`terminal: true` segun su tipo, etc.) y te devuelve el error
-    puntual (que step, que campo) si algo esta mal, sin tocar la base de datos.
+    Use it while drafting or editing a flow, before committing it with flow_save/
+    flow_update: it runs exactly the same validation those two would (referential
+    included -- every `next`/`branches`/`checkpoint.on_reject` must point to a real
+    step that exists in `procedure`, each step must have exactly one of
+    `next`/`branches`/`terminal: true` depending on its type, etc.) and returns the
+    specific error (which step, which field) if something is wrong, without touching the database.
 
     Args:
-        yaml_content: el YAML completo del flujo a validar.
+        yaml_content: the complete YAML of the flow to validate.
 
     Returns:
-        dict `{"valid": true}` si es valido, o `error` con el detalle puntual del
-        primer problema encontrado.
+        dict `{"valid": true}` if valid, or `error` with the specific detail of the
+        first problem found.
     """
     try:
         _flows.validate_flow(yaml_content)
@@ -1246,21 +1245,21 @@ def flow_validate(yaml_content: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_save(category: str, yaml_content: str, code: str | None = None) -> dict[str, Any]:
-    """Guarda un flujo NUEVO (validado antes de escribir -- mismo chequeo que flow_validate).
+    """Saves a NEW flow (validated before writing -- same check as flow_validate).
 
-    `category` es OBLIGATORIA y debe ser una categoria existente -- revisa con
-    flow_categories() y crea una nueva con flow_create_category si de verdad no
-    existe ninguna adecuada. Si omites `code`, se autogenera como
-    "{codigo-de-categoria}-{siguiente numero}" (p.ej. "INC-23").
+    `category` is REQUIRED and must be an existing category -- check with
+    flow_categories() and create a new one with flow_create_category if none of the
+    existing ones truly fits. If you omit `code`, it's auto-generated as
+    "{category-code}-{next number}" (e.g. "INC-23").
 
     Args:
-        category: slug de una categoria existente (obligatorio).
-        yaml_content: el YAML completo del flujo (ver flow_validate para el schema).
-        code: id correlativo explicito opcional; si se omite, se autogenera.
+        category: slug of an existing category (required).
+        yaml_content: the complete YAML of the flow (see flow_validate for the schema).
+        code: optional explicit sequential id; if omitted, it's auto-generated.
 
     Returns:
-        dict con el flujo creado (`flow`), o `error` si el YAML es invalido, la
-        categoria no existe, o el code ya esta en uso.
+        dict with the flow created (`flow`), or `error` if the YAML is invalid, the
+        category doesn't exist, or the code is already in use.
     """
     try:
         flow = _flows.create_flow(category, yaml_content, code=code)
@@ -1290,16 +1289,16 @@ def flow_save(category: str, yaml_content: str, code: str | None = None) -> dict
 
 @mcp.tool()
 def flow_get(code: str) -> dict[str, Any]:
-    """Lee la definicion completa (YAML incluido) de un flujo por su id correlativo.
+    """Reads the complete definition (YAML included) of a flow by its sequential id.
 
-    NO uses esto para EJECUTAR un flujo (eso es flow_start/flow_next, que revelan un
-    paso a la vez) -- es para inspeccionar o editar una definicion existente.
+    Do NOT use this to EXECUTE a flow (that's flow_start/flow_next, which reveal one
+    step at a time) -- it's for inspecting or editing an existing definition.
 
     Args:
-        code: id correlativo del flujo, p.ej. "INC-22".
+        code: sequential id of the flow, e.g. "INC-22".
 
     Returns:
-        dict con el flujo (`flow`, incluye `yaml_content` completo), o `error` si no existe.
+        dict with the flow (`flow`, includes the complete `yaml_content`), or `error` if it doesn't exist.
     """
     try:
         flow = _flows.get_flow(code)
@@ -1317,15 +1316,15 @@ def flow_get(code: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_list(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
-    """Lista definiciones de flujo, mas recientes primero.
+    """Lists flow definitions, most recent first.
 
     Args:
-        category: slug de una categoria para acotar el listado (opcional).
-        limit: maximo de resultados por pagina (default 20, maximo 100).
-        offset: cuantos resultados saltar, para paginar (default 0).
+        category: slug of a category to scope the listing (optional).
+        limit: maximum results per page (default 20, maximum 100).
+        offset: how many results to skip, for paging (default 0).
 
     Returns:
-        dict con `flows`: lista de flujos, o `error` si algo fallo.
+        dict with `flows`: list of flows, or `error` if something failed.
     """
     try:
         flows = _flows.list_flows(category=category, limit=limit, offset=offset)
@@ -1343,17 +1342,17 @@ def flow_list(category: str | None = None, limit: int = 20, offset: int = 0) -> 
 
 @mcp.tool()
 def flow_update(code: str, yaml_content: str) -> dict[str, Any]:
-    """Reemplaza el YAML de un flujo existente, creando una version nueva (nunca
-    sobrescribe en silencio -- la version anterior queda snapshoteada). Una ejecucion
-    ya en curso (`flow_start` previo) sigue la version con la que arranco, asi que
-    editar un flujo nunca cambia el comportamiento de un run que ya esta corriendo.
+    """Replaces the YAML of an existing flow, creating a new version (never
+    silently overwrites -- the previous version is snapshotted). A run
+    already in progress (previous `flow_start`) follows the version it started with, so
+    editing a flow never changes the behavior of a run that's already running.
 
     Args:
-        code: id correlativo del flujo a actualizar.
-        yaml_content: el YAML completo nuevo (reemplaza el anterior entero).
+        code: sequential id of the flow to update.
+        yaml_content: the complete new YAML (replaces the entire previous one).
 
     Returns:
-        dict con el flujo actualizado (`flow`), o `error` si no existe o el YAML es invalido.
+        dict with the updated flow (`flow`), or `error` if it doesn't exist or the YAML is invalid.
     """
     try:
         flow = _flows.update_flow(code, yaml_content)
@@ -1373,14 +1372,14 @@ def flow_update(code: str, yaml_content: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_delete(code: str) -> dict[str, Any]:
-    """Borra una definicion de flujo (y, en cascada, su historial de versiones y sus
-    ejecuciones registradas). Irreversible -- confirma con el usuario si hay dudas.
+    """Deletes a flow definition (and, in cascade, its version history and its
+    recorded runs). Irreversible -- confirm with the user if in doubt.
 
     Args:
-        code: id correlativo del flujo a borrar.
+        code: sequential id of the flow to delete.
 
     Returns:
-        dict de confirmacion, o `error` si no existe.
+        dict with confirmation, or `error` if it doesn't exist.
     """
     try:
         return _flows.delete_flow(code)
@@ -1396,33 +1395,33 @@ def flow_delete(code: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_start(code: str) -> dict[str, Any]:
-    """Arranca una ejecucion nueva de un flujo -- el PRIMER paso del protocolo de
-    ejecucion (luisjdev-pendientes/cerebro-flows SS3). NUNCA leas la definicion
-    completa con flow_get para "seguirla" a mano -- el servidor revela un paso a la
-    vez, y eso es intencional: no puedes saltarte un checkpoint que todavia no has
-    visto.
+    """Starts a new execution of a flow -- the FIRST step of the execution
+    protocol (luisjdev-pendientes/cerebro-flows SS3). NEVER read the complete
+    definition with flow_get to "follow" it by hand -- the server reveals one step at a
+    time, and that's intentional: you cannot skip a checkpoint you haven't
+    seen yet.
 
-    Protocolo completo:
-      1. flow_start(code) -> {run_id, status, step}. Guarda `run_id`, lo necesitas en
-         TODAS las llamadas siguientes.
-      2. El primer `step` casi siempre es sintetico (`id: "__prerequisites__"`) con
-         `tools_required`: confirma que tienes esas tools (intenta ToolSearch si
-         alguna esta diferida) antes de seguir. Si de verdad falta alguna, avisa al
-         usuario y NO continues.
-      3. Llama flow_next(run_id) en loop para avanzar. Si el `step` que te devuelve es
-         `type: "decision"`, tu PROXIMA llamada a flow_next debe incluir `decision`
-         con una de las claves de `branches` (el servidor no infiere la condicion,
-         tu la reportas).
-      4. Si un `step` trae `checkpoint`, flow_next se bloquea hasta que llames
-         flow_approve_checkpoint o flow_reject_checkpoint.
-      5. `status: "completed"` (con `step: null`) marca el fin exitoso. No hay que
-         reconocer ningun texto libre tipo "fin del flujo".
+    Full protocol:
+      1. flow_start(code) -> {run_id, status, step}. Save `run_id`, you need it in
+         ALL the following calls.
+      2. The first `step` is almost always synthetic (`id: "__prerequisites__"`) with
+         `tools_required`: confirm you have those tools (try ToolSearch if
+         any is deferred) before continuing. If one is genuinely missing, tell the
+         user and do NOT continue.
+      3. Call flow_next(run_id) in a loop to advance. If the `step` it returns is
+         `type: "decision"`, your NEXT call to flow_next must include `decision`
+         with one of the keys from `branches` (the server doesn't infer the condition,
+         you report it).
+      4. If a `step` carries a `checkpoint`, flow_next blocks until you call
+         flow_approve_checkpoint or flow_reject_checkpoint.
+      5. `status: "completed"` (with `step: null`) marks a successful end. There's no
+         need to recognize any free-text like "end of flow".
 
     Args:
-        code: id correlativo del flujo a ejecutar, p.ej. "INC-22".
+        code: sequential id of the flow to run, e.g. "INC-22".
 
     Returns:
-        dict con `run_id`, `status` y `step` (el primer paso), o `error` si el flujo no existe.
+        dict with `run_id`, `status` and `step` (the first step), or `error` if the flow doesn't exist.
     """
     try:
         return _flows.start_flow(code)
@@ -1438,19 +1437,19 @@ def flow_start(code: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_next(run_id: str, decision: str | None = None) -> dict[str, Any]:
-    """Avanza una ejecucion al siguiente paso (ver el protocolo completo en flow_start).
+    """Advances a run to the next step (see the full protocol in flow_start).
 
-    Si el paso ACTUAL (el que ya viste) es `type: "decision"`, pasa `decision` con
-    una de sus `branches`. Si el paso actual tiene un `checkpoint` sin resolver, esta
-    tool falla (409) hasta que llames flow_approve_checkpoint/flow_reject_checkpoint.
+    If the CURRENT step (the one you already saw) is `type: "decision"`, pass `decision` with
+    one of its `branches`. If the current step has an unresolved `checkpoint`, this
+    tool fails (409) until you call flow_approve_checkpoint/flow_reject_checkpoint.
 
     Args:
-        run_id: el run_id devuelto por flow_start.
-        decision: la rama tomada, solo si el paso actual es una decision (ver arriba).
+        run_id: the run_id returned by flow_start.
+        decision: the branch taken, only if the current step is a decision (see above).
 
     Returns:
-        dict con `status` (`in_progress`|`completed`) y `step` (el siguiente paso, o
-        `null` si `completed`), o `error`.
+        dict with `status` (`in_progress`|`completed`) and `step` (the next step, or
+        `null` if `completed`), or `error`.
     """
     try:
         return _flows.next_step(run_id, decision=decision)
@@ -1468,19 +1467,19 @@ def flow_next(run_id: str, decision: str | None = None) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_approve_checkpoint(run_id: str) -> dict[str, Any]:
-    """Aprueba el checkpoint del paso actual -- desbloquea el siguiente flow_next.
+    """Approves the checkpoint of the current step -- unblocks the next flow_next.
 
-    Llamada DELIBERADA y separada de flow_next a proposito (ecosistema-cerebro.md,
-    mismo criterio que memory_forget/docs_archive): aprobar un checkpoint es la
-    accion de mayor consecuencia de un flujo, nunca un parametro que se pueda pasar
-    "por costumbre". Si tienes dudas sobre si el usuario aprobaria este paso,
-    confirma con el ANTES de llamar esta tool.
+    A DELIBERATE call, kept separate from flow_next on purpose (ecosistema-cerebro.md,
+    same criterion as memory_forget/docs_archive): approving a checkpoint is the
+    highest-consequence action in a flow, never a parameter that can be passed
+    "out of habit". If you're unsure whether the user would approve this step,
+    confirm with them BEFORE calling this tool.
 
     Args:
-        run_id: el run_id de la ejecucion.
+        run_id: the run_id of the execution.
 
     Returns:
-        dict con el estado actualizado, o `error` si el paso actual no tiene checkpoint.
+        dict with the updated status, or `error` if the current step has no checkpoint.
     """
     try:
         return _flows.approve_checkpoint(run_id)
@@ -1498,16 +1497,16 @@ def flow_approve_checkpoint(run_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_reject_checkpoint(run_id: str, reason: str) -> dict[str, Any]:
-    """Rechaza el checkpoint del paso actual -- el flujo salta al step de
-    `checkpoint.on_reject` definido en el YAML (p.ej. de vuelta a revisar o rehacer
-    un paso anterior), no simplemente se detiene.
+    """Rejects the checkpoint of the current step -- the flow jumps to the step
+    defined in `checkpoint.on_reject` in the YAML (e.g. back to review or redo
+    a previous step), it doesn't just stop.
 
     Args:
-        run_id: el run_id de la ejecucion.
-        reason: motivo del rechazo (queda en el historial de auditoria del run).
+        run_id: the run_id of the execution.
+        reason: reason for the rejection (stays in the run's audit history).
 
     Returns:
-        dict con el nuevo paso actual (el destino de `on_reject`), o `error`.
+        dict with the new current step (the `on_reject` destination), or `error`.
     """
     try:
         return _flows.reject_checkpoint(run_id, reason)
@@ -1525,18 +1524,18 @@ def flow_reject_checkpoint(run_id: str, reason: str) -> dict[str, Any]:
 
 @mcp.tool()
 def flow_abort(run_id: str, reason: str | None = None) -> dict[str, Any]:
-    """Aborta una ejecucion en curso -- la marca como `aborted` (irreversible, a
-    diferencia de un checkpoint rechazado, que reencamina el flujo en vez de
-    terminarlo). Usala cuando el usuario decide explicitamente no continuar con un
-    proceso que ya empezo.
+    """Aborts an in-progress run -- marks it as `aborted` (irreversible, unlike
+    a rejected checkpoint, which reroutes the flow instead of
+    ending it). Use it when the user explicitly decides not to continue with a
+    process that already started.
 
     Args:
-        run_id: el run_id de la ejecucion a abortar.
-        reason: motivo opcional (queda en el historial de auditoria del run).
+        run_id: the run_id of the execution to abort.
+        reason: optional reason (stays in the run's audit history).
 
     Returns:
-        dict de confirmacion con `status: "aborted"`, o `error` si el run no existe o
-        ya estaba terminado (`completed`/`aborted`).
+        dict with confirmation containing `status: "aborted"`, or `error` if the run doesn't exist or
+        was already terminated (`completed`/`aborted`).
     """
     try:
         return _flows.abort_run(run_id, reason=reason)

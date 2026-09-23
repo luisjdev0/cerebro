@@ -1,18 +1,18 @@
--- cerebro-flows v1 - schema inicial (luisjdev-pendientes/cerebro-flows).
+-- cerebro-flows v1 - initial schema (luisjdev-pendientes/cerebro-flows).
 --
--- Todo vive en el schema `cerebro_flows` (nunca en `public`, mismo criterio que
--- cerebro_docs/cerebro_memory: modulos hermanos en la misma instancia Postgres,
--- nunca acceso cruzado de esquemas). El runner (db.py) ya creo el schema y su propia
--- `schema_migrations` calificada ANTES de correr este archivo (mismo patron que
--- cerebro_docs/db.py).
+-- Everything lives in the `cerebro_flows` schema (never in `public`, the same
+-- criterion as cerebro_docs/cerebro_memory: sibling modules in the same Postgres
+-- instance, never cross-schema access). The runner (db.py) already created the
+-- schema and its own qualified `schema_migrations` table BEFORE running this file
+-- (same pattern as cerebro_docs/db.py).
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid() (idempotente si otro
-                                           -- modulo ya la instalo en `public`)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_uuid() (idempotent if another
+                                           -- module already installed it in `public`)
 
--- Categorias: namespace de un flujo Y prefijo de su id correlativo (`code`, p.ej.
--- "INC" para la categoria "incident" -> "INC-22"). NO es la tabla `categories` de
--- cerebro-docs -- cerebro-flows es un modulo independiente a proposito (SS1 del
--- documento de diseno), sin FK ni join entre schemas.
+-- Categories: namespace for a flow AND the prefix of its sequential id (`code`,
+-- e.g. "INC" for category "incident" -> "INC-22"). This is NOT the `categories`
+-- table from cerebro-docs -- cerebro-flows is intentionally an independent module
+-- (SS1 of the design document), with no FK or join across schemas.
 CREATE TABLE flow_categories (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug        TEXT UNIQUE NOT NULL,
@@ -23,11 +23,12 @@ CREATE TABLE flow_categories (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Definiciones de flujo. `code` es el id correlativo humano ("INC-22"), autogenerado
--- por categoria al guardar (SS6) -- `id` (UUID) es el identificador interno real,
--- para que renombrar/mover nunca rompa FKs (mismo principio que documents.id en
--- cerebro-docs). El YAML en si NUNCA vive aqui -- vive versionado en
--- flow_definition_versions, esta tabla solo apunta a la version vigente.
+-- Flow definitions. `code` is the human-readable sequential id ("INC-22"),
+-- auto-generated per category on save (SS6) -- `id` (UUID) is the real internal
+-- identifier, so that renaming/moving never breaks FKs (same principle as
+-- documents.id in cerebro-docs). The YAML itself NEVER lives here -- it lives
+-- versioned in flow_definition_versions, this table only points to the current
+-- version.
 CREATE TABLE flow_definitions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category_id     UUID NOT NULL REFERENCES flow_categories(id) ON DELETE CASCADE,
@@ -41,9 +42,10 @@ CREATE TABLE flow_definitions (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Snapshot completo del YAML en cada version -- mismo patron que document_versions
--- de cerebro-docs. Un flow_run queda anclado a definition_version (ver abajo), asi
--- que editar la definicion nunca cambia el comportamiento de una ejecucion en curso.
+-- A complete snapshot of the YAML on every version -- same pattern as
+-- document_versions in cerebro-docs. A flow_run stays anchored to
+-- definition_version (see below), so editing the definition never changes the
+-- behavior of a run already in progress.
 CREATE TABLE flow_definition_versions (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     definition_id  UUID NOT NULL REFERENCES flow_definitions(id) ON DELETE CASCADE,
@@ -56,9 +58,9 @@ CREATE TABLE flow_definition_versions (
 CREATE INDEX flow_definition_versions_definition_id_idx ON flow_definition_versions (definition_id);
 CREATE INDEX flow_definitions_category_id_idx ON flow_definitions (category_id);
 
--- Cabecera de una ejecucion. El puntero MUTABLE (current_step_id, etc.) vive en
--- Redis, no aqui (SS5 del documento de diseno) -- esta fila es solo el ancla
--- inmutable: que definicion/version arranco, y como termino.
+-- Header of an execution. The MUTABLE pointer (current_step_id, etc.) lives in
+-- Redis, not here (SS5 of the design document) -- this row is only the immutable
+-- anchor: which definition/version it started with, and how it ended.
 CREATE TABLE flow_runs (
     run_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     definition_id      UUID NOT NULL REFERENCES flow_definitions(id),
@@ -69,9 +71,9 @@ CREATE TABLE flow_runs (
     completed_at       TIMESTAMPTZ
 );
 
--- Append-only, una fila por transicion real -- escrita EN EL MOMENTO en que ocurre
--- (no solo al finalizar), para que el rastro de auditoria sobreviva aunque el run se
--- abandone y expire por TTL en Redis (SS5 del documento de diseno).
+-- Append-only, one row per real transition -- written AT THE MOMENT it happens
+-- (not only at the end), so that the audit trail survives even if the run is
+-- abandoned and its Redis TTL expires (SS5 of the design document).
 CREATE TABLE flow_run_events (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     run_id     UUID NOT NULL REFERENCES flow_runs(run_id) ON DELETE CASCADE,
@@ -84,14 +86,15 @@ CREATE TABLE flow_run_events (
 
 CREATE INDEX flow_run_events_run_id_idx ON flow_run_events (run_id, created_at);
 
--- Tokens con nombre y scopes -- espejo exacto de cerebro_docs/db/migrations/001_init.sql
--- (api_tokens), con `allowed_categories` en vez de contexts/categorias de otro modulo.
+-- Named tokens with scopes -- an exact mirror of
+-- cerebro_docs/db/migrations/001_init.sql (api_tokens), with `allowed_categories`
+-- instead of another module's contexts/categories.
 CREATE TABLE api_tokens (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash         TEXT UNIQUE NOT NULL,
     name               TEXT NOT NULL,
     scopes             TEXT[] NOT NULL CHECK (scopes <@ ARRAY['read', 'write', 'admin']::text[] AND array_length(scopes, 1) > 0),
-    allowed_categories TEXT[],                 -- NULL = todas las categorias
+    allowed_categories TEXT[],                 -- NULL = all categories
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at         TIMESTAMPTZ
 );

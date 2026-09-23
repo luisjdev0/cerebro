@@ -1,9 +1,9 @@
 """Settings loaded from the environment (and .env for local dev).
 
-Espejo minimo de cerebro_docs.config: mismo DATABASE_URL por defecto (misma
-instancia Postgres, schema propio `cerebro_flows`), mas `redis_url` y
-`flow_run_ttl_hours` (luisjdev-pendientes/cerebro-flows SS5 - TTL deslizante del
-puntero de ejecucion en Redis).
+A minimal mirror of cerebro_docs.config: the same default DATABASE_URL (same
+Postgres instance, its own `cerebro_flows` schema), plus `redis_url` and
+`flow_run_ttl_hours` (luisjdev-pendientes/cerebro-flows SS5 - sliding TTL of the
+execution pointer in Redis).
 """
 
 from functools import lru_cache

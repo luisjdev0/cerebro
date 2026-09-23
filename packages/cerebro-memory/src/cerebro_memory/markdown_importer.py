@@ -1,27 +1,28 @@
-"""Parsing puro para el importador de Markdown (Fase 5, conector 1, plan_v2.md SS8).
+"""Pure parsing for the Markdown importer (Phase 5, connector 1, plan_v2.md SS8).
 
-Primer conector de Fase 5 a propósito: importar `MEMORY.md`/`CLAUDE.md`/notas sueltas
-ya existentes es lo que resuelve la migración desde el statu quo del usuario (mismo
-argumento que plan_v2.md SS8/SS11 usan para elegirlo como conector #1).
+Deliberately Phase 5's first connector: importing existing `MEMORY.md`/`CLAUDE.md`/
+loose notes is what solves migration from the user's status quo (the same argument
+plan_v2.md SS8/SS11 uses to pick it as connector #1).
 
-Todo lo de este módulo es parsing puro (solo lee archivos del filesystem, no habla con
-la API ni con Postgres) para que sea testeable sin nada más que fixtures en disco - ver
-tests/test_markdown_importer.py. La orquestación (dedup por búsqueda, POST /memories,
-manejo de 422 por credenciales, reporte final) vive en `cerebro_memory.cli`.
+Everything in this module is pure parsing (it only reads files from the filesystem, it
+does not talk to the API or to Postgres) so that it is testable with nothing more than
+fixtures on disk - see tests/test_markdown_importer.py. Orchestration (dedup via
+search, POST /memories, handling 422s for credentials, final report) lives in
+`cerebro_memory.cli`.
 
-Tres formatos reconocidos, en este orden de preferencia (`parse_markdown_file`):
+Three recognized formats, in this order of preference (`parse_markdown_file`):
 
-    1. Frontmatter YAML estilo memoria de Claude Code (`name`, `description`,
-       `metadata.type`) -> una sola memoria por archivo.
-    2. Índice `MEMORY.md` (líneas `- [título](archivo.md) — hook`) -> sigue los links
-       si los archivos existen (recursivamente, vía parse_markdown_file); si no,
-       cada bullet se vuelve su propia memoria pequeña.
-    3. Markdown genérico -> se divide por headings de nivel 1-2; cada sección con >= 2
-       líneas de contenido real es una memoria, las más pequeñas se agrupan con la
-       anterior.
+    1. Claude Code memory-style YAML frontmatter (`name`, `description`,
+       `metadata.type`) -> a single memory per file.
+    2. `MEMORY.md` index (lines `- [title](file.md) — hook`) -> follows the links
+       if the files exist (recursively, via parse_markdown_file); if not,
+       each bullet becomes its own small memory.
+    3. Generic Markdown -> split by level 1-2 headings; each section with >= 2
+       lines of real content is a memory, smaller ones are merged with the
+       previous one.
 
-En los tres casos, bloques de código de más de 30 líneas se truncan a
-"[código truncado]" antes de cualquier otro procesamiento.
+In all three cases, code blocks longer than 30 lines are truncated to
+"[código truncado]" before any other processing.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?\r?\n)---[ \t]*\r?\n?(.*)\Z", re.DOTALL)
 
-# `- [título](archivo.md) — hook` (el guion largo/corto del hook es opcional).
+# `- [title](file.md) — hook` (the hook's em/en dash is optional).
 INDEX_LINE_RE = re.compile(
     r"^-\s*\[(?P<title>[^\]]+)\]\((?P<link>[^)]+)\)(?:\s*[—–-]\s*(?P<hook>.*))?\s*$"
 )
@@ -66,8 +67,8 @@ class ParsedMemory:
 
 
 def truncate_large_code_blocks(text: str, max_lines: int = CODE_BLOCK_MAX_LINES) -> str:
-    """Reemplaza el contenido interno de cualquier bloque ``` ``` de más de
-    `max_lines` líneas por "[código truncado]", conservando las vallas."""
+    """Replaces the inner content of any ``` ``` block longer than
+    `max_lines` lines with "[código truncado]", keeping the fences."""
 
     def _replace(m: re.Match[str]) -> str:
         block = m.group(0)
@@ -75,7 +76,7 @@ def truncate_large_code_blocks(text: str, max_lines: int = CODE_BLOCK_MAX_LINES)
         inner_lines = inner.splitlines()
         if len(inner_lines) <= max_lines:
             return block
-        fence_line = block.splitlines()[0]  # p.ej. "```python"
+        fence_line = block.splitlines()[0]  # e.g. "```python"
         return f"{fence_line}\n[código truncado]\n```"
 
     return CODE_BLOCK_RE.sub(_replace, text)
@@ -85,9 +86,9 @@ def truncate_large_code_blocks(text: str, max_lines: int = CODE_BLOCK_MAX_LINES)
 
 
 def parse_frontmatter_file(path: Path, text: str) -> list[ParsedMemory] | None:
-    """Frontmatter YAML estilo memoria de Claude Code. Devuelve None (no aplica, que
-    el llamador intente el siguiente formato) si no hay frontmatter parseable o si no
-    tiene la forma esperada (falta `name`)."""
+    """Claude Code memory-style YAML frontmatter. Returns None (not applicable, the
+    caller should try the next format) if there is no parseable frontmatter or if it
+    does not have the expected shape (missing `name`)."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         return None
@@ -124,8 +125,8 @@ def parse_frontmatter_file(path: Path, text: str) -> list[ParsedMemory] | None:
 
 
 def is_memory_index(path: Path, text: str) -> bool:
-    """Heurística: se llama MEMORY.md (sin distinguir mayúsculas) Y contiene al menos
-    una línea `- [título](archivo)`."""
+    """Heuristic: named MEMORY.md (case-insensitive) AND contains at least
+    one `- [title](file)` line."""
     if path.name.lower() != "memory.md":
         return False
     return any(INDEX_LINE_RE.match(line.strip()) for line in text.splitlines())
@@ -153,8 +154,8 @@ def parse_memory_index(path: Path, text: str) -> list[ParsedMemory]:
                 memories.extend(sub_memories)
                 continue
 
-        # No existe el archivo (o quedó vacío tras parsear): el bullet mismo se
-        # vuelve una memoria pequeña.
+        # The file doesn't exist (or came out empty after parsing): the bullet itself
+        # becomes a small memory.
         content = hook or title
         memories.append(
             ParsedMemory(title=title, content=content, type="semantic", source_path=str(path))
@@ -200,8 +201,8 @@ def parse_generic_markdown(path: Path, text: str) -> list[ParsedMemory]:
             if memories:
                 memories[-1].content = (memories[-1].content + "\n\n" + content).strip()
             else:
-                # nada anterior a lo que fusionar (primera seccion del archivo) -
-                # se conserva como su propia memoria pequeña.
+                # nothing prior to merge into (first section of the file) -
+                # it is kept as its own small memory.
                 memories.append(
                     ParsedMemory(title=title, content=content, type="semantic", source_path=str(path))
                 )
@@ -213,8 +214,8 @@ def parse_generic_markdown(path: Path, text: str) -> list[ParsedMemory]:
 
 
 def parse_markdown_file(path: Path) -> list[ParsedMemory]:
-    """Punto de entrada: intenta frontmatter -> índice MEMORY.md -> genérico, en ese
-    orden. Lee el archivo una sola vez."""
+    """Entry point: tries frontmatter -> MEMORY.md index -> generic, in that
+    order. Reads the file only once."""
     text = path.read_text(encoding="utf-8")
 
     fm = parse_frontmatter_file(path, text)
@@ -228,8 +229,8 @@ def parse_markdown_file(path: Path) -> list[ParsedMemory]:
 
 
 def iter_markdown_files(root: Path) -> list[Path]:
-    """`root` es un archivo .md -> [root]. `root` es un directorio -> todos los *.md
-    recursivamente, orden estable (por ruta)."""
+    """`root` is a .md file -> [root]. `root` is a directory -> all *.md files
+    recursively, stable order (by path)."""
     if root.is_file():
         return [root]
     return sorted(root.rglob("*.md"))

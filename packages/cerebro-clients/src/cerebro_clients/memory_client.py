@@ -1,12 +1,12 @@
-"""`MemoryClient`: wrapper 1:1 sobre la API HTTP de cerebro-memory.
+"""`MemoryClient`: 1:1 wrapper over the cerebro-memory HTTP API.
 
-Extraido de las llamadas httpx que antes vivian repartidas entre
-`cerebro_memory.mcp_server` y `cerebro_memory.cli` -- sin ninguna logica de negocio
-propia (ni validacion de `type`, ni el aprendizaje de desambiguacion "ultima
-ambigua -> siguiente resolucion", ni el formateo de mensajes para un LLM: todo eso es
-presentacion y vive en `cerebro-mcp`/`cerebro-cli`). Cada metodo hace una request y
-devuelve el JSON ya decodificado (`response.json()`), o deja propagar
-`CerebroAPIError`/`CerebroConnectionError` (ver `base.py`).
+Extracted from the httpx calls that used to be scattered between
+`cerebro_memory.mcp_server` and `cerebro_memory.cli` -- with no business logic
+of its own (no `type` validation, no disambiguation learning "last
+ambiguous -> next resolution", no formatting of messages for an LLM: all of that is
+presentation and lives in `cerebro-mcp`/`cerebro-cli`). Each method makes a request and
+returns the already-decoded JSON (`response.json()`), or lets
+`CerebroAPIError`/`CerebroConnectionError` propagate (see `base.py`).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class MemoryClient(BaseClient):
         *,
         context: str | None = None,
         scope: str | None = None,
-        type: str | None = None,  # noqa: A002 - alineado con la API
+        type: str | None = None,  # noqa: A002 - aligned with the API
         limit: int = 5,
         include_superseded: bool = False,
         expand: bool = False,
@@ -109,7 +109,7 @@ class MemoryClient(BaseClient):
             params["resolved_only"] = True
         return self._request("GET", "/disambiguations/export", params=params).json()
 
-    # --------------------------------------------------------------------- grafo (Fase 3)
+    # --------------------------------------------------------------------- graph (Phase 3)
 
     def create_edge(
         self, from_memory_id: str, to_memory_id: str, relation: str, *, note: str | None = None
