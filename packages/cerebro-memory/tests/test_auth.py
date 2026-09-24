@@ -202,7 +202,7 @@ async def _do_set_group_scopes(
         """,
         group_id,
         allowed_modules,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
 
 
@@ -231,7 +231,7 @@ async def _do_create_token(
         scopes,
         access_level,
         allowed_modules,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
     return plaintext
 
@@ -360,7 +360,7 @@ class TestModuleGate:
                 """
                 INSERT INTO cerebro_auth.api_tokens
                     (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, revoked_at)
-                VALUES ($1, $2, $3, NULL, $4, 'user', $5, NULL, now())
+                VALUES ($1, $2, $3, NULL, $4, 'user', $5, '{}', now())
                 """,
                 uuid.uuid4(),
                 hash_token(plaintext),

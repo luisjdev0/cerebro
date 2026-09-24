@@ -192,7 +192,7 @@ async def _insert_group(
         "INSERT INTO cerebro_auth.group_scopes (group_id, allowed_modules, module_scopes) VALUES ($1, $2, $3::jsonb)",
         group_id,
         allowed_modules,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
     return group_id
 
@@ -224,7 +224,7 @@ async def _insert_token(
         scopes,
         access_level,
         allowed_modules,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
     return plaintext
 

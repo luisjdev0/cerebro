@@ -73,7 +73,7 @@ async def set_group_scopes(
         """,
         group_id,
         list(allowed_modules) if allowed_modules is not None else None,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
 
 
@@ -102,6 +102,6 @@ async def insert_token(
         list(scopes),
         access_level,
         list(allowed_modules) if allowed_modules is not None else None,
-        json.dumps(module_scopes) if module_scopes is not None else None,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
     )
     return plaintext
