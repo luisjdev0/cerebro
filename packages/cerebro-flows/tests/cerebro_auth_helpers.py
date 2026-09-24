@@ -32,9 +32,12 @@ async def insert_user(
     dsn: str,
     *,
     access_level: str = "user",
-    name: str = "Test User",
+    name: str | None = None,
     email: str | None = None,
 ) -> uuid.UUID:
+    # `cerebro_auth.users.name` is UNIQUE -- a fixed default would collide the
+    # second time any test calls this without an explicit name.
+    name = name or f"test-user-{uuid.uuid4().hex[:8]}"
     email = email or f"{uuid.uuid4().hex}@test.local"
     conn = await asyncpg.connect(dsn=dsn, timeout=8)
     try:
