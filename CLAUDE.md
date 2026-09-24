@@ -17,8 +17,9 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-memory` | Semantic/episodic/procedural/decision memory, with a Context Engine (automatic scoping) | 8000 |
 | `cerebro-docs` | Complete markdown documents, categories, versioning, redirects | 8000 |
 | `cerebro-flows` | Step-by-step workflow execution engine ("traffic light"), Redis + Postgres | 8000 |
-| `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`) — no business logic | — |
-| `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*` as tools | — |
+| `cerebro-auth` | Owns the shared `cerebro_auth` schema (users, groups, tokens); memory/docs/flows validate every request against it directly | 8000 |
+| `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
+| `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
 | `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients` | — |
 
 Each internal API runs on port 8000 inside its container; `compose.yaml` maps
@@ -33,10 +34,11 @@ Every new feature in a module follows the same path, in this order:
    own Postgres schema (`cerebro_memory`, `cerebro_docs`, `cerebro_flows`), all in
    the **same** shared Postgres instance (`pgvector/pgvector:pg17`).
 2. **FastAPI API** (`packages/<package>/src/<package>/api.py`) — token auth
-   (`Authorization: Bearer`), `read`/`write`/`admin` scopes, plus fine-grained
-   restrictions per category/context (`allowed_categories`/`allowed_contexts`).
-   Auth is currently duplicated per service — **being unified**, see "Work in
-   progress" below.
+   (`Authorization: Bearer`). memory/docs/flows validate every request by reading
+   the shared `cerebro_auth` schema directly (cross-schema query, same Postgres,
+   no network hop) — see "Auth model" below. `cerebro-auth` itself is the one
+   service that owns token/user/group management (`POST /tokens`, `/users`,
+   `/groups`, `/login`).
 3. **Client in `cerebro-clients`** — one method per HTTP endpoint, zero business
    logic, just payload translation.
 4. **MCP tools in `cerebro-mcp/server.py`** (and mirrored commands in
@@ -92,6 +94,35 @@ module added to the ecosystem must add its own `handle_path` in
 `gateway/Caddyfile`, instead of forcing whoever deploys it to touch their own
 reverse proxy.
 
+## Auth model (`cerebro_auth` schema)
+
+A single shared schema (`packages/cerebro-auth`) backs authentication for all
+three content services. Two gates apply per request, independent of each other:
+
+1. **What's visible** — `allowed_modules` (which of memory/docs/flows a token can
+   touch at all) + `module_scopes` (fine-grained contexts/categories within a
+   module). `access_level` (`user`/`owner`/`admin`, on `users` if the token has one,
+   else a fallback column on the token itself) controls how this resolves: `admin`
+   ignores `module_scopes` entirely; `owner` inherits the union of their groups'
+   `group_scopes`, narrowed (never widened) by anything the token adds on top;
+   `user` uses the token's own values as-is.
+2. **Who owns it** — `owner_user_id` on `memories`/`documents`/`flow_definitions`
+   (who created it). `user` sees only their own; `owner` sees everyone who shares a
+   group with them (via `user_groups`); `admin`/root sees everything. This is
+   separate from gate 1 and stacks on top of it.
+
+The root token (`.env`'s `API_TOKEN`) still bypasses both gates with no DB row, same
+as before unification. Token/user/group management (`cerebro token create`,
+`cerebro user create`, `cerebro group ...`, MCP `auth_*` tools) lives exclusively in
+`cerebro-auth` — memory/docs/flows only read the schema, they don't write to it.
+`cerebro login --token <token>` persists credentials to `~/.cerebro/config.json`,
+which `cerebro-clients` reads as a fallback below environment variables.
+
+**asyncpg does not auto-decode `jsonb` columns** — always `json.loads()` a
+`module_scopes`/similar column read if it comes back as `str` (no codec is
+registered anywhere in this monorepo); a real bug from skipping this shipped in two
+services before being caught in live testing.
+
 ## Conventions
 
 - **Config**: `pydantic-settings`, one `config.py` per package, sensible
@@ -127,15 +158,9 @@ See `luisjdev-pendientes/ecosistema-cerebro` in `cerebro-docs` for the detailed,
 up-to-date state of everything pending. Summary of the most relevant items as of
 this writing:
 
-- **Auth unification + user system**: today each service
-  (`memory`/`docs`/`flows`) has its own duplicated `api_tokens` table. Agreed
-  design (not implemented): a single shared `cerebro_auth` schema for the three
-  (tokens with `allowed_modules` + `module_scopes`), later extended with
-  `users`/`user_tokens`/`groups`/`user_groups`/`group_scopes` for the user system
-  (`user`/`owner`/`admin` levels). Management operations (login, creating a
-  user/token/group, backups) will live in a new `cerebro-auth` service; per-request
-  *validation* stays local to each service, reading the shared schema directly
-  (no network hop per request).
+- **Auth unification + user system — DONE**, merged to `main`. See "Auth model"
+  above. Not yet implemented: password-based login (`users.password_hash` exists,
+  nullable, no endpoint/flow yet — token-only login for now).
 - **Standalone CLI installer**: agreed design (not implemented) — CI (GitHub
   Actions, Linux+Windows matrix) compiles generic binaries and publishes them to
   GitHub Releases; an installer script (`.sh`/`.ps1`) served by the gateway itself
@@ -143,5 +168,7 @@ this writing:
   binary volume on the server) and configures that instance's URL as local
   config. The repo to download from is a variable (`CEREBRO_REPO`), not
   hardcoded, so a fork points at its own Releases.
-- **Remote backups via API**: blocked until `cerebro_auth` exists (needs to know
-  which schemas a given token/user can see).
+- **Remote backups via API**: unblocked now that `cerebro_auth` exists (a token's
+  `allowed_modules` answers "which schemas can it see"), but still has open design
+  questions — dump format (`pg_dump` vs. structured export), extraction-only vs.
+  also restore, on-demand vs. scheduled. Not implemented.
