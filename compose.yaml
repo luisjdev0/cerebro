@@ -83,6 +83,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Token validation now reads the shared cerebro_auth schema directly
+      # (cross-schema query, same Postgres instance) -- that schema has to
+      # exist before this service can validate any request, so it waits for
+      # cerebro-auth-api's migration to have run.
+      cerebro-auth-api:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -117,6 +123,8 @@ services:
     profiles: ["full"]
     depends_on:
       postgres:
+        condition: service_healthy
+      cerebro-auth-api:
         condition: service_healthy
     # Shared .env: both services load the same file, but its APP_PORT/API_TOKEN were
     # written with cerebro-memory-api in mind. APP_PORT is overridden below to the
@@ -158,6 +166,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      cerebro-auth-api:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -169,6 +179,40 @@ services:
       # next free one after memory=8005/docs=8006) - same reason as
       # POSTGRES_HOST_PORT above.
       - "127.0.0.1:${CEREBRO_FLOWS_HOST_PORT:-8007}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # cerebro-auth API (luisjdev-pendientes/ecosistema-cerebro §"Autenticación +
+  # Usuarios"): owns the shared cerebro_auth schema (users, groups, api_tokens)
+  # that memory/docs/flows now validate every request against directly (cross-
+  # schema query, no network hop on that hot path -- this service is only the
+  # management plane: create/revoke tokens, users, groups, login). Same pattern
+  # as cerebro-memory-api/cerebro-docs-api/cerebro-flows-api (profile,
+  # healthcheck, depends_on), no Redis.
+  cerebro-auth-api:
+    build:
+      context: ./packages/cerebro-auth
+    image: cerebro-auth-api
+    container_name: cerebro-auth-api
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
+      APP_PORT: 8000
+    ports:
+      # Host-side port made configurable via CEREBRO_AUTH_HOST_PORT (default
+      # 8008, next free after flows=8007) - same reason as POSTGRES_HOST_PORT
+      # above.
+      - "127.0.0.1:${CEREBRO_AUTH_HOST_PORT:-8008}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
       interval: 10s
@@ -194,6 +238,8 @@ services:
       cerebro-docs-api:
         condition: service_healthy
       cerebro-flows-api:
+        condition: service_healthy
+      cerebro-auth-api:
         condition: service_healthy
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro

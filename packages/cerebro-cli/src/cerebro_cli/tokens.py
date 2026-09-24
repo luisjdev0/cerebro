@@ -1,44 +1,41 @@
-"""Generation of the CROSS-CUTTING secret (ecosistema-cerebro.md SS13) and local
-state for pending retries.
+"""Local CLI state under `~/.cerebro/` (not to be confused with server-side token
+storage, which now lives entirely in cerebro-auth).
 
-A single secret (prefix `cbr_`, distinct from `kos_`/`cbrd_` -- the prefixes each
-API uses on its own when it generates its token without `value`) is registered
-separately in cerebro-memory and cerebro-docs via `POST /tokens` with `value=<secret>`
-(see SS13 and the changes in `cerebro_memory.auth`/`cerebro_docs.auth`).
+Historically this module also generated and persisted a CROSS-CUTTING secret
+(prefix `cbr_`) plus pending-retry state for `cerebro token create`, because that
+command had to register the same secret in two independent services
+(cerebro-memory and cerebro-docs) and survive a partial failure between them. Now
+that token management lives in exactly ONE service (cerebro-auth), there's nothing
+left to retry across services, so that whole mechanism (`generate_transversal_token`,
+`save_pending_value`/`load_pending_value`/`clear_pending_value`,
+`warn_stale_pending_tokens`, `PENDING_TOKENS_DIR`) has been removed -- a single
+`AuthClient().create_token(...)` call either succeeds or fails, no local state
+needed in between.
 
-Pending state: for "retry the same command" to actually be safe after a
-partial failure, the retry must use the SAME secret as the previous attempt -- if
-it generated a new one each time, the service that WAS ALREADY registered would see a
-duplicate name with a different hash (409, not idempotent). That's why `cerebro token create`
-persists the generated secret to a local file (outside the repo, in the user's
-home) until both services confirm success, at which point it's deleted.
+What's left: `cerebro login` persists the resolved token/gateway URL here after a
+successful `AuthClient.login()` call, so other `cerebro-cli` invocations can pick up
+credentials without `CEREBRO_TOKEN`/`CEREBRO_*_URL` set in the environment.
 
-Permissions (ecosistema-cerebro.md SS15, audit criterion): the secret lives in
-plaintext in that file while the registration is pending, so both the directory
-and the file are created with restrictive permissions (0o700/0o600) on POSIX -- on
-Windows `os.chmod` doesn't model the same bitmask, so it's attempted best-effort and
-the error is ignored (acceptable no-op, see audit).
+`cerebro_clients.config`'s `*_token()`/`*_base_url()` functions read this file back
+as a fallback, below any env var -- see that module's docstring for the exact
+precedence order.
+
+Permissions (ecosistema-cerebro.md SS15, audit criterion): the file holds a
+plaintext token, so both the directory and file are created with restrictive
+permissions (0o700/0o600) on POSIX -- on Windows `os.chmod` doesn't model the same
+bitmask, so it's attempted best-effort and the error is ignored (acceptable no-op,
+see audit).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import secrets
-import sys
-import time
 from pathlib import Path
 from typing import Any
 
-TOKEN_PREFIX = "cbr_"
-
 STATE_DIR = Path.home() / ".cerebro"
-PENDING_TOKENS_DIR = STATE_DIR / "pending-tokens"
-
-# Threshold for warning about an "orphaned" pending file (a `cerebro token create`
-# that failed partially and was never retried) -- without this warning, the plaintext secret
-# would sit on disk indefinitely without anyone noticing (ecosistema-cerebro.md SS15).
-STALE_PENDING_SECONDS = 24 * 60 * 60
+CONFIG_PATH = STATE_DIR / "config.json"
 
 
 def _chmod_best_effort(path: Path, mode: int) -> None:
@@ -48,62 +45,27 @@ def _chmod_best_effort(path: Path, mode: int) -> None:
         pass  # Windows (or another FS without the same permissions model): acceptable no-op.
 
 
-def generate_transversal_token() -> str:
-    return TOKEN_PREFIX + secrets.token_urlsafe(32)
+def save_login_config(token: str, url: str | None) -> None:
+    """Persists the credentials resolved by `cerebro login` to
+    `~/.cerebro/config.json`. Overwrites any previous login."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _chmod_best_effort(STATE_DIR, 0o700)
+    data: dict[str, Any] = {"token": token}
+    if url:
+        data["url"] = url
+    CONFIG_PATH.write_text(json.dumps(data), encoding="utf-8")
+    _chmod_best_effort(CONFIG_PATH, 0o600)
 
 
-def _pending_path(name: str) -> Path:
-    # Token names are agent identifiers (e.g. "claude-desktop"), not
-    # paths - a minimal guard against path separators is enough before using them
-    # as a file name.
-    safe = name.replace("/", "_").replace("\\", "_")
-    return PENDING_TOKENS_DIR / f"{safe}.json"
-
-
-def load_pending_value(name: str) -> str | None:
-    path = _pending_path(name)
-    if not path.exists():
+def load_login_config() -> dict[str, Any] | None:
+    """Reads back what `cerebro login` saved, or `None` if there's no session yet
+    or the file is unreadable/corrupt. Not currently consumed by anything in this
+    package -- see the KNOWN GAP note above; kept here for whichever side ends up
+    reading it (this package or `cerebro_clients.config`)."""
+    if not CONFIG_PATH.exists():
         return None
     try:
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
-    return data.get("value")
-
-
-def save_pending_value(name: str, value: str) -> None:
-    path = _pending_path(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _chmod_best_effort(path.parent, 0o700)
-    path.write_text(json.dumps({"name": name, "value": value}), encoding="utf-8")
-    _chmod_best_effort(path, 0o600)
-
-
-def clear_pending_value(name: str) -> None:
-    _pending_path(name).unlink(missing_ok=True)
-
-
-def warn_stale_pending_tokens(*, now: float | None = None) -> None:
-    """Warns via stderr about pending files older than `STALE_PENDING_SECONDS`
-    -- called when the CLI starts up (`main()`) so a forgotten partial registration doesn't
-    sit on disk forever without the user noticing. Never prints the plaintext
-    secret, only the name and the age."""
-    if not PENDING_TOKENS_DIR.is_dir():
-        return
-    current = now if now is not None else time.time()
-    for path in sorted(PENDING_TOKENS_DIR.glob("*.json")):
-        try:
-            age_seconds = current - path.stat().st_mtime
-        except OSError:
-            continue
-        if age_seconds < STALE_PENDING_SECONDS:
-            continue
-        age_days = age_seconds / 86400
-        name = path.stem
-        print(
-            f"Aviso: hay un registro de token pendiente sin completar para '{name}' "
-            f"desde hace ~{age_days:.1f} dia(s) ({path}). Ejecuta "
-            f"`cerebro token create {name} --scopes ...` de nuevo para reintentarlo "
-            "(reusa el mismo secreto), o borra el archivo si ya no aplica.",
-            file=sys.stderr,
-        )
+    return data if isinstance(data, dict) else None

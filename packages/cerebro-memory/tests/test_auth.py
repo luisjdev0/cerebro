@@ -1,18 +1,26 @@
-"""Tests for token auth with scopes (`cerebro_memory.auth`, plan_v2.md SS9).
+"""Tests for token auth (`cerebro_memory.auth`), now backed by the shared
+`cerebro_auth` schema (unified authentication across cerebro-memory/cerebro-docs/
+cerebro-flows).
+
+Token *management* (`POST/GET /tokens`, `DELETE /tokens/{name}`) moved entirely to
+the new `cerebro-auth` service -- this file no longer exercises it. Instead, tests
+that need a non-root token insert directly into `cerebro_auth.users`/`api_tokens`/
+`user_groups`/`group_scopes` via raw SQL (see the `_create_*` helpers below), the way
+`cerebro-auth` itself would populate those tables.
 
 `TestPrincipal*` and `test_hash_token_*`/`test_generate_token_*` below are unit tests
 over pure functions/dataclasses (no I/O), same spirit as tests/test_rrf.py and
 tests/test_context_engine.py.
 
-`TestScopeEnforcementIntegration` needs real Postgres behavior (the `api_tokens`
-table, the full FastAPI auth dependency chain) and skips automatically if
-DATABASE_URL is not reachable - same pattern as tests/test_supersedence.py and
-tests/test_graph.py.
+Everything else needs real Postgres behavior (the `cerebro_auth` schema, the full
+FastAPI auth dependency chain) and skips automatically if DATABASE_URL is not
+reachable - same pattern as tests/test_supersedence.py and tests/test_graph.py.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import asyncpg
@@ -20,27 +28,48 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cerebro_memory.api import create_app
-from cerebro_memory.auth import Principal, hash_token, generate_token
+from cerebro_memory.auth import Principal, generate_token, hash_token
 from cerebro_memory.config import get_settings
 
 # --------------------------------------------------------------------------- unit: Principal
 
 
+def _principal(
+    *,
+    name="x",
+    scopes=frozenset({"read"}),
+    allowed_contexts=None,
+    access_level="user",
+    user_id=None,
+    owner_filter=None,
+    is_root=False,
+) -> Principal:
+    return Principal(
+        name=name,
+        scopes=scopes,
+        allowed_contexts=allowed_contexts,
+        access_level=access_level,
+        user_id=user_id,
+        owner_filter=owner_filter,
+        is_root=is_root,
+    )
+
+
 def test_principal_has_scope():
-    p = Principal(name="x", scopes=frozenset({"read", "write"}), allowed_contexts=None)
+    p = _principal(scopes=frozenset({"read", "write"}))
     assert p.has_scope("read")
     assert p.has_scope("write")
     assert not p.has_scope("admin")
 
 
 def test_principal_context_allowed_none_means_all():
-    p = Principal(name="x", scopes=frozenset({"read"}), allowed_contexts=None)
+    p = _principal(allowed_contexts=None)
     assert p.context_allowed("anything")
     assert p.context_allowed(None)
 
 
 def test_principal_context_allowed_restricted():
-    p = Principal(name="x", scopes=frozenset({"read"}), allowed_contexts=frozenset({"salud", "aprendizaje"}))
+    p = _principal(allowed_contexts=frozenset({"salud", "aprendizaje"}))
     assert p.context_allowed("salud")
     assert not p.context_allowed("finanzas-personales")
     # None (no target context yet, e.g. context not decided) is never itself a denial
@@ -48,22 +77,31 @@ def test_principal_context_allowed_restricted():
 
 
 def test_principal_filter_slugs_unrestricted_is_identity():
-    p = Principal(name="x", scopes=frozenset({"read"}), allowed_contexts=None)
+    p = _principal(allowed_contexts=None)
     slugs = ["a", "b", "c"]
     assert p.filter_slugs(slugs) == slugs
 
 
 def test_principal_filter_slugs_restricted():
-    p = Principal(name="x", scopes=frozenset({"read"}), allowed_contexts=frozenset({"a", "c"}))
+    p = _principal(allowed_contexts=frozenset({"a", "c"}))
     assert p.filter_slugs(["a", "b", "c", "d"]) == ["a", "c"]
 
 
-def test_principal_root_has_every_scope_and_no_context_restriction():
-    p = Principal(name="root", scopes=frozenset({"read", "write", "admin"}), allowed_contexts=None, is_root=True)
+def test_principal_root_has_every_scope_and_no_restrictions():
+    p = _principal(
+        name="root",
+        scopes=frozenset({"read", "write", "admin"}),
+        allowed_contexts=None,
+        access_level="admin",
+        user_id=None,
+        owner_filter=None,
+        is_root=True,
+    )
     assert p.is_root
     for scope in ("read", "write", "admin"):
         assert p.has_scope(scope)
     assert p.context_allowed("literalmente-cualquier-cosa")
+    assert p.owner_filter is None
 
 
 # --------------------------------------------------------------------------- unit: token helpers
@@ -105,6 +143,148 @@ def _db_reachable(dsn: str) -> bool:
         return False
 
 
+def _run_sql(coro_fn, *args, **kwargs):
+    """Run one async DB operation against the (already-migrated) test database in its
+    own connection + its own event loop -- mirrors `_db_reachable` above. Each call
+    gets a fresh connection so these helpers are safe to call from ordinary sync test
+    functions any number of times."""
+
+    async def _wrapper():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            return await coro_fn(conn, *args, **kwargs)
+        finally:
+            await conn.close()
+
+    return asyncio.run(_wrapper())
+
+
+async def _do_create_user(conn, *, access_level: str) -> uuid.UUID:
+    user_id = uuid.uuid4()
+    await conn.execute(
+        """
+        INSERT INTO cerebro_auth.users (id, name, email, access_level, password_hash)
+        VALUES ($1, $2, $3, $4, $5)
+        """,
+        user_id,
+        f"test-user-{user_id.hex[:8]}",
+        f"{user_id.hex[:8]}@test.local",
+        access_level,
+        "x",  # not a real password hash - never authenticated through this path
+    )
+    return user_id
+
+
+async def _do_create_group(conn) -> uuid.UUID:
+    group_id = uuid.uuid4()
+    slug = f"test-group-{group_id.hex[:8]}"
+    await conn.execute(
+        "INSERT INTO cerebro_auth.groups (id, slug, name) VALUES ($1, $2, $3)", group_id, slug, slug
+    )
+    return group_id
+
+
+async def _do_add_to_group(conn, user_id: uuid.UUID, group_id: uuid.UUID) -> None:
+    await conn.execute(
+        "INSERT INTO cerebro_auth.user_groups (user_id, group_id) VALUES ($1, $2)", user_id, group_id
+    )
+
+
+async def _do_set_group_scopes(
+    conn, group_id: uuid.UUID, *, allowed_modules: list[str] | None, module_scopes: dict | None
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO cerebro_auth.group_scopes (group_id, allowed_modules, module_scopes)
+        VALUES ($1, $2, $3::jsonb)
+        ON CONFLICT (group_id) DO UPDATE
+        SET allowed_modules = EXCLUDED.allowed_modules, module_scopes = EXCLUDED.module_scopes
+        """,
+        group_id,
+        allowed_modules,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
+    )
+
+
+async def _do_create_token(
+    conn,
+    *,
+    user_id: uuid.UUID | None,
+    scopes: list[str],
+    access_level: str | None,
+    allowed_modules: list[str] | None,
+    module_scopes: dict | None,
+    name: str | None,
+) -> str:
+    plaintext = generate_token()
+    token_id = uuid.uuid4()
+    await conn.execute(
+        """
+        INSERT INTO cerebro_auth.api_tokens
+            (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+        """,
+        token_id,
+        hash_token(plaintext),
+        name or f"test-token-{token_id.hex[:8]}",
+        user_id,
+        scopes,
+        access_level,
+        allowed_modules,
+        json.dumps(module_scopes) if module_scopes is not None else "{}",
+    )
+    return plaintext
+
+
+def _create_service_token(*, scopes: list[str], contexts: list[str] | None = None, name: str | None = None) -> str:
+    """Direct replacement for the old `/tokens`-backed helper this file used to call:
+    a service token (`user_id IS NULL`), scoped to the 'memory' module and optionally
+    restricted to `contexts`. A service token always gets `owner_filter=None` (Change
+    3: ownership restriction only applies to tokens tied to a `cerebro_auth` user) --
+    exactly the pre-ownership semantics these tests used to exercise via the
+    now-removed `POST /tokens`."""
+    module_scopes = {"memory": {"contexts": contexts}} if contexts is not None else None
+    return _run_sql(
+        _do_create_token,
+        user_id=None,
+        scopes=scopes,
+        access_level="user",
+        allowed_modules=["memory"],
+        module_scopes=module_scopes,
+        name=name,
+    )
+
+
+def _create_user_token(
+    *,
+    access_level: str,
+    scopes: list[str],
+    group_id: uuid.UUID | None = None,
+    contexts: list[str] | None = None,
+    allowed_modules: list[str] | None = ("memory",),
+) -> tuple[str, uuid.UUID]:
+    """A `cerebro_auth` user (`access_level` in {"user", "owner", "admin"}) plus a
+    token bound to it (`user_id` set -> the token's own `access_level` column stays
+    NULL, per the resolution algorithm). Optionally joins `group_id`. `contexts`, if
+    given, is set as the TOKEN's own `module_scopes.memory.contexts` -- for a "user"
+    token that's the effective value directly (base case); for an "owner" token it
+    narrows whatever the group(s) grant. Returns `(token, user_id)`."""
+    user_id = _run_sql(_do_create_user, access_level=access_level)
+    if group_id is not None:
+        _run_sql(_do_add_to_group, user_id, group_id)
+    module_scopes = {"memory": {"contexts": contexts}} if contexts is not None else None
+    token = _run_sql(
+        _do_create_token,
+        user_id=user_id,
+        scopes=scopes,
+        access_level=None,
+        allowed_modules=list(allowed_modules) if allowed_modules is not None else None,
+        module_scopes=module_scopes,
+        name=None,
+    )
+    return token, user_id
+
+
 @pytest.fixture(scope="module")
 def client():
     settings = get_settings()
@@ -131,23 +311,14 @@ def _make_context(client, root_headers) -> str:
     return slug
 
 
-def _make_memory(client, root_headers, slug: str, content: str, type_: str = "semantic") -> str:
+def _make_memory(client, headers, slug: str, content: str, type_: str = "semantic") -> str:
     resp = client.post(
         "/memories",
         json={"content": content, "context": slug, "type": type_},
-        headers=root_headers,
+        headers=headers,
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
-
-
-def _create_token(client, root_headers, *, name, scopes, contexts=None) -> str:
-    body = {"name": name, "scopes": scopes}
-    if contexts is not None:
-        body["allowed_contexts"] = contexts
-    resp = client.post("/tokens", json=body, headers=root_headers)
-    assert resp.status_code == 201, resp.text
-    return resp.json()["token"]
 
 
 class TestRootTokenCompat:
@@ -164,118 +335,50 @@ class TestRootTokenCompat:
         assert resp.status_code == 401, resp.text
 
 
-class TestTokenLifecycle:
-    def test_create_list_revoke_roundtrip(self, client, root_headers):
-        name = f"test-token-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"])
-        assert token.startswith("kos_")
+class TestModuleGate:
+    """A token whose effective `allowed_modules` doesn't include 'memory' at all must
+    never authenticate against this service (Change 1, step 2 - "specific to this
+    service")."""
 
-        # newly created token authenticates
+    def test_token_without_memory_module_is_rejected(self, client):
+        token = _run_sql(
+            _do_create_token,
+            user_id=None,
+            scopes=["read", "write"],
+            access_level="user",
+            allowed_modules=["docs", "flows"],  # no "memory"
+            module_scopes=None,
+            name=None,
+        )
         resp = client.get("/contexts", headers={"Authorization": f"Bearer {token}"})
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code in (401, 403), resp.text
 
-        listed = client.get("/tokens", headers=root_headers)
-        assert listed.status_code == 200, listed.text
-        names = {t["name"] for t in listed.json()}
-        assert name in names
-        # never leaks a hash or the plaintext in the list response
-        for row in listed.json():
-            assert "token" not in row
-            assert "token_hash" not in row
+    def test_revoked_token_is_401(self, client):
+        async def _do(conn):
+            plaintext = generate_token()
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, revoked_at)
+                VALUES ($1, $2, $3, NULL, $4, 'user', $5, '{}', now())
+                """,
+                uuid.uuid4(),
+                hash_token(plaintext),
+                f"test-token-revoked-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["memory"],
+            )
+            return plaintext
 
-        revoke_resp = client.delete(f"/tokens/{name}", headers=root_headers)
-        assert revoke_resp.status_code == 200, revoke_resp.text
-        assert revoke_resp.json()["revoked_at"] is not None
-
-        # revoked token no longer authenticates
+        token = _run_sql(_do)
         resp = client.get("/contexts", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 401, resp.text
-
-    def test_duplicate_active_name_is_409(self, client, root_headers):
-        name = f"test-token-dup-{uuid.uuid4().hex[:8]}"
-        _create_token(client, root_headers, name=name, scopes=["read"])
-        resp = client.post("/tokens", json={"name": name, "scopes": ["read"]}, headers=root_headers)
-        assert resp.status_code == 409, resp.text
-
-    def test_invalid_scope_is_422(self, client, root_headers):
-        resp = client.post(
-            "/tokens",
-            json={"name": f"test-bad-scope-{uuid.uuid4().hex[:8]}", "scopes": ["superuser"]},
-            headers=root_headers,
-        )
-        assert resp.status_code == 422, resp.text
-
-    def test_revoking_unknown_name_is_404(self, client, root_headers):
-        resp = client.delete(f"/tokens/does-not-exist-{uuid.uuid4().hex[:8]}", headers=root_headers)
-        assert resp.status_code == 404, resp.text
-
-    def test_token_management_requires_admin_scope(self, client, root_headers):
-        name = f"test-token-nonadmin-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"])
-        headers = {"Authorization": f"Bearer {token}"}
-
-        assert client.get("/tokens", headers=headers).status_code == 403
-        assert client.post("/tokens", json={"name": "x", "scopes": ["read"]}, headers=headers).status_code == 403
-        assert client.delete(f"/tokens/{name}", headers=headers).status_code == 403
-
-
-class TestTokenValueField:
-    """`value` (ecosistema-cerebro.md SS13, cross-cutting tokens): admin can pass
-    the plaintext secret for the server to hash, instead of generating one -
-    allows registering the SAME token in cerebro-memory and cerebro-docs. Idempotent
-    by name: retrying with the same `value` does not duplicate or fail."""
-
-    def test_create_with_value_uses_that_exact_secret(self, client, root_headers):
-        name = f"test-token-value-{uuid.uuid4().hex[:8]}"
-        provided = f"kos_transversal-{uuid.uuid4().hex}"
-        resp = client.post(
-            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
-        )
-        assert resp.status_code == 201, resp.text
-        assert resp.json()["token"] == provided
-
-        auth = client.get("/contexts", headers={"Authorization": f"Bearer {provided}"})
-        assert auth.status_code == 200, auth.text
-
-    def test_recreating_same_name_and_value_is_idempotent_not_409(self, client, root_headers):
-        name = f"test-token-idem-{uuid.uuid4().hex[:8]}"
-        provided = f"kos_idempotent-{uuid.uuid4().hex}"
-        first = client.post(
-            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
-        )
-        assert first.status_code == 201, first.text
-
-        second = client.post(
-            "/tokens", json={"name": name, "scopes": ["read"], "value": provided}, headers=root_headers
-        )
-        assert second.status_code == 201, second.text
-        assert second.json()["token"] == provided
-        assert second.json()["id"] == first.json()["id"]
-
-        listed = client.get("/tokens", headers=root_headers)
-        names = [t["name"] for t in listed.json()]
-        assert names.count(name) == 1  # no duplicate row
-
-    def test_recreating_same_name_with_different_value_is_still_409(self, client, root_headers):
-        name = f"test-token-conflict-{uuid.uuid4().hex[:8]}"
-        client.post(
-            "/tokens",
-            json={"name": name, "scopes": ["read"], "value": f"kos_a-{uuid.uuid4().hex}"},
-            headers=root_headers,
-        )
-        resp = client.post(
-            "/tokens",
-            json={"name": name, "scopes": ["read"], "value": f"kos_b-{uuid.uuid4().hex}"},
-            headers=root_headers,
-        )
-        assert resp.status_code == 409, resp.text
 
 
 class TestScopeEnforcement:
     def test_read_only_token_cannot_write(self, client, root_headers):
         slug = _make_context(client, root_headers)
-        name = f"test-token-ro-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"])
+        token = _create_service_token(scopes=["read"])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.post(
@@ -283,17 +386,15 @@ class TestScopeEnforcement:
         )
         assert resp.status_code == 403, resp.text
 
-    def test_write_only_token_cannot_read(self, client, root_headers):
-        name = f"test-token-wo-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["write"])
+    def test_write_only_token_cannot_read(self, client):
+        token = _create_service_token(scopes=["write"])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get("/contexts", headers=headers)
         assert resp.status_code == 403, resp.text
 
-    def test_export_requires_admin_even_with_read_and_write(self, client, root_headers):
-        name = f"test-token-rw-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"])
+    def test_export_requires_admin_scope_even_with_read_and_write(self, client):
+        token = _create_service_token(scopes=["read", "write"])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get("/disambiguations/export", headers=headers)
@@ -302,12 +403,12 @@ class TestScopeEnforcement:
     def test_token_name_overrides_x_agent_name_header_in_audit(self, client, root_headers):
         slug = _make_context(client, root_headers)
         name = f"test-token-identity-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"])
+        token = _create_service_token(scopes=["read", "write"], name=name)
         headers = {"Authorization": f"Bearer {token}", "X-Agent-Name": "someone-else-entirely"}
 
         resp = client.post(
             "/memories",
-            json={"content": "una memoria de prueba", "context": slug, "type": "semantic"},
+            json={"content": "a test memory", "context": slug, "type": "semantic"},
             headers=headers,
         )
         assert resp.status_code == 201, resp.text
@@ -320,8 +421,7 @@ class TestAllowedContextsEnforcement:
     def test_write_outside_allowed_contexts_is_403(self, client, root_headers):
         allowed_slug = _make_context(client, root_headers)
         other_slug = _make_context(client, root_headers)
-        name = f"test-token-ctx-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         ok = client.post(
@@ -337,8 +437,7 @@ class TestAllowedContextsEnforcement:
     def test_explicit_search_outside_allowed_contexts_is_403(self, client, root_headers):
         allowed_slug = _make_context(client, root_headers)
         other_slug = _make_context(client, root_headers)
-        name = f"test-token-search-ctx-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get("/memories/search", params={"q": "x", "context": other_slug}, headers=headers)
@@ -359,8 +458,7 @@ class TestAllowedContextsEnforcement:
             headers=root_headers,
         )
 
-        name = f"test-token-narrow-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get(
@@ -384,8 +482,7 @@ class TestAllowedContextsEnforcement:
             headers=root_headers,
         )
 
-        name = f"test-token-stats-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get("/stats", headers=headers)
@@ -427,8 +524,7 @@ class TestDeleteContext:
 
     def test_delete_context_requires_admin_not_just_write(self, client, root_headers):
         slug = _make_context(client, root_headers)
-        name = f"test-token-del-rw-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"])
+        token = _create_service_token(scopes=["read", "write"])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.delete(f"/contexts/{slug}", headers=headers)
@@ -446,8 +542,7 @@ class TestAllowedContextsEnforcementOnRelated:
         other_slug = _make_context(client, root_headers)
         other_memory = _make_memory(client, root_headers, other_slug, "memoria en contexto ajeno")
 
-        name = f"test-token-related-403-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get(f"/memories/{other_memory}/related", headers=headers)
@@ -455,8 +550,7 @@ class TestAllowedContextsEnforcementOnRelated:
 
     def test_related_on_nonexistent_memory_is_404_not_403(self, client, root_headers):
         allowed_slug = _make_context(client, root_headers)
-        name = f"test-token-related-404-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get(f"/memories/{uuid.uuid4()}/related", headers=headers)
@@ -484,8 +578,7 @@ class TestAllowedContextsEnforcementOnRelated:
 
         # A token restricted to allowed_slug must NOT see it at all - not even
         # marked cross_context - even though the edge is a real, explicit bridge.
-        name = f"test-token-related-hide-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get(f"/memories/{anchor}/related", headers=headers)
@@ -506,8 +599,7 @@ class TestAllowedContextsEnforcementOnRelated:
         )
         assert edge_resp.status_code == 201, edge_resp.text
 
-        name = f"test-token-search-expand-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get(
@@ -532,8 +624,7 @@ class TestAllowedContextsEnforcementOnEdges:
         anchor = _make_memory(client, root_headers, allowed_slug, "memoria de origen")
         foreign_target = _make_memory(client, root_headers, other_slug, "memoria de destino ajena")
 
-        name = f"test-token-edge-to-403-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.post(
@@ -549,8 +640,7 @@ class TestAllowedContextsEnforcementOnEdges:
         foreign_anchor = _make_memory(client, root_headers, other_slug, "memoria de origen ajena")
         target = _make_memory(client, root_headers, allowed_slug, "memoria de destino")
 
-        name = f"test-token-edge-from-403-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.post(
@@ -565,8 +655,7 @@ class TestAllowedContextsEnforcementOnEdges:
         a = _make_memory(client, root_headers, allowed_slug, "memoria a")
         b = _make_memory(client, root_headers, allowed_slug, "memoria b")
 
-        name = f"test-token-edge-ok-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.post(
@@ -588,8 +677,7 @@ class TestAllowedContextsEnforcementOnEdges:
         assert edge_resp.status_code == 201, edge_resp.text
         edge_id = edge_resp.json()["id"]
 
-        name = f"test-token-edge-del-403-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         # memory_id in the path (anchor) IS allowed, but the edge's other endpoint
@@ -610,9 +698,136 @@ class TestAllowedContextsEnforcementOnEdges:
         )
         edge_id = edge_resp.json()["id"]
 
-        name = f"test-token-edge-del-ok-{uuid.uuid4().hex[:8]}"
-        token = _create_token(client, root_headers, name=name, scopes=["read", "write"], contexts=[allowed_slug])
+        token = _create_service_token(scopes=["read", "write"], contexts=[allowed_slug])
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.delete(f"/memories/{a}/edges/{edge_id}", headers=headers)
         assert resp.status_code == 200, resp.text
+
+
+class TestOwnershipFilter:
+    """Change 3: `owner_user_id` + `Principal.owner_filter` - a gate separate from
+    and additional to the module/context gate above."""
+
+    def test_user_level_token_only_sees_what_it_created(self, client):
+        token_a, user_a = _create_user_token(access_level="user", scopes=["read", "write"])
+        token_b, user_b = _create_user_token(access_level="user", scopes=["read", "write"])
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+
+        ctx_resp = client.post(
+            "/contexts",
+            json={"slug": f"test-owner-{uuid.uuid4().hex[:8]}", "name": "owner test", "kind": "domain"},
+            headers=headers_a,
+        )
+        assert ctx_resp.status_code == 201, ctx_resp.text
+        slug = ctx_resp.json()["slug"]
+
+        mine = _make_memory(client, headers_a, slug, "memoria propia de user_a unica-xyz123")
+        theirs = _make_memory(client, headers_b, slug, "memoria propia de user_b unica-xyz123")
+
+        resp = client.get(
+            "/memories/search",
+            params={"q": "unica-xyz123", "context": slug, "limit": 10},
+            headers=headers_a,
+        )
+        assert resp.status_code == 200, resp.text
+        ids_seen = {r["id"] for r in resp.json()["results"]}
+        assert mine in ids_seen
+        assert theirs not in ids_seen
+
+    def test_owner_level_token_sees_group_mates_content(self, client):
+        group_id = _run_sql(_do_create_group)
+        _run_sql(
+            _do_set_group_scopes,
+            group_id,
+            allowed_modules=["memory"],
+            module_scopes=None,  # no restriction within memory for this group
+        )
+        token_a, user_a = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=group_id)
+        token_b, user_b = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=group_id)
+        # An owner with zero groups has zero effective access by design (never a
+        # permissive default) -- so to model "an owner NOT in THIS group but who
+        # still has real memory access elsewhere", user_c needs their OWN separate
+        # group, not no group at all.
+        other_group_id = _run_sql(_do_create_group)
+        _run_sql(_do_set_group_scopes, other_group_id, allowed_modules=["memory"], module_scopes=None)
+        token_c, user_c = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=other_group_id)
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+        headers_c = {"Authorization": f"Bearer {token_c}"}
+
+        ctx_resp = client.post(
+            "/contexts",
+            json={"slug": f"test-groupowner-{uuid.uuid4().hex[:8]}", "name": "group owner test", "kind": "domain"},
+            headers=headers_a,
+        )
+        assert ctx_resp.status_code == 201, ctx_resp.text
+        slug = ctx_resp.json()["slug"]
+
+        mine = _make_memory(client, headers_a, slug, "memoria de user_a en grupo owner-test-abc999")
+        mates = _make_memory(client, headers_b, slug, "memoria de user_b en grupo owner-test-abc999")
+        outsider = _make_memory(client, headers_c, slug, "memoria de user_c fuera del grupo owner-test-abc999")
+
+        resp = client.get(
+            "/memories/search",
+            params={"q": "owner-test-abc999", "context": slug, "limit": 10},
+            headers=headers_a,
+        )
+        assert resp.status_code == 200, resp.text
+        ids_seen = {r["id"] for r in resp.json()["results"]}
+        assert mine in ids_seen
+        assert mates in ids_seen
+        assert outsider not in ids_seen
+
+    def test_admin_and_root_see_everything_regardless_of_owner(self, client, root_headers):
+        token_a, user_a = _create_user_token(access_level="user", scopes=["read", "write"])
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+
+        ctx_resp = client.post(
+            "/contexts",
+            json={"slug": f"test-admin-owner-{uuid.uuid4().hex[:8]}", "name": "admin owner test", "kind": "domain"},
+            headers=root_headers,
+        )
+        assert ctx_resp.status_code == 201, ctx_resp.text
+        slug = ctx_resp.json()["slug"]
+
+        someones = _make_memory(client, headers_a, slug, "memoria de user_a visible-para-admin-xyz")
+
+        resp = client.get(
+            "/memories/search",
+            params={"q": "visible-para-admin-xyz", "context": slug, "limit": 10},
+            headers=root_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        ids_seen = {r["id"] for r in resp.json()["results"]}
+        assert someones in ids_seen
+
+    def test_update_and_delete_respect_ownership(self, client):
+        token_a, user_a = _create_user_token(access_level="user", scopes=["read", "write"])
+        token_b, user_b = _create_user_token(access_level="user", scopes=["read", "write"])
+        headers_a = {"Authorization": f"Bearer {token_a}"}
+        headers_b = {"Authorization": f"Bearer {token_b}"}
+
+        ctx_resp = client.post(
+            "/contexts",
+            json={"slug": f"test-owner-write-{uuid.uuid4().hex[:8]}", "name": "owner write test", "kind": "domain"},
+            headers=headers_a,
+        )
+        assert ctx_resp.status_code == 201, ctx_resp.text
+        slug = ctx_resp.json()["slug"]
+
+        memory_id = _make_memory(client, headers_a, slug, "memoria mutable de user_a")
+
+        patch_resp = client.patch(
+            f"/memories/{memory_id}", json={"content": "editada por user_b"}, headers=headers_b
+        )
+        assert patch_resp.status_code == 403, patch_resp.text
+
+        delete_resp = client.delete(f"/memories/{memory_id}", headers=headers_b)
+        assert delete_resp.status_code == 403, delete_resp.text
+
+        own_patch = client.patch(
+            f"/memories/{memory_id}", json={"content": "editada por user_a"}, headers=headers_a
+        )
+        assert own_patch.status_code == 200, own_patch.text

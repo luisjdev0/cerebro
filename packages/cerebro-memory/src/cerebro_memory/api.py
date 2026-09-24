@@ -16,15 +16,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from pydantic import BaseModel, Field
 
 from cerebro_memory.auth import (
-    DuplicateTokenNameError,
-    InvalidScopesError,
     Principal,
-    TokenNotFoundError,
-    create_api_token,
     get_principal,
-    list_api_tokens,
     require_scope,
-    revoke_api_token,
 )
 from cerebro_memory.config import Settings, get_settings
 from cerebro_memory.context_engine import (
@@ -181,30 +175,6 @@ class StatsOut(BaseModel):
     preferences_learned: list[PreferenceOut]
 
 
-class TokenCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    scopes: list[str] = Field(min_length=1)
-    allowed_contexts: list[str] | None = None
-    # admin-only (this endpoint already requires admin scope): if passed, the server
-    # hashes THIS value instead of generating one -- used by `cerebro token create`
-    # to register the SAME secret in cerebro-docs as well (ecosistema-cerebro.md
-    # SS13, cross-cutting tokens).
-    value: str | None = Field(default=None, min_length=1)
-
-
-class TokenOut(BaseModel):
-    id: UUID
-    name: str
-    scopes: list[str]
-    allowed_contexts: list[str] | None
-    created_at: datetime
-    revoked_at: datetime | None
-
-
-class TokenCreateOut(TokenOut):
-    token: str  # plaintext - only ever present in THIS response, never again
-
-
 class ContextDeleteOut(BaseModel):
     slug: str
     status: str
@@ -330,6 +300,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SELECT c.slug FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1", memory_id
         )
 
+    async def owner_user_id_of_memory(pool: asyncpg.Pool, memory_id: UUID) -> UUID | None | Literal[False]:
+        """`owner_user_id` of `memory_id`, or `False` (sentinel, not `None`, which is a
+        legitimate "no owner" value) if it does not exist. Used to check
+        `Principal.owner_filter` against a memory reached by id without a full row."""
+        row = await pool.fetchrow("SELECT owner_user_id FROM memories WHERE id = $1", memory_id)
+        return False if row is None else row["owner_user_id"]
+
     def require_context_allowed(principal: Principal, ctx_slug: str | None, *, memory_id: UUID | str) -> None:
         """403 if `ctx_slug` is not None and outside `principal.allowed_contexts`. A
         None slug (memory not found) is deliberately NOT an error here - callers let
@@ -342,6 +319,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"token '{principal.name}' is not allowed to access context '{ctx_slug}' (memory {memory_id})",
             )
 
+    def owner_allows(principal: Principal, owner_user_id: UUID | None) -> bool:
+        """True if `principal.owner_filter` (Change 3, ownership gate - separate from
+        and additional to the module/context gate) does not exclude a memory whose
+        `owner_user_id` column is `owner_user_id`. `None` filter means unrestricted. A
+        memory with no owner (`owner_user_id IS NULL` - created by root/a service
+        token) is never matched by a `user_id`/`user_id_in` filter, same as the SQL
+        `owner_user_id = $N` / `= ANY($N)` filters used in search/timeline."""
+        if principal.owner_filter is None:
+            return True
+        if owner_user_id is None:
+            return False
+        if "user_id" in principal.owner_filter:
+            return owner_user_id == principal.owner_filter["user_id"]
+        if "user_id_in" in principal.owner_filter:
+            return owner_user_id in principal.owner_filter["user_id_in"]
+        return True
+
+    def require_owner_allowed(principal: Principal, owner_user_id: UUID | None, *, memory_id: UUID | str) -> None:
+        """403 if `owner_user_id` falls outside `principal.owner_filter`. Mirrors
+        `require_context_allowed`'s "don't distinguish 404 from 403" caveat: callers
+        only call this once they already know the memory exists."""
+        if not owner_allows(principal, owner_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' does not own memory {memory_id}",
+            )
+
     # ---------------------------------------------------------------- health
 
     @app.get("/health")
@@ -350,48 +354,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unreachable")
         return {"status": "ok"}
-
-    # ---------------------------------------------------------------- tokens (plan_v2.md SS9)
-
-    @app.post(
-        "/tokens",
-        status_code=status.HTTP_201_CREATED,
-        response_model=TokenCreateOut,
-        dependencies=[Depends(require_scope("admin"))],
-    )
-    async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            created = await create_api_token(
-                pool,
-                name=body.name,
-                scopes=body.scopes,
-                allowed_contexts=body.allowed_contexts,
-                value=body.value,
-            )
-        except InvalidScopesError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        except DuplicateTokenNameError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"an active token named '{exc}' already exists - revoke it first",
-            ) from exc
-        return TokenCreateOut(**created)
-
-    @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_scope("admin"))])
-    async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        rows = await list_api_tokens(pool)
-        return [dict(r) for r in rows]
-
-    @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_scope("admin"))])
-    async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            row = await revoke_api_token(pool, name)
-        except TokenNotFoundError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"no active token named '{exc}'",
-            ) from exc
-        return dict(row)
 
     # ---------------------------------------------------------------- contexts
 
@@ -521,11 +483,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         importance = body.importance if body.importance is not None else 0.5
         source = body.source or agent
 
+        # owner_user_id (Change 3): the human owner, distinct from `source` (the
+        # agent/channel identifier above) - set only when this principal is tied to a
+        # cerebro_auth user; NULL for the root token or a service/root-adjacent one.
         row = await pool.fetchrow(
             f"""
             WITH ins AS (
-                INSERT INTO memories (context_id, type, title, content, importance, source, occurred_at, embedding)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
+                INSERT INTO memories (context_id, type, title, content, importance, source, occurred_at, embedding, owner_user_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9)
                 RETURNING id, context_id, type, title, content, importance, confidence, source,
                           status, superseded_by, occurred_at, created_at, updated_at
             )
@@ -539,6 +504,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source,
             body.occurred_at,
             _vector_literal(embedding),
+            principal.user_id,
         )
 
         await log_audit(
@@ -612,6 +578,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     type_=type,
                     limit=limit,
                     include_superseded=include_superseded,
+                    owner_filter=principal.owner_filter,
                 )
                 scope_decision = ScopeDecisionOut(mode="explicit", context=explicit_context)
                 decided_context = explicit_context
@@ -626,6 +593,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     limit=limit,
                     include_superseded=include_superseded,
                     allowed_contexts=allowed_contexts,
+                    owner_filter=principal.owner_filter,
                 )
                 scope_decision = ScopeDecisionOut(mode="all")
 
@@ -640,6 +608,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     agent=agent,
                     limit=limit,
                     allowed_contexts=allowed_contexts,
+                    owner_filter=principal.owner_filter,
                 )
                 if decision.mode == "auto":
                     if decision.context is not None:
@@ -651,6 +620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             type_=type,
                             limit=limit,
                             include_superseded=include_superseded,
+                            owner_filter=principal.owner_filter,
                         )
                     else:
                         results = []
@@ -690,6 +660,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # marks an INTENTIONAL bridge for tokens that can see both sides - it
                 # is not a bypass of the allowlist for tokens that can't).
                 related = [r for r in related if principal.context_allowed(r["memory"]["context"])]
+            if principal.owner_filter is not None:
+                # Same ownership gate as `results` (Change 3): a neighbor reached via
+                # an edge is not automatically "mine" just because the anchor result was.
+                related = [r for r in related if owner_allows(principal, r["memory"].get("owner_user_id"))]
 
         await log_audit(
             pool,
@@ -880,14 +854,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail=f"token '{principal.name}' is not allowed to write to context '{ctx_slug}'",
                         )
+                require_owner_allowed(principal, old["owner_user_id"], memory_id=memory_id)
 
                 embedding = await provider.embed_passage(body.content)
 
+                # owner_user_id carries over to the superseding row - an update() is
+                # a new version of the same memory, not a change of ownership.
                 new_row = await conn.fetchrow(
                     f"""
                     WITH ins AS (
-                        INSERT INTO memories (context_id, type, title, content, importance, confidence, source, occurred_at, embedding)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
+                        INSERT INTO memories (context_id, type, title, content, importance, confidence, source, occurred_at, embedding, owner_user_id)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10)
                         RETURNING id, context_id, type, title, content, importance, confidence, source,
                                   status, superseded_by, occurred_at, created_at, updated_at
                     )
@@ -902,6 +879,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     old["source"],
                     old["occurred_at"],
                     _vector_literal(embedding),
+                    old["owner_user_id"],
                 )
 
                 await conn.execute(
@@ -927,15 +905,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         principal: Annotated[Principal, Depends(require_scope("write"))],
         hard: bool = False,
     ):
-        if principal.allowed_contexts is not None:
-            ctx_slug = await pool.fetchval(
-                "SELECT c.slug FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1", memory_id
+        if principal.allowed_contexts is not None or principal.owner_filter is not None:
+            row = await pool.fetchrow(
+                "SELECT c.slug AS context, m.owner_user_id FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1",
+                memory_id,
             )
-            if ctx_slug is not None and not principal.context_allowed(ctx_slug):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"token '{principal.name}' is not allowed to write to context '{ctx_slug}'",
-                )
+            if row is not None:
+                if not principal.context_allowed(row["context"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"token '{principal.name}' is not allowed to write to context '{row['context']}'",
+                    )
+                require_owner_allowed(principal, row["owner_user_id"], memory_id=memory_id)
 
         if hard:
             try:
@@ -1087,6 +1068,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if principal.allowed_contexts is not None:
             ctx_slug = await context_slug_of_memory(pool, memory_id)
             require_context_allowed(principal, ctx_slug, memory_id=memory_id)
+        if principal.owner_filter is not None:
+            owner_user_id = await owner_user_id_of_memory(pool, memory_id)
+            if owner_user_id is not False:  # False = memory missing, let the 404 below surface on its own
+                require_owner_allowed(principal, owner_user_id, memory_id=memory_id)
 
         try:
             neighbors = await get_related(pool, memory_id=memory_id, relation=relation)
@@ -1103,6 +1088,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if principal.allowed_contexts is not None:
             neighbors = [n for n in neighbors if principal.context_allowed(n["memory"]["context"])]
+        if principal.owner_filter is not None:
+            neighbors = [n for n in neighbors if owner_allows(principal, n["memory"].get("owner_user_id"))]
 
         return RelatedResponse(
             memory_id=memory_id,
@@ -1143,6 +1130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 to_date=to,
                 limit=limit,
                 allowed_contexts=allowed_contexts,
+                owner_filter=principal.owner_filter,
             )
         except GraphUnknownContextError as exc:
             raise HTTPException(

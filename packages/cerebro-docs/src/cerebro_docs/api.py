@@ -21,17 +21,7 @@ import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cerebro_docs.auth import (
-    DuplicateTokenNameError,
-    InvalidScopesError,
-    Principal,
-    TokenNotFoundError,
-    create_api_token,
-    get_principal,
-    list_api_tokens,
-    require_scope,
-    revoke_api_token,
-)
+from cerebro_docs.auth import Principal, get_principal, require_scope
 from cerebro_docs.config import Settings, get_settings
 from cerebro_docs.db import apply_migrations, check_health, create_pool
 from cerebro_docs.sections import (
@@ -125,6 +115,7 @@ class DocumentOut(BaseModel):
     content: str
     status: str
     created_by: str | None
+    owner_user_id: UUID | None = None  # the human owner (cerebro_auth.users.id), distinct from created_by
     created_at: datetime
     updated_at: datetime
     score: float | None = None  # only populated by GET /documents?q=...
@@ -148,30 +139,6 @@ class SectionPatchIn(StrictIn):
     body: str = ""
     create_if_missing: bool = False
     new_heading_level: int = Field(default=2, ge=1, le=6)
-
-
-class TokenCreate(StrictIn):
-    name: str = Field(min_length=1, max_length=100)
-    scopes: list[str] = Field(min_length=1)
-    allowed_categories: list[str] | None = None
-    # admin-only (this endpoint already requires admin scope): if passed, the server
-    # hashes THIS value instead of generating one -- used by `cerebro token create`
-    # to also register the SAME secret in cerebro-memory (ecosistema-cerebro.md
-    # SS13, cross-cutting tokens).
-    value: str | None = Field(default=None, min_length=1)
-
-
-class TokenOut(BaseModel):
-    id: UUID
-    name: str
-    scopes: list[str]
-    allowed_categories: list[str] | None
-    created_at: datetime
-    revoked_at: datetime | None
-
-
-class TokenCreateOut(TokenOut):
-    token: str  # plaintext - only in THIS response, never again
 
 
 class StatsOut(BaseModel):
@@ -235,6 +202,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"token '{principal.name}' is not allowed to access category '{slug}'",
             )
 
+    def apply_owner_filter(filters: list[str], params: list[Any], owner_filter: dict[str, Any] | None) -> None:
+        """Appends the ownership gate (separate from and additional to the
+        category gate above) to an in-progress `WHERE` clause being built as
+        `filters`/`params`. Always filters on the `documents` table aliased `d`."""
+        if owner_filter is None:
+            return
+        if "user_id" in owner_filter:
+            params.append(owner_filter["user_id"])
+            filters.append(f"d.owner_user_id = ${len(params)}")
+        elif "user_id_in" in owner_filter:
+            params.append(owner_filter["user_id_in"])
+            filters.append(f"d.owner_user_id = ANY(${len(params)}::uuid[])")
+
     # ---------------------------------------------------------------- health
 
     @app.get("/health")
@@ -281,48 +261,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allowed,
             )
         return StatsOut(categories=categories, documents=documents, versions=versions)
-
-    # ---------------------------------------------------------------- tokens
-
-    @app.post(
-        "/tokens",
-        status_code=status.HTTP_201_CREATED,
-        response_model=TokenCreateOut,
-        dependencies=[Depends(require_scope("admin"))],
-    )
-    async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            created = await create_api_token(
-                pool,
-                name=body.name,
-                scopes=body.scopes,
-                allowed_categories=body.allowed_categories,
-                value=body.value,
-            )
-        except InvalidScopesError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        except DuplicateTokenNameError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"an active token named '{exc}' already exists - revoke it first",
-            ) from exc
-        return TokenCreateOut(**created)
-
-    @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_scope("admin"))])
-    async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        rows = await list_api_tokens(pool)
-        return [dict(r) for r in rows]
-
-    @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_scope("admin"))])
-    async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            row = await revoke_api_token(pool, name)
-        except TokenNotFoundError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"no active token named '{exc}'",
-            ) from exc
-        return dict(row)
 
     # ---------------------------------------------------------------- categories
 
@@ -507,15 +445,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             row = await pool.fetchrow(
                 """
-                INSERT INTO documents (category_id, slug, title, content, created_by)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
+                INSERT INTO documents (category_id, slug, title, content, created_by, owner_user_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, category_id, slug, title, content, status, created_by, owner_user_id, created_at, updated_at
                 """,
                 category_row["id"],
                 slug,
                 body.title,
                 body.content,
                 creator,
+                principal.user_id,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -567,35 +506,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
         """Exact route: works the same for archived documents and for `hidden`
-        categories (neither is filtered here, only in listings). If there's no
-        direct match, falls back to `slug_redirects` -- the real document at its current
-        route ALWAYS wins over a redirect; the fallback only runs when the direct
-        lookup already returned a 404 (see luisjdev-pendientes/ecosistema-cerebro)."""
+        categories (neither is filtered here, only in listings) -- but it DOES
+        respect `principal.owner_filter` (a separate, additional gate from the
+        category one): reading a document by its exact known path must not bypass
+        ownership. If there's no direct match, falls back to `slug_redirects` --
+        the real document at its current route ALWAYS wins over a redirect; the
+        fallback only runs when the direct lookup already returned a 404 (see
+        luisjdev-pendientes/ecosistema-cerebro) -- and a redirected document must
+        ALSO pass the ownership check before being returned."""
         require_category_allowed(principal, category)
+
+        direct_filters = ["c.slug = $1", "d.slug = $2"]
+        direct_params: list[Any] = [category, slug]
+        apply_owner_filter(direct_filters, direct_params, principal.owner_filter)
         row = await pool.fetchrow(
-            """
-            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
-                   c.slug AS category
+            f"""
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.owner_user_id,
+                   d.created_at, d.updated_at, c.slug AS category
             FROM documents d JOIN categories c ON c.id = d.category_id
-            WHERE c.slug = $1 AND d.slug = $2
+            WHERE {' AND '.join(direct_filters)}
             """,
-            category,
-            slug,
+            *direct_params,
         )
         if row is not None:
             return row_to_document_out(row)
 
+        redirect_filters = ["r.old_category = $1", "r.old_slug = $2"]
+        redirect_params: list[Any] = [category, slug]
+        apply_owner_filter(redirect_filters, redirect_params, principal.owner_filter)
         redirected = await pool.fetchrow(
-            """
-            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
-                   c.slug AS category
+            f"""
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.owner_user_id,
+                   d.created_at, d.updated_at, c.slug AS category
             FROM slug_redirects r
             JOIN documents d ON d.id = r.document_id
             JOIN categories c ON c.id = d.category_id
-            WHERE r.old_category = $1 AND r.old_slug = $2
+            WHERE {' AND '.join(redirect_filters)}
             """,
-            category,
-            slug,
+            *redirect_params,
         )
         if redirected is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
@@ -622,7 +570,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         An explicit `category` is taken as-is (a `hidden` category is still
         reachable by knowing its exact slug in advance); without `category`, `hidden`
-        categories are also excluded from the unfiltered listing ("browse everything")."""
+        categories are also excluded from the unfiltered listing ("browse everything").
+
+        `principal.owner_filter`, when set, is applied as an ADDITIONAL filter on
+        top of the category one above -- a separate "who owns this" gate, never a
+        substitute for it."""
         filters: list[str] = ["d.status = $1"]
         params: list[Any] = [doc_status]
 
@@ -634,6 +586,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if principal.allowed_categories is not None:
                 params.append(list(principal.allowed_categories))
                 filters.append(f"c.slug = ANY(${len(params)}::text[])")
+
+        apply_owner_filter(filters, params, principal.owner_filter)
 
         if q:
             params.append(q)
@@ -654,8 +608,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset_param = len(params)
 
         sql = f"""
-            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.created_at, d.updated_at,
-                   c.slug AS category, {select_score}
+            SELECT d.id, d.slug, d.title, d.content, d.status, d.created_by, d.owner_user_id,
+                   d.created_at, d.updated_at, c.slug AS category, {select_score}
             FROM documents d JOIN categories c ON c.id = d.category_id
             {where_clause}
             {order_clause}
@@ -756,7 +710,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         UPDATE documents
                         SET title = $1, content = $2, category_id = $3, slug = $4, updated_at = now()
                         WHERE id = $5
-                        RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
+                        RETURNING id, category_id, slug, title, content, status, created_by, owner_user_id, created_at, updated_at
                         """,
                         body.title,
                         body.content,
@@ -859,7 +813,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 new_row = await conn.fetchrow(
                     """
                     UPDATE documents SET content = $1, updated_at = now() WHERE id = $2
-                    RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
+                    RETURNING id, category_id, slug, title, content, status, created_by, owner_user_id, created_at, updated_at
                     """,
                     new_content,
                     document_id,
@@ -888,7 +842,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         new_row = await pool.fetchrow(
             """
             UPDATE documents SET status = $1, updated_at = now() WHERE id = $2
-            RETURNING id, category_id, slug, title, content, status, created_by, created_at, updated_at
+            RETURNING id, category_id, slug, title, content, status, created_by, owner_user_id, created_at, updated_at
             """,
             new_status,
             document_id,

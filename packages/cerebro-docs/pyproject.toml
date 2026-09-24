@@ -20,6 +20,12 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    # so tests can apply the shared `cerebro_auth` schema to the ephemeral test
+    # database before this package's own migrations/tests run - see
+    # tests/conftest.py. Only a dev/test dependency: at runtime this service only
+    # ever READS cerebro_auth's tables via a schema-qualified query (auth.py),
+    # it never imports the package itself.
+    "cerebro-auth",
 ]
 
 [project.scripts]

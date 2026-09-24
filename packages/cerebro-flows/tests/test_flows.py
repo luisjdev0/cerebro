@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from cerebro_flows.api import create_app
 from cerebro_flows.config import get_settings
 
+from .cerebro_auth_helpers import add_user_to_group, insert_group, insert_token, insert_user, set_group_scopes
 from .test_schema import INC_22
 
 
@@ -292,3 +293,88 @@ class TestStats:
         assert after["categories"] == before["categories"] + 1
         assert after["flows"] == before["flows"] + 1
         assert after["runs"] == before["runs"] + 1
+
+
+# --------------------------------------------------------------------------- ownership filter
+
+
+class TestOwnershipFilter:
+    """`principal.owner_filter` (cerebro_flows.auth): who can list/get/start a flow
+    DEFINITION they didn't necessarily create. Fixtures are inserted directly into
+    the shared `cerebro_auth` schema (see cerebro_auth_helpers) since token/user/
+    group management no longer lives in this service."""
+
+    @pytest.fixture()
+    def scenario(self, client, auth_headers):
+        """One category, two 'user'-level tokens (each the owner of one flow) that
+        share a group, plus one 'owner'-level token for that same group."""
+        dsn = get_settings().database_url
+
+        async def setup():
+            group_id = await insert_group(dsn)
+            user1 = await insert_user(dsn, access_level="user")
+            user2 = await insert_user(dsn, access_level="user")
+            owner_user = await insert_user(dsn, access_level="owner")
+            for uid in (user1, user2, owner_user):
+                await add_user_to_group(dsn, uid, group_id)
+            await set_group_scopes(dsn, group_id, allowed_modules=["flows"], module_scopes=None)
+
+            token1 = await insert_token(dsn, name=f"owner-t1-{uuid.uuid4().hex[:8]}", user_id=user1, allowed_modules=["flows"])
+            token2 = await insert_token(dsn, name=f"owner-t2-{uuid.uuid4().hex[:8]}", user_id=user2, allowed_modules=["flows"])
+            owner_token = await insert_token(
+                dsn, name=f"owner-t3-{uuid.uuid4().hex[:8]}", user_id=owner_user, allowed_modules=None
+            )
+            return token1, token2, owner_token
+
+        token1, token2, owner_token = asyncio.run(setup())
+
+        cat = _make_category(client, auth_headers)
+        flow1 = _make_flow(client, {"Authorization": f"Bearer {token1}"}, cat)
+        flow2 = _make_flow(client, {"Authorization": f"Bearer {token2}"}, cat)
+
+        return {
+            "category": cat,
+            "flow1": flow1,
+            "flow2": flow2,
+            "headers1": {"Authorization": f"Bearer {token1}"},
+            "headers2": {"Authorization": f"Bearer {token2}"},
+            "owner_headers": {"Authorization": f"Bearer {owner_token}"},
+        }
+
+    def test_user_level_token_only_lists_its_own_flow(self, client, scenario):
+        resp = client.get("/flows", params={"category": scenario["category"]}, headers=scenario["headers1"])
+        assert resp.status_code == 200, resp.text
+        codes = {f["code"] for f in resp.json()}
+        assert scenario["flow1"]["code"] in codes
+        assert scenario["flow2"]["code"] not in codes
+
+    def test_user_level_token_cannot_get_or_start_someone_elses_flow(self, client, scenario):
+        other_code = scenario["flow2"]["code"]
+        get_resp = client.get(f"/flows/{other_code}", headers=scenario["headers1"])
+        assert get_resp.status_code == 404, get_resp.text
+
+        start_resp = client.post(f"/flows/{other_code}/start", headers=scenario["headers1"])
+        assert start_resp.status_code == 404, start_resp.text
+
+    def test_owner_level_token_sees_group_mates_flows(self, client, scenario):
+        resp = client.get("/flows", params={"category": scenario["category"]}, headers=scenario["owner_headers"])
+        assert resp.status_code == 200, resp.text
+        codes = {f["code"] for f in resp.json()}
+        assert scenario["flow1"]["code"] in codes
+        assert scenario["flow2"]["code"] in codes
+
+        get_resp = client.get(f"/flows/{scenario['flow2']['code']}", headers=scenario["owner_headers"])
+        assert get_resp.status_code == 200, get_resp.text
+
+        start_resp = client.post(f"/flows/{scenario['flow2']['code']}/start", headers=scenario["owner_headers"])
+        assert start_resp.status_code == 200, start_resp.text
+
+    def test_root_sees_everything(self, client, scenario, auth_headers):
+        resp = client.get("/flows", params={"category": scenario["category"]}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        codes = {f["code"] for f in resp.json()}
+        assert scenario["flow1"]["code"] in codes
+        assert scenario["flow2"]["code"] in codes
+
+        assert client.get(f"/flows/{scenario['flow1']['code']}", headers=auth_headers).status_code == 200
+        assert client.get(f"/flows/{scenario['flow2']['code']}", headers=auth_headers).status_code == 200

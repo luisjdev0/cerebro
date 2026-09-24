@@ -17,7 +17,7 @@ import httpx
 
 
 class CerebroAPIError(RuntimeError):
-    """An HTTP response >= 400 from cerebro-memory or cerebro-docs.
+    """An HTTP response >= 400 from cerebro-memory, cerebro-docs, cerebro-flows, or cerebro-auth.
 
     `status_code` and `detail` are accessible without the caller having to re-parse
     `response` -- `detail` is what the server sent in `{"detail": ...}`
@@ -72,9 +72,20 @@ class BaseClient:
     def __exit__(self, *exc_info: Any) -> None:
         self.close()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _request(self, method: str, path: str, *, authenticated: bool = True, **kwargs: Any) -> httpx.Response:
+        # `authenticated=False` is for endpoints like cerebro-auth's `POST /login`,
+        # which validate a *different* token (given in the request body) and must not
+        # send this client's own bearer token -- so we build the request the same way
+        # and then strip the `Authorization` header the constructor put in
+        # `self._client.headers` before sending it, instead of skipping auth entirely
+        # via a separate unauthenticated client/transport.
         try:
-            resp = self._client.request(method, path, **kwargs)
+            if authenticated:
+                resp = self._client.request(method, path, **kwargs)
+            else:
+                request = self._client.build_request(method, path, **kwargs)
+                request.headers.pop("Authorization", None)
+                resp = self._client.send(request)
         except httpx.RequestError as exc:
             raise CerebroConnectionError(self.base_url, exc) from exc
 

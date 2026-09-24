@@ -124,24 +124,6 @@ def test_get_stats():
     assert transport.last["path"] == "/stats"
 
 
-class TestTokens:
-    def test_create_token_minimal(self):
-        transport = RecordingTransport()
-        make_client(transport).create_token("agente-x", ["read"])
-        assert transport.last["json"] == {"name": "agente-x", "scopes": ["read"]}
-
-    def test_list_tokens(self):
-        transport = RecordingTransport(response_json=[])
-        make_client(transport).list_tokens()
-        assert transport.last["path"] == "/tokens"
-
-    def test_revoke_token(self):
-        transport = RecordingTransport()
-        make_client(transport).revoke_token("agente-x")
-        assert transport.last["method"] == "DELETE"
-        assert transport.last["path"] == "/tokens/agente-x"
-
-
 class TestErrorPropagation:
     def test_http_error_raises_cerebro_api_error(self):
         transport = RecordingTransport(response_json={"detail": "flow not found"}, status_code=404)

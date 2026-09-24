@@ -6,6 +6,7 @@ respond (same pattern as cerebro-memory/tests/test_supersedence.py).
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import asyncpg
@@ -13,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cerebro_docs.api import create_app
+from cerebro_docs.auth import generate_token, hash_token
 from cerebro_docs.config import get_settings
 
 
@@ -65,6 +67,35 @@ def _make_document(client, auth_headers, category: str, *, title="Documento de p
     resp = client.post("/documents", json=body, headers=auth_headers)
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def _make_read_only_token_scoped_to_categories(dsn: str, categories: list[str]) -> str:
+    """Token management now lives exclusively in `cerebro-auth` (see
+    tests/test_auth.py) - this inserts directly into `cerebro_auth.api_tokens` for
+    the one test below that needs a category-restricted token."""
+    plaintext = generate_token()
+    module_scopes = json.dumps({"docs": {"categories": categories}})
+
+    async def _do() -> None:
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes)
+                VALUES ($1, $2, NULL, $3, 'user', $4, $5::jsonb)
+                """,
+                hash_token(plaintext),
+                f"test-token-stats-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["docs"],
+                module_scopes,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_do())
+    return plaintext
 
 
 # --------------------------------------------------------------------------- categories CRUD
@@ -498,14 +529,8 @@ class TestStats:
         _make_document(client, auth_headers, allowed, title="Doc en permitida", slug="doc-permitida")
         _make_document(client, auth_headers, other, title="Doc en ajena", slug="doc-ajena")
 
-        name = f"test-token-stats-{uuid.uuid4().hex[:8]}"
-        token_resp = client.post(
-            "/tokens",
-            json={"name": name, "scopes": ["read"], "allowed_categories": [allowed]},
-            headers=auth_headers,
-        )
-        assert token_resp.status_code == 201, token_resp.text
-        headers = {"Authorization": f"Bearer {token_resp.json()['token']}"}
+        token = _make_read_only_token_scoped_to_categories(get_settings().database_url, [allowed])
+        headers = {"Authorization": f"Bearer {token}"}
 
         resp = client.get("/stats", headers=headers)
         assert resp.status_code == 200, resp.text

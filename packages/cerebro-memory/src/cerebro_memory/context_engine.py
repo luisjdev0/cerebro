@@ -370,6 +370,7 @@ async def decide_scope(
     limit: int,
     resolver: AmbiguityResolver | None = None,
     allowed_contexts: list[str] | None = None,
+    owner_filter: dict[str, Any] | None = None,
 ) -> ScopeDecision:
     """Full decision: preliminary retrieval -> score -> threshold -> log -> (ambiguous:
     fetch per-candidate evidence, then optionally hand off to `resolver` - Phase 4,
@@ -384,6 +385,11 @@ async def decide_scope(
     description to a restricted token. The preliminary retrieval is also narrowed at
     the SQL level (`hybrid_search(allowed_contexts=...)`) so disallowed-context rows
     are not even fetched, let alone scored.
+
+    `owner_filter` (Change 3): narrows the preliminary retrieval AND the per-candidate
+    evidence (`results_by_candidate`) to this principal's own/group content, same as
+    `hybrid_search(owner_filter=...)` - otherwise the "ambiguous" branch would leak
+    actual memory content the caller doesn't own.
     """
     preliminary = await hybrid_search(
         pool,
@@ -394,6 +400,7 @@ async def decide_scope(
         limit=settings.context_engine_candidate_pool,
         include_superseded=include_superseded,
         allowed_contexts=allowed_contexts,
+        owner_filter=owner_filter,
     )
     contexts = await _fetch_contexts(pool)
     if allowed_contexts is not None:
@@ -466,6 +473,7 @@ async def decide_scope(
                 type_=type_,
                 limit=settings.context_engine_results_per_candidate,
                 include_superseded=include_superseded,
+                owner_filter=owner_filter,
             )
         except UnknownContextError:
             per_ctx = []

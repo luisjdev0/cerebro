@@ -29,7 +29,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient, FlowsClient, MemoryClient
+from cerebro_clients import (
+    AuthClient,
+    CerebroAPIError,
+    CerebroConnectionError,
+    DocsClient,
+    FlowsClient,
+    MemoryClient,
+)
 from mcp.server.fastmcp import FastMCP
 
 MEMORY_TYPES = ("semantic", "episodic", "procedural", "decision")
@@ -38,6 +45,7 @@ SECTION_OPERATIONS = ("replace", "append", "insert_after", "insert_before", "del
 _memory = MemoryClient()
 _docs = DocsClient()
 _flows = FlowsClient()
+_auth = AuthClient()
 
 # Process-memory of the last *unresolved* disambiguation (Phase 2 Context Engine,
 # plan_v2.md SS7). See the memory_search() docstring for the auto-resolution
@@ -65,7 +73,10 @@ mcp = FastMCP(
         "checkpoints -- flow_start/flow_next reveal the flow one step at a time "
         "(never read a full definition to 'follow' it manually), and flow_validate/"
         "flow_save/flow_update let you author new flows iterating over specific "
-        "errors before saving them."
+        "errors before saving them. Use auth_* to manage identities, groups and "
+        "tokens in cerebro-auth -- these tools grant real access to other "
+        "identities, so read each one's docstring in full before calling it, "
+        "especially auth_create_token."
     ),
 )
 
@@ -1549,6 +1560,344 @@ def flow_abort(run_id: str, reason: str | None = None) -> dict[str, Any]:
         if exc.status_code == 409:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+# =============================================================================== auth_*
+
+
+@mcp.tool()
+def auth_create_user(name: str, email: str | None = None, access_level: str = "user") -> dict[str, Any]:
+    """Creates a new identity (human or service) in cerebro-auth.
+
+    Requires an admin-level token: the underlying API enforces this and returns
+    an error if the token calling this tool isn't itself admin-level -- expect
+    that failure (don't retry with different arguments) if the caller isn't
+    admin-level, rather than assuming something else went wrong.
+
+    `access_level` sets this user's own permission tier (e.g. "user", "owner",
+    "admin"). Among other things, it's what a token created for this user via
+    auth_create_token inherits by default when that call omits its own
+    `access_level` and instead passes `user=name`. Creating the user does NOT
+    by itself grant access to any module -- that only happens once the user is
+    added to a group (auth_add_group_member) whose scopes were defined with
+    auth_set_group_scopes.
+
+    Args:
+        name: unique identifying name for this user.
+        email: optional email address, typically for a human user (omit for a
+            service/bot identity).
+        access_level: permission tier for this user (default "user").
+
+    Returns:
+        dict with the user created (`user`), or `error` if the calling token
+        isn't admin-level, or the name is already taken.
+    """
+    try:
+        user = _auth.create_user(name, email=email, access_level=access_level)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"user": user}
+
+
+@mcp.tool()
+def auth_list_users() -> dict[str, Any]:
+    """Lists all users (identities) registered in cerebro-auth.
+
+    Useful before auth_add_group_member or auth_create_token(user=...) to
+    confirm the exact name of an existing user, or to audit which identities
+    exist and at which `access_level`.
+
+    Returns:
+        dict with `users`: list of users (each with at least `name`,
+        `access_level` and, if set, `email`), or `error` if something failed.
+    """
+    try:
+        users = _auth.list_users()
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"users": users}
+
+
+@mcp.tool()
+def auth_create_group(slug: str, name: str) -> dict[str, Any]:
+    """Creates a new group -- the unit cerebro-auth uses to grant module access.
+
+    A freshly created group has NO permissions of its own: it's just a named
+    bucket. Use auth_set_group_scopes to define what its members can reach, and
+    auth_add_group_member to actually put users in it.
+
+    Args:
+        slug: short, stable identifier in lowercase with hyphens, e.g.
+            "eng-team" or "client-acme". Must be unique.
+        name: human-readable name for the group.
+
+    Returns:
+        dict with the group created (`group`), or `error` if the slug already exists.
+    """
+    try:
+        group = _auth.create_group(slug, name)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        if exc.status_code == 409:
+            return {"error": f"Ya existe un grupo con slug '{slug}'."}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"group": group}
+
+
+@mcp.tool()
+def auth_set_group_scopes(
+    group_slug: str,
+    allowed_modules: list[str],
+    module_scopes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Defines what every owner-level member of this group can access BY DEFAULT.
+
+    This is the group's actual permission grant, in two layers (the same shape
+    used by auth_create_token for an individual token):
+      - `allowed_modules` is the COARSE gate: which of "memory"/"docs"/"flows"
+        this group's members may touch at all. A module left out stays fully
+        inaccessible to them, no matter what `module_scopes` says about it.
+      - `module_scopes` is the FINE gate WITHIN each allowed module, e.g.
+        `{"memory": {"contexts": ["proyecto-x"]}}` restricts memory access to
+        just that one context even though "memory" is in `allowed_modules`.
+
+    This call REPLACES the group's current scopes -- it isn't additive. Every
+    owner-level member picks up the new scopes as their default the moment this
+    call succeeds (a token already created for them keeps whatever it was
+    created with, unless it was set up to fully inherit -- see auth_create_token).
+
+    Args:
+        group_slug: slug of an existing group.
+        allowed_modules: list of module names this group's members may access
+            at all, e.g. ["memory", "docs"].
+        module_scopes: optional per-module fine-grained restriction, keyed by
+            module name (only meaningful for modules already present in
+            `allowed_modules`).
+
+    Returns:
+        dict with the updated group (`group`), or `error` if the group doesn't
+        exist or a module name is invalid.
+    """
+    try:
+        group = _auth.set_group_scopes(group_slug, allowed_modules, module_scopes=module_scopes)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun grupo con slug '{group_slug}'."}
+        if exc.status_code == 422:
+            return {"error": f"cerebro-auth rechazo los scopes: {exc.detail}"}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"group": group}
+
+
+@mcp.tool()
+def auth_add_group_member(group_slug: str, user: str) -> dict[str, Any]:
+    """Adds an existing user to a group, granting them that group's default scopes.
+
+    Requires an admin-level token: the underlying API enforces this and returns
+    an error if the token calling this tool isn't itself admin-level -- expect
+    that failure (don't retry with different arguments) if the caller isn't
+    admin-level. Once added, an owner-level user inherits whatever
+    auth_set_group_scopes defined for this group -- see auth_create_token for
+    how that inheritance flows into tokens created for this user afterwards.
+
+    Args:
+        group_slug: slug of an existing group.
+        user: name of the existing user to add.
+
+    Returns:
+        dict with the updated group or membership (`group`), or `error` if the
+        calling token isn't admin-level, or the group/user doesn't exist.
+    """
+    try:
+        group = _auth.add_group_member(group_slug, user)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        if exc.status_code == 404:
+            return {"error": f"El grupo '{group_slug}' o el usuario '{user}' no existen."}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"group": group}
+
+
+@mcp.tool()
+def auth_create_token(
+    name: str,
+    scopes: list[str],
+    allowed_modules: list[str] | None = None,
+    module_scopes: dict[str, Any] | None = None,
+    user: str | None = None,
+    access_level: str | None = None,
+) -> dict[str, Any]:
+    """Creates a new API token -- this is how real access gets handed to another
+    identity (a person, an agent, a service). Read this whole docstring before
+    calling it, not just the argument names: a token is a live credential, and
+    getting its scoping wrong either under- or over-grants access.
+
+    `access_level` vs. `user` -- exactly ONE of the two applies, never both:
+      - Pass `access_level` directly to create a token with NO associated user
+        (a service/root-adjacent token) -- its permission tier is whatever you
+        pass here.
+      - Pass `user` (the name of an existing user, see auth_list_users) to
+        create a token FOR that user -- its permission tier is inherited from
+        that user's own `access_level` (set at auth_create_user time), not
+        chosen by this call.
+      - Passing BOTH `user` and `access_level` is an error: the tier always
+        comes from exactly one of the two, never a mix of both.
+
+    `allowed_modules` / `module_scopes` -- the two-layer access gate, same shape
+    as auth_set_group_scopes:
+      - `allowed_modules` is the COARSE gate: which of "memory"/"docs"/"flows"
+        this token may touch AT ALL. A module left out is fully inaccessible to
+        this token, no matter what `module_scopes` says.
+      - `module_scopes` is the FINE gate WITHIN each allowed module, e.g.
+        `{"memory": {"contexts": ["proyecto-x"]}}` restricts this token's
+        memory access to just that one context, even though "memory" is
+        present in `allowed_modules`.
+
+    How the two pairs interact:
+      - For a token with NO `user` (i.e. `access_level` given directly),
+        provide `allowed_modules` explicitly -- there's no group membership to
+        inherit from, so omitting it likely means the token can't touch
+        anything.
+      - For a token tied to an `owner`-level `user`, `allowed_modules` /
+        `module_scopes` can be OMITTED ENTIRELY to fully inherit whatever that
+        user's groups currently grant (see auth_set_group_scopes) -- this is
+        the common case for a token that should simply "be" that user. They can
+        also be given explicitly, but only as a NARROWING of what the user's
+        groups already allow (e.g. their groups grant memory+docs, but this one
+        token should only get memory) -- never as a WIDENING beyond it; the API
+        rejects an attempt to widen rather than silently clamping it.
+
+    `scopes` is the action-level grant within cerebro-auth itself (what
+    operations this token can perform), independent of the module gates above.
+
+    IMPORTANT: the token's secret value is shown only ONCE, in this call's
+    response, and can never be retrieved again afterward by anyone, including
+    an admin. If this token is meant for someone or something else, relay the
+    value to them right away as part of finishing this task -- don't assume you
+    or they can fetch it later; the only recourse at that point is
+    auth_revoke_token + creating a new one.
+
+    Args:
+        name: unique identifying name for this token.
+        scopes: list of action-level scopes this token is granted within
+            cerebro-auth.
+        allowed_modules: coarse gate -- which modules ("memory", "docs", "flows")
+            this token may touch at all. See above for when it may be omitted.
+        module_scopes: fine gate within each allowed module, keyed by module
+            name. See above for the narrowing-only rule when `user` is given.
+        user: name of an existing user this token acts as. Mutually exclusive
+            with `access_level`.
+        access_level: permission tier for a token with no associated user.
+            Mutually exclusive with `user`.
+
+    Returns:
+        dict with the token created (`token`, includes the one-time-visible
+        `value` -- relay it now), or `error` if both or neither of `user`/
+        `access_level` were given, the user doesn't exist, or `allowed_modules`/
+        `module_scopes` would widen access beyond what the user's groups allow.
+    """
+    try:
+        token = _auth.create_token(
+            name,
+            scopes,
+            allowed_modules=allowed_modules,
+            module_scopes=module_scopes,
+            user=user,
+            access_level=access_level,
+        )
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        if exc.status_code == 404:
+            return {"error": f"El usuario '{user}' no existe."}
+        if exc.status_code == 409:
+            return {"error": f"Ya existe un token con nombre '{name}'."}
+        if exc.status_code == 422:
+            return {"error": f"cerebro-auth rechazo el token: {exc.detail}"}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"token": token}
+
+
+@mcp.tool()
+def auth_list_tokens() -> dict[str, Any]:
+    """Lists tokens visible to the caller (metadata only -- never the secret value).
+
+    A token's `value` is shown only once, at auth_create_token time -- this
+    listing lets you audit what access currently exists (which scopes,
+    allowed_modules, module_scopes, and associated user/access_level each token
+    has) before deciding whether to auth_revoke_token something stale or
+    over-privileged, but it can never recover a lost token value.
+
+    Returns:
+        dict with `tokens`: list of tokens (name, scopes, allowed_modules,
+        module_scopes, user/access_level, created_at, etc -- no `value`), or
+        `error` if something failed.
+    """
+    try:
+        tokens = _auth.list_tokens()
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        return {"error": _http_error_message("cerebro-auth", exc)}
+
+    return {"tokens": tokens}
+
+
+@mcp.tool()
+def auth_revoke_token(name: str) -> dict[str, Any]:
+    """Revokes a token by name -- immediate and irreversible: whoever was using
+    it loses access right away, and a brand-new token (with a new one-time
+    value) must be created via auth_create_token to replace it.
+
+    Use it when a token leaked, is no longer needed, or belonged to an
+    identity/purpose that shouldn't have access anymore. Confirm with the user
+    first if revoking might break something currently in use, unless they
+    already asked for this specific token to be revoked.
+
+    Args:
+        name: unique name of the token to revoke.
+
+    Returns:
+        dict with confirmation, or `error` if no token with that name exists.
+    """
+    try:
+        return _auth.revoke_token(name)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-auth", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-auth", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No existe ningun token con nombre '{name}'."}
+        return {"error": _http_error_message("cerebro-auth", exc)}
 
 
 def main() -> None:
