@@ -32,6 +32,7 @@ granting admin with no DB row at all) is unchanged.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -86,6 +87,15 @@ class Principal:
 # --------------------------------------------------------------------------- resolution helpers
 
 
+def _decode_jsonb(value: Any) -> Any:
+    """asyncpg returns JSONB columns as raw text unless a codec is registered on the
+    connection (none is, here) -- decode explicitly, same pattern as
+    `cerebro_memory.auth._decode_jsonb`."""
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 def _module_categories(module_scopes: dict[str, Any] | None) -> frozenset[str] | None:
     """Extracts the flows-specific `categories` restriction out of a `module_scopes`
     JSONB blob (step 7). None means "no restriction within flows" - either because
@@ -123,7 +133,7 @@ async def _resolve_owner_base(
         g_modules = set(g["allowed_modules"] or [])
         base_modules |= g_modules
         if THIS_MODULE in g_modules:
-            flows_category_sets.append(_module_categories(g["module_scopes"]))
+            flows_category_sets.append(_module_categories(_decode_jsonb(g["module_scopes"])))
 
     if any(c is None for c in flows_category_sets):
         base_categories: frozenset[str] | None = None
@@ -198,7 +208,7 @@ async def get_principal(
 
     user_id: uuid.UUID | None = row["user_id"]
     token_allowed_modules: list[str] | None = row["allowed_modules"]
-    token_module_scopes: dict[str, Any] | None = row["module_scopes"]
+    token_module_scopes: dict[str, Any] | None = _decode_jsonb(row["module_scopes"])
 
     # Step 3
     if user_id is not None:

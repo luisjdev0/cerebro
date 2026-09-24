@@ -61,6 +61,7 @@ computation at the bottom of `get_principal`.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -245,7 +246,13 @@ async def get_principal(
 
     name: str = row["user_name"] if user_id is not None else row["token_name"]
     token_allowed_modules: list[str] | None = row["token_allowed_modules"]
-    token_module_scopes: dict[str, Any] | None = row["token_module_scopes"]
+    # asyncpg does NOT auto-decode jsonb to dict -- it comes back as a raw JSON
+    # string unless a codec is registered (none is, same as elsewhere in this
+    # monorepo, e.g. cerebro_flows.engine's payload handling).
+    raw_token_module_scopes = row["token_module_scopes"]
+    token_module_scopes: dict[str, Any] | None = (
+        json.loads(raw_token_module_scopes) if isinstance(raw_token_module_scopes, str) else raw_token_module_scopes
+    )
 
     module_scopes: dict[str, Any]
     if access_level == "admin":
@@ -266,8 +273,10 @@ async def get_principal(
         for group_row in group_rows:
             if group_row["allowed_modules"]:
                 base_modules |= set(group_row["allowed_modules"])
-            if group_row["module_scopes"]:
-                base_scopes = _merge_module_scopes(base_scopes, group_row["module_scopes"])
+            raw_group_scopes = group_row["module_scopes"]
+            group_scopes = json.loads(raw_group_scopes) if isinstance(raw_group_scopes, str) else raw_group_scopes
+            if group_scopes:
+                base_scopes = _merge_module_scopes(base_scopes, group_scopes)
         allowed_modules = _narrow_allowed_modules(base_modules, token_allowed_modules)
         module_scopes = _narrow_module_scopes(base_scopes, token_module_scopes)
     else:  # access_level == "user" -- base case, nothing to inherit

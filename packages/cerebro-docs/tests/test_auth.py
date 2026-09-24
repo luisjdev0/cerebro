@@ -353,7 +353,11 @@ class TestTokensRoutesRemoved:
 class TestSharedSchemaResolution:
     def test_revoked_shared_token_is_401(self, client):
         settings = get_settings()
-        token = _make_service_token(settings.database_url, scopes=["read"], access_level="admin", allowed_modules=None)
+        # A service token (no user) can never have NULL allowed_modules (the DB
+        # CHECK requires it explicitly when there's no user/group to inherit from)
+        # -- use a user-tied admin token instead, same as the "inherits all
+        # modules" test below, since only user-tied tokens can omit it.
+        token, _ = _make_user_token(settings.database_url, access_level="admin", scopes=["read"], allowed_modules=None)
         _revoke_token(settings.database_url, token)
         resp = client.get("/categories", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 401, resp.text
@@ -368,8 +372,10 @@ class TestSharedSchemaResolution:
 
     def test_admin_access_level_inherits_docs_module_by_default(self, client):
         settings = get_settings()
-        token = _make_service_token(
-            settings.database_url, scopes=["read"], access_level="admin", allowed_modules=None
+        # Service tokens (no user) can't have NULL allowed_modules -- only a
+        # user-tied token can omit it and inherit "all modules" as an admin.
+        token, _ = _make_user_token(
+            settings.database_url, access_level="admin", scopes=["read"], allowed_modules=None
         )
         resp = client.get("/categories", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200, resp.text
@@ -382,8 +388,8 @@ class TestSharedSchemaResolution:
         column."""
         slug = _make_category(client, root_headers)
         settings = get_settings()
-        token = _make_service_token(
-            settings.database_url, scopes=["read", "write"], access_level="admin", allowed_modules=None
+        token, _ = _make_user_token(
+            settings.database_url, access_level="admin", scopes=["read", "write"], allowed_modules=None
         )
         resp = client.delete(f"/categories/{slug}", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200, resp.text

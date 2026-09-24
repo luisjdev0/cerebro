@@ -23,6 +23,7 @@ from .cerebro_auth_helpers import (
     insert_group,
     insert_token,
     insert_user,
+    revoke_token,
     set_group_scopes,
 )
 
@@ -143,31 +144,24 @@ class TestSharedSchemaResolution:
         assert resp.status_code == 401
 
     def test_revoked_token_is_401(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="user")
-            return await insert_token(pool, name=f"revoked-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=["flows"])
+            user_id = await insert_user(dsn, access_level="user")
+            return await insert_token(dsn, name=f"revoked-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=["flows"])
 
         token = asyncio.run(setup())
-
-        async def revoke():
-            await pool.execute(
-                "UPDATE cerebro_auth.api_tokens SET revoked_at = now() WHERE token_hash = $1",
-                hash_token(token),
-            )
-
-        asyncio.run(revoke())
+        asyncio.run(revoke_token(dsn, token))
         resp = client.get("/categories", headers=_bearer(token))
         assert resp.status_code == 401
 
     def test_token_without_flows_module_is_blocked(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="user")
+            user_id = await insert_user(dsn, access_level="user")
             return await insert_token(
-                pool,
+                dsn,
                 name=f"no-flows-{uuid.uuid4().hex[:8]}",
                 user_id=user_id,
                 allowed_modules=["docs"],
@@ -178,11 +172,11 @@ class TestSharedSchemaResolution:
         assert resp.status_code == 403
 
     def test_admin_access_level_inherits_all_modules_when_token_allowed_modules_is_null(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="admin")
-            return await insert_token(pool, name=f"admin-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
+            user_id = await insert_user(dsn, access_level="admin")
+            return await insert_token(dsn, name=f"admin-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
 
         token = asyncio.run(setup())
         resp = client.get("/categories", headers=_bearer(token))
@@ -191,42 +185,42 @@ class TestSharedSchemaResolution:
     def test_user_access_level_with_no_allowed_modules_is_blocked(self, client):
         """access_level == 'user': nothing to inherit -- a NULL allowed_modules on
         the token means zero effective modules, not a permissive default."""
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="user")
-            return await insert_token(pool, name=f"bare-user-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
+            user_id = await insert_user(dsn, access_level="user")
+            return await insert_token(dsn, name=f"bare-user-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
 
         token = asyncio.run(setup())
         resp = client.get("/categories", headers=_bearer(token))
         assert resp.status_code == 403
 
     def test_owner_with_no_groups_and_no_token_scope_is_blocked(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="owner")
-            return await insert_token(pool, name=f"lonely-owner-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
+            user_id = await insert_user(dsn, access_level="owner")
+            return await insert_token(dsn, name=f"lonely-owner-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=None)
 
         token = asyncio.run(setup())
         resp = client.get("/categories", headers=_bearer(token))
         assert resp.status_code == 403
 
     def test_owner_inherits_group_modules_and_narrows_categories(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="owner")
-            group_id = await insert_group(pool)
-            await add_user_to_group(pool, user_id, group_id)
+            user_id = await insert_user(dsn, access_level="owner")
+            group_id = await insert_group(dsn)
+            await add_user_to_group(dsn, user_id, group_id)
             await set_group_scopes(
-                pool,
+                dsn,
                 group_id,
                 allowed_modules=["flows"],
                 module_scopes={"flows": {"categories": ["incident", "onboarding"]}},
             )
             return await insert_token(
-                pool,
+                dsn,
                 name=f"owner-{uuid.uuid4().hex[:8]}",
                 user_id=user_id,
                 allowed_modules=None,
@@ -238,12 +232,12 @@ class TestSharedSchemaResolution:
         assert resp.status_code == 200, resp.text
 
     def test_write_scope_required(self, client):
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            user_id = await insert_user(pool, access_level="user")
+            user_id = await insert_user(dsn, access_level="user")
             return await insert_token(
-                pool,
+                dsn,
                 name=f"ro-{uuid.uuid4().hex[:8]}",
                 user_id=user_id,
                 scopes=["read"],

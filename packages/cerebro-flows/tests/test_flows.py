@@ -308,21 +308,21 @@ class TestOwnershipFilter:
     def scenario(self, client, auth_headers):
         """One category, two 'user'-level tokens (each the owner of one flow) that
         share a group, plus one 'owner'-level token for that same group."""
-        pool = client.app.state.pool
+        dsn = get_settings().database_url
 
         async def setup():
-            group_id = await insert_group(pool)
-            user1 = await insert_user(pool, access_level="user")
-            user2 = await insert_user(pool, access_level="user")
-            owner_user = await insert_user(pool, access_level="owner")
+            group_id = await insert_group(dsn)
+            user1 = await insert_user(dsn, access_level="user")
+            user2 = await insert_user(dsn, access_level="user")
+            owner_user = await insert_user(dsn, access_level="owner")
             for uid in (user1, user2, owner_user):
-                await add_user_to_group(pool, uid, group_id)
-            await set_group_scopes(pool, group_id, allowed_modules=["flows"], module_scopes=None)
+                await add_user_to_group(dsn, uid, group_id)
+            await set_group_scopes(dsn, group_id, allowed_modules=["flows"], module_scopes=None)
 
-            token1 = await insert_token(pool, name=f"owner-t1-{uuid.uuid4().hex[:8]}", user_id=user1, allowed_modules=["flows"])
-            token2 = await insert_token(pool, name=f"owner-t2-{uuid.uuid4().hex[:8]}", user_id=user2, allowed_modules=["flows"])
+            token1 = await insert_token(dsn, name=f"owner-t1-{uuid.uuid4().hex[:8]}", user_id=user1, allowed_modules=["flows"])
+            token2 = await insert_token(dsn, name=f"owner-t2-{uuid.uuid4().hex[:8]}", user_id=user2, allowed_modules=["flows"])
             owner_token = await insert_token(
-                pool, name=f"owner-t3-{uuid.uuid4().hex[:8]}", user_id=owner_user, allowed_modules=None
+                dsn, name=f"owner-t3-{uuid.uuid4().hex[:8]}", user_id=owner_user, allowed_modules=None
             )
             return token1, token2, owner_token
 

@@ -746,8 +746,13 @@ class TestOwnershipFilter:
         )
         token_a, user_a = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=group_id)
         token_b, user_b = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=group_id)
-        # an owner NOT in the group must not show up as a group-mate.
-        token_c, user_c = _create_user_token(access_level="owner", scopes=["read", "write"])
+        # An owner with zero groups has zero effective access by design (never a
+        # permissive default) -- so to model "an owner NOT in THIS group but who
+        # still has real memory access elsewhere", user_c needs their OWN separate
+        # group, not no group at all.
+        other_group_id = _run_sql(_do_create_group)
+        _run_sql(_do_set_group_scopes, other_group_id, allowed_modules=["memory"], module_scopes=None)
+        token_c, user_c = _create_user_token(access_level="owner", scopes=["read", "write"], group_id=other_group_id)
         headers_a = {"Authorization": f"Bearer {token_a}"}
         headers_b = {"Authorization": f"Bearer {token_b}"}
         headers_c = {"Authorization": f"Bearer {token_c}"}
