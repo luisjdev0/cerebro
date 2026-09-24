@@ -33,7 +33,11 @@
 		reverse_proxy cerebro-flows-api:8000
 	}
 
+	handle_path /auth/* {
+		reverse_proxy cerebro-auth-api:8000
+	}
+
 	handle {
-		respond "cerebro gateway: use /memory, /docs or /flows" 404
+		respond "cerebro gateway: use /memory, /docs, /flows or /auth" 404
 	}
 }

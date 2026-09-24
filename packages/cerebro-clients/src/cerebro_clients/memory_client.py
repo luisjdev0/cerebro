@@ -164,26 +164,3 @@ class MemoryClient(BaseClient):
 
     def get_stats(self) -> dict[str, Any]:
         return self._request("GET", "/stats").json()
-
-    # --------------------------------------------------------------------- tokens
-
-    def create_token(
-        self,
-        name: str,
-        scopes: list[str],
-        *,
-        allowed_contexts: list[str] | None = None,
-        value: str | None = None,
-    ) -> dict[str, Any]:
-        body: dict[str, Any] = {"name": name, "scopes": scopes}
-        if allowed_contexts is not None:
-            body["allowed_contexts"] = allowed_contexts
-        if value is not None:
-            body["value"] = value
-        return self._request("POST", "/tokens", json=body).json()
-
-    def list_tokens(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/tokens").json()
-
-    def revoke_token(self, name: str) -> dict[str, Any]:
-        return self._request("DELETE", f"/tokens/{name}").json()

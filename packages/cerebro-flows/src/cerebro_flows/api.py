@@ -1,9 +1,10 @@
 """FastAPI app: categories, flow definitions (CRUD + versioning) and the "traffic
 light" execution engine (luisjdev-pendientes/cerebro-flows).
 
-Auth: every endpoint except /health requires `Authorization: Bearer <API_TOKEN>` -
-the exact same mechanism as cerebro-docs (`auth.py`, root token + tokens with scopes
-and `allowed_categories`).
+Auth: every endpoint except /health requires `Authorization: Bearer <API_TOKEN>`.
+Tokens are resolved against the shared `cerebro_auth` schema (owned by the
+`cerebro-auth` service) - see `auth.py` for the full resolution algorithm. Token
+management itself (create/list/revoke) no longer lives in this service.
 """
 
 import logging
@@ -19,15 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cerebro_flows import engine
 from cerebro_flows.auth import (
-    DuplicateTokenNameError,
-    InvalidScopesError,
     Principal,
-    TokenNotFoundError,
-    create_api_token,
     get_principal,
-    list_api_tokens,
     require_scope,
-    revoke_api_token,
 )
 from cerebro_flows.config import Settings, get_settings
 from cerebro_flows.db import apply_migrations, check_health, create_pool, create_redis
@@ -91,26 +86,6 @@ class FlowOut(BaseModel):
     created_by: str | None
     created_at: datetime
     updated_at: datetime
-
-
-class TokenCreate(StrictIn):
-    name: str = Field(min_length=1, max_length=100)
-    scopes: list[str] = Field(min_length=1)
-    allowed_categories: list[str] | None = None
-    value: str | None = Field(default=None, min_length=1)
-
-
-class TokenOut(BaseModel):
-    id: UUID
-    name: str
-    scopes: list[str]
-    allowed_categories: list[str] | None
-    created_at: datetime
-    revoked_at: datetime | None
-
-
-class TokenCreateOut(TokenOut):
-    token: str
 
 
 class StatsOut(BaseModel):
@@ -185,6 +160,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"token '{principal.name}' is not allowed to access category '{slug}'",
             )
 
+    def require_owner_allowed(principal: Principal, owner_user_id: UUID | None) -> None:
+        """The ownership gate (`principal.owner_filter`), separate from and
+        additional to `require_category_allowed`. A definition outside the
+        principal's ownership scope is treated as not found (same as excluding it
+        from GET /flows), so its existence isn't leaked to callers who can't list it."""
+        owner_filter = principal.owner_filter
+        if owner_filter is None:
+            return
+        if "user_id" in owner_filter:
+            allowed = owner_user_id == owner_filter["user_id"]
+        else:
+            allowed = owner_user_id in owner_filter["user_id_in"]
+        if not allowed:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
+
     def row_to_flow_out(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
         data = dict(row)
         data.pop("category_id", None)
@@ -230,40 +220,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allowed,
             )
         return StatsOut(categories=categories, flows=flows, runs=runs)
-
-    # ---------------------------------------------------------------- tokens
-
-    @app.post(
-        "/tokens",
-        status_code=status.HTTP_201_CREATED,
-        response_model=TokenCreateOut,
-        dependencies=[Depends(require_scope("admin"))],
-    )
-    async def create_token(body: TokenCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            created = await create_api_token(
-                pool, name=body.name, scopes=body.scopes, allowed_categories=body.allowed_categories, value=body.value
-            )
-        except InvalidScopesError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        except DuplicateTokenNameError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"an active token named '{exc}' already exists - revoke it first",
-            ) from exc
-        return TokenCreateOut(**created)
-
-    @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_scope("admin"))])
-    async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        return [dict(r) for r in await list_api_tokens(pool)]
-
-    @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_scope("admin"))])
-    async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        try:
-            row = await revoke_api_token(pool, name)
-        except TokenNotFoundError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no active token named '{exc}'") from exc
-        return dict(row)
 
     # ---------------------------------------------------------------- categories
 
@@ -353,8 +309,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 try:
                     def_row = await conn.fetchrow(
                         """
-                        INSERT INTO flow_definitions (category_id, code, name, description, created_by)
-                        VALUES ($1, $2, $3, $4, $5)
+                        INSERT INTO flow_definitions (category_id, code, name, description, created_by, owner_user_id)
+                        VALUES ($1, $2, $3, $4, $5, $6)
                         RETURNING id, category_id, code, name, description, status, current_version, created_by, created_at, updated_at
                         """,
                         category["id"],
@@ -362,6 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         parsed.metadata.name,
                         parsed.metadata.description,
                         creator,
+                        principal.user_id,
                     )
                 except asyncpg.UniqueViolationError as exc:
                     raise HTTPException(
@@ -381,7 +338,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await pool.fetchrow(
             """
             SELECT f.id, f.code, c.slug AS category, f.name, f.description, f.status, f.current_version,
-                   f.created_by, f.created_at, f.updated_at, v.yaml_content
+                   f.created_by, f.owner_user_id, f.created_at, f.updated_at, v.yaml_content
             FROM flow_definitions f
             JOIN flow_categories c ON c.id = f.category_id
             JOIN flow_definition_versions v ON v.definition_id = f.id AND v.version_number = f.current_version
@@ -400,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
         require_category_allowed(principal, row["category"])
+        require_owner_allowed(principal, row["owner_user_id"])
         return dict(row)
 
     @app.get("/flows", response_model=list[FlowOut])
@@ -421,6 +379,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif principal.allowed_categories is not None:
             params.append(list(principal.allowed_categories))
             filters.append(f"c.slug = ANY(${len(params)}::text[])")
+
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"f.owner_user_id = ${len(params)}")
+            else:
+                params.append(principal.owner_filter["user_id_in"])
+                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+
         where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
 
         params.append(limit)
@@ -461,7 +428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with conn.transaction():
                 old = await conn.fetchrow(
                     """
-                    SELECT f.id, c.slug AS category, f.current_version
+                    SELECT f.id, c.slug AS category, f.current_version, f.owner_user_id
                     FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
                     WHERE f.code = $1
                     FOR UPDATE OF f
@@ -471,6 +438,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if old is None:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
                 require_category_allowed(principal, old["category"])
+                require_owner_allowed(principal, old["owner_user_id"])
 
                 next_version = old["current_version"] + 1
                 await conn.execute(
@@ -504,7 +472,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async with conn.transaction():
                 row = await conn.fetchrow(
                     """
-                    SELECT f.id, c.slug AS category
+                    SELECT f.id, c.slug AS category, f.owner_user_id
                     FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
                     WHERE f.code = $1
                     FOR UPDATE OF f
@@ -514,17 +482,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row is None:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
                 require_category_allowed(principal, row["category"])
+                require_owner_allowed(principal, row["owner_user_id"])
                 await conn.execute("DELETE FROM flow_definitions WHERE id = $1", row["id"])
         return {"code": code, "status": "deleted"}
 
     # ---------------------------------------------------------------- execution engine
 
-    async def _flow_category(pool: asyncpg.Pool, code: str) -> str | None:
-        row = await pool.fetchrow(
-            "SELECT c.slug FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id WHERE f.code = $1",
+    async def _flow_category_and_owner(pool: asyncpg.Pool, code: str) -> asyncpg.Record | None:
+        return await pool.fetchrow(
+            """
+            SELECT c.slug, f.owner_user_id
+            FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+            WHERE f.code = $1
+            """,
             code,
         )
-        return row["slug"] if row else None
 
     async def _run_category(pool: asyncpg.Pool, run_id: UUID) -> str | None:
         row = await pool.fetchrow(
@@ -545,10 +517,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        category = await _flow_category(pool, code)
-        if category is None:
+        info = await _flow_category_and_owner(pool, code)
+        if info is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"flow '{code}' not found")
-        require_category_allowed(principal, category)
+        require_category_allowed(principal, info["slug"])
+        require_owner_allowed(principal, info["owner_user_id"])
         try:
             return await engine.start_run(pool, redis_client, settings, code)
         except engine.FlowNotFoundError as exc:

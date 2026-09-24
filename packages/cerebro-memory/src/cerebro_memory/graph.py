@@ -34,7 +34,7 @@ SUPERSEDES = "supersedes"
 _MEMORY_COLUMNS = """
     m.id, c.slug AS context, m.type, m.title, m.content,
     m.importance, m.confidence, m.source, m.status, m.superseded_by,
-    m.occurred_at, m.created_at, m.updated_at
+    m.occurred_at, m.created_at, m.updated_at, m.owner_user_id
 """
 
 
@@ -258,6 +258,7 @@ async def get_timeline(
     to_date: datetime | None,
     limit: int,
     allowed_contexts: list[str] | None = None,
+    owner_filter: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Episodic (and decision) memories ordered by "effective date"
     (occurred_at, falling back to created_at when occurred_at is NULL), most recent
@@ -269,6 +270,10 @@ async def get_timeline(
     `allowed_contexts` is not None, rows from disallowed contexts are filtered out.
     Ignored when `context` is given - the caller (api.py) is expected to have already
     rejected an out-of-scope explicit `context` with 403.
+
+    `owner_filter` (Change 3): `{"user_id": <uuid>}` or `{"user_id_in": [...]}`
+    narrows rows by `owner_user_id`, `None` applies no ownership filter - see
+    `cerebro_memory.auth.Principal.owner_filter` / `retrieval.hybrid_search`.
     """
     async with pool.acquire() as conn:
         if context is not None:
@@ -284,6 +289,13 @@ async def get_timeline(
         elif allowed_contexts is not None:
             params.append(list(allowed_contexts))
             filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if owner_filter is not None:
+            if "user_id" in owner_filter:
+                params.append(owner_filter["user_id"])
+                filters.append(f"m.owner_user_id = ${len(params)}")
+            elif "user_id_in" in owner_filter:
+                params.append(list(owner_filter["user_id_in"]))
+                filters.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
         if from_date is not None:
             params.append(from_date)
             filters.append(f"COALESCE(m.occurred_at, m.created_at) >= ${len(params)}")

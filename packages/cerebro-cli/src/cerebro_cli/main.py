@@ -1,11 +1,12 @@
 """Single CLI for the cerebro ecosystem: `cerebro <module> <subcommand>` (entry point in
 pyproject.toml) plus ecosystem-level commands with no prefix (ecosistema-cerebro.md
-SS11): `cerebro backup`/`restore` and `cerebro token create/revoke` (cross-cutting, SS13).
+SS11): `cerebro backup`/`restore`, `cerebro login`, `cerebro user`/`cerebro group`
+(identity, via `cerebro-auth`), and `cerebro token create/revoke` (SS13, now a single
+call against `cerebro-auth` instead of the old cross-service mechanism).
 
 Like cerebro-mcp, it's a thin client over the HTTP APIs via `cerebro_clients` --
 no new business logic here except the Markdown importer's own orchestration
-(inherited from `cerebro_memory.cli`, see `memory_commands.py`) and handling
-partial failure of `cerebro token create/revoke` (see `shared_commands.py`).
+(inherited from `cerebro_memory.cli`, see `memory_commands.py`).
 
 Config: `cerebro_clients.config` -- CEREBRO_MEMORY_URL/CEREBRO_DOCS_URL/CEREBRO_TOKEN,
 with fallback to KNOWLEDGEOS_API_URL/KNOWLEDGEOS_API_TOKEN for memory (compatibility).
@@ -17,9 +18,8 @@ from __future__ import annotations
 
 import argparse
 
-from cerebro_cli import docs_commands, flow_commands, memory_commands, shared_commands
+from cerebro_cli import auth_commands, docs_commands, flow_commands, memory_commands, shared_commands
 from cerebro_cli.dotenv import load_repo_dotenv
-from cerebro_cli.tokens import warn_stale_pending_tokens
 
 
 def _add_memory_subparser(sub: argparse._SubParsersAction) -> None:
@@ -242,19 +242,72 @@ def _add_shared_subparsers(sub: argparse._SubParsersAction) -> None:
     p_restore.add_argument("--yes", action="store_true", help="omite la confirmacion interactiva")
     p_restore.set_defaults(func=shared_commands.cmd_restore)
 
-    p_token = sub.add_parser("token", help="Tokens TRANSVERSALES: un secreto, registrado en cerebro-memory y cerebro-docs")
+    p_token = sub.add_parser("token", help="Gestion de tokens del ecosistema (cerebro-auth)")
     token_sub = p_token.add_subparsers(dest="token_command", required=True)
 
-    p_token_create = token_sub.add_parser("create", help="Crea (o reintenta) un token transversal")
-    p_token_create.add_argument("name")
-    p_token_create.add_argument("--scopes", required=True, help="lista separada por comas: read,write,admin")
-    p_token_create.add_argument("--contexts", default=None, help="allowed_contexts para cerebro-memory (opcional)")
-    p_token_create.add_argument("--categories", default=None, help="allowed_categories para cerebro-docs (opcional)")
+    p_token_create = token_sub.add_parser("create", help="Crea un token nuevo en cerebro-auth")
+    p_token_create.add_argument("name", help="identidad del token, ej. 'claude-desktop' (unica entre tokens activos)")
+    p_token_create.add_argument("--scopes", required=True, help="lista separada por comas: read,write")
+    p_token_create.add_argument("--modules", default=None, help="lista separada por comas: memory,docs,flows")
+    p_token_create.add_argument(
+        "--user", default=None, help="usuario dueño del token (no combinar con --access-level)"
+    )
+    p_token_create.add_argument(
+        "--access-level",
+        choices=["user", "owner", "admin"],
+        default=None,
+        help="requerido solo si se omite --user (token de servicio, sin usuario dueño)",
+    )
+    p_token_create.add_argument("--memory-contexts", default=None, help="lista de slugs separada por comas (opcional)")
+    p_token_create.add_argument("--docs-categories", default=None, help="lista de slugs separada por comas (opcional)")
+    p_token_create.add_argument("--flows-categories", default=None, help="lista de slugs separada por comas (opcional)")
     p_token_create.set_defaults(func=shared_commands.cmd_token_create)
 
-    p_token_revoke = token_sub.add_parser("revoke", help="Revoca un token transversal en ambos servicios")
+    p_token_revoke = token_sub.add_parser("revoke", help="Revoca un token en cerebro-auth")
     p_token_revoke.add_argument("name")
     p_token_revoke.set_defaults(func=shared_commands.cmd_token_revoke)
+
+
+def _add_auth_subparsers(sub: argparse._SubParsersAction) -> None:
+    p_login = sub.add_parser(
+        "login", help="Inicia sesion con un token de cerebro-auth y guarda las credenciales localmente"
+    )
+    p_login.add_argument("--token", required=True, help="token de cerebro-auth")
+    p_login.add_argument("--url", default=None, help="URL de cerebro-auth (default: la resuelta por entorno)")
+    p_login.set_defaults(func=auth_commands.cmd_login)
+
+    p_user = sub.add_parser("user", help="Gestion de usuarios (cerebro-auth, requiere access_level admin)")
+    user_sub = p_user.add_subparsers(dest="user_command", required=True)
+
+    p_user_create = user_sub.add_parser("create", help="Crea un usuario nuevo")
+    p_user_create.add_argument("name")
+    p_user_create.add_argument("--email", default=None)
+    p_user_create.add_argument("--access-level", choices=["user", "owner", "admin"], default="user")
+    p_user_create.set_defaults(func=auth_commands.cmd_user_create)
+
+    p_user_list = user_sub.add_parser("list", help="Lista usuarios")
+    p_user_list.set_defaults(func=auth_commands.cmd_user_list)
+
+    p_group = sub.add_parser("group", help="Gestion de grupos (cerebro-auth, requiere access_level admin)")
+    group_sub = p_group.add_subparsers(dest="group_command", required=True)
+
+    p_group_create = group_sub.add_parser("create", help="Crea un grupo nuevo")
+    p_group_create.add_argument("slug")
+    p_group_create.add_argument("--name", default=None, help="nombre legible (default: el slug)")
+    p_group_create.set_defaults(func=auth_commands.cmd_group_create)
+
+    p_group_scopes = group_sub.add_parser("set-scopes", help="Define los modulos/alcances permitidos para un grupo")
+    p_group_scopes.add_argument("slug")
+    p_group_scopes.add_argument("--modules", required=True, help="lista separada por comas: memory,docs,flows")
+    p_group_scopes.add_argument("--memory-contexts", default=None, help="lista de slugs separada por comas (opcional)")
+    p_group_scopes.add_argument("--docs-categories", default=None, help="lista de slugs separada por comas (opcional)")
+    p_group_scopes.add_argument("--flows-categories", default=None, help="lista de slugs separada por comas (opcional)")
+    p_group_scopes.set_defaults(func=auth_commands.cmd_group_set_scopes)
+
+    p_group_member = group_sub.add_parser("add-member", help="Agrega un usuario a un grupo")
+    p_group_member.add_argument("slug")
+    p_group_member.add_argument("user")
+    p_group_member.set_defaults(func=auth_commands.cmd_group_add_member)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -265,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_docs_subparser(sub)
     _add_flows_subparser(sub)
     _add_shared_subparsers(sub)
+    _add_auth_subparsers(sub)
 
     return parser
 
@@ -276,10 +330,6 @@ def main(argv: list[str] | None = None) -> None:
     # why (replaces the old .venv\Scripts\cerebro.cmd wrapper that did this by
     # hand and that the entry point installed by pip now shadows on the PATH).
     load_repo_dotenv()
-    # Best-effort: a very old pending cross-cutting token record (a partial
-    # failure never retried) shouldn't sit on disk forever without a warning
-    # (see cerebro_cli.tokens.warn_stale_pending_tokens).
-    warn_stale_pending_tokens()
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)

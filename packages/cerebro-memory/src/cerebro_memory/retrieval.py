@@ -61,6 +61,7 @@ async def hybrid_search(
     candidate_pool: int = 50,
     rrf_k: int = 60,
     allowed_contexts: list[str] | None = None,
+    owner_filter: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Run vector + full-text search under the given filters and fuse with RRF.
 
@@ -76,6 +77,12 @@ async def hybrid_search(
     `context_slug` is given (an explicit context always wins; callers are expected to
     have already checked it against `allowed_contexts` themselves and rejected it
     with 403 if not allowed - see `cerebro_memory.auth.Principal.context_allowed`).
+
+    `owner_filter` (Change 3, "who owns this" - separate from and additional to the
+    context/module gate above): `{"user_id": <uuid>}` narrows to rows whose
+    `owner_user_id` equals that id, `{"user_id_in": [<uuid>, ...]}` narrows to rows
+    whose `owner_user_id` is any of those ids, `None` applies no ownership filter at
+    all - see `cerebro_memory.auth.Principal.owner_filter`.
     """
     statuses = ["active", "superseded"] if include_superseded else ["active"]
 
@@ -97,6 +104,13 @@ async def hybrid_search(
         if type_:
             params.append(type_)
             filters.append(f"m.type = ${len(params)}")
+        if owner_filter is not None:
+            if "user_id" in owner_filter:
+                params.append(owner_filter["user_id"])
+                filters.append(f"m.owner_user_id = ${len(params)}")
+            elif "user_id_in" in owner_filter:
+                params.append(list(owner_filter["user_id_in"]))
+                filters.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
         where_clause = " AND ".join(filters)
 
         query_vector = await embedding_provider.embed_query(query)

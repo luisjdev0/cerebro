@@ -5,6 +5,14 @@ and why it lives in `pytest_configure` (not a fixture: `cerebro_flows/api.py`
 instantiates `app = create_app()` at module level, which caches `get_settings()` on
 import during pytest's collection phase, before any fixture runs).
 
+Auth now reads the shared `cerebro_auth` schema (see `cerebro_flows.auth`), so this
+ephemeral database also needs that schema to exist before this package's own tests
+(and its own migrations, applied later via the app's lifespan) run. We reuse
+`cerebro-auth`'s own migration runner (`cerebro_auth.db.apply_migrations`) for that
+-- it is a `[dev]` extra of this package, and its runner follows the same pattern as
+this package's own `cerebro_flows.db.apply_migrations` (creates its schema and
+`schema_migrations` table, then applies pending `.sql` files).
+
 `REDIS_URL` is also overridden here to a dedicated logical Redis database (`/15`,
 the last of the default 16) so it doesn't collide with the normal use of `/0` in
 development -- Redis has no concept of an "ephemeral database that gets recreated",
@@ -39,6 +47,24 @@ async def _recreate_test_database(maintenance_dsn: str) -> None:
         await conn.close()
 
 
+async def _apply_cerebro_auth_migrations(test_dsn: str) -> None:
+    # Deferred import: only needed for tests, and only once the ephemeral database
+    # above exists. `cerebro-auth` is a `[dev]` extra of this package (see
+    # pyproject.toml) built by the sibling `packages/cerebro-auth` package. Its
+    # migration runner takes a pool + settings, same pattern as this package's own
+    # `cerebro_flows.db.apply_migrations`, not a bare DSN string.
+    from cerebro_auth.config import Settings as AuthSettings
+    from cerebro_auth.db import apply_migrations as apply_auth_migrations
+    from cerebro_auth.db import create_pool as create_auth_pool
+
+    settings = AuthSettings(database_url=test_dsn)
+    pool = await create_auth_pool(settings)
+    try:
+        await apply_auth_migrations(pool, settings)
+    finally:
+        await pool.close()
+
+
 def _test_redis_url() -> str:
     base = os.environ.get("REDIS_URL", _DEFAULT_REDIS_URL)
     return urlunsplit(urlsplit(base)._replace(path=f"/{_TEST_REDIS_DB}"))
@@ -61,10 +87,15 @@ def pytest_configure(config) -> None:  # noqa: ARG001 - pytest hook signature
 
     try:
         asyncio.run(_recreate_test_database(_with_database(base_dsn, "postgres")))
+        # cerebro_auth schema must exist before this package's own migrations run
+        # (the app's lifespan applies cerebro_flows's own migrations later, via
+        # cerebro_flows.db.apply_migrations, when the `client` fixture starts it).
+        asyncio.run(_apply_cerebro_auth_migrations(test_dsn))
         asyncio.run(_flush_test_redis(test_redis_url))
     except Exception:
-        # Postgres/Redis unreachable: each test skips itself via its own
-        # _db_reachable(), same as before this hook.
+        # Postgres/Redis unreachable, or cerebro-auth not installed/importable:
+        # each test skips itself via its own _db_reachable(), same as before this
+        # hook.
         return
 
     os.environ["DATABASE_URL"] = test_dsn

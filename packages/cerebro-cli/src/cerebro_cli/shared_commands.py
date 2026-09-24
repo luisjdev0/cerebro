@@ -1,12 +1,15 @@
 """Ecosystem-level commands, with no module prefix (ecosistema-cerebro.md SS11):
 
 - `cerebro backup` / `cerebro restore`: pg_dump/psql via docker compose. A single
-  shared Postgres (SS8) means a single dump covers both schemas
-  (`cerebro_memory` and `cerebro_docs`) in one operation -- ported as-is from the
-  original `cerebro_memory.cli`, with no mechanism changes (SS9).
-- `cerebro token create/revoke`: CROSS-CUTTING (SS13) -- one secret, registered
-  separately in both APIs. See `tokens.py` for why the pending state
-  makes it safe to retry the same command after a partial failure.
+  shared Postgres (SS8) means a single dump covers all schemas in one operation --
+  ported as-is from the original `cerebro_memory.cli`, with no mechanism changes
+  (SS9).
+- `cerebro token create/revoke`: token management for the whole ecosystem, now via
+  `AuthClient` against the single `cerebro-auth` service (SS13, updated). This used
+  to orchestrate one secret across cerebro-memory and cerebro-docs independently,
+  with local pending-retry state for partial failures (see git history / `tokens.py`'s
+  docstring) -- now that there's exactly one service to talk to, it's a single call
+  that either succeeds or fails, nothing to retry locally.
 """
 
 from __future__ import annotations
@@ -18,9 +21,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from cerebro_clients import CerebroAPIError, CerebroConnectionError, DocsClient, MemoryClient
-
-from cerebro_cli.tokens import clear_pending_value, generate_transversal_token, load_pending_value, save_pending_value
+from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
 # packages/cerebro-cli/src/cerebro_cli/shared_commands.py -> parents[4] is the monorepo
 # root (where compose.yaml lives) - same calculation as REPO_ROOT in the original
@@ -106,7 +107,7 @@ def cmd_restore(args: argparse.Namespace) -> None:
     print("Restore completado.")
 
 
-# --------------------------------------------------------------------------- token transversal (SS13)
+# --------------------------------------------------------------------------- token (cerebro-auth)
 
 
 def _split_csv(value: str | None) -> list[str] | None:
@@ -115,121 +116,96 @@ def _split_csv(value: str | None) -> list[str] | None:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def cmd_token_create(
-    args: argparse.Namespace,
-    *,
-    memory_client: MemoryClient | None = None,
-    docs_client: DocsClient | None = None,
-) -> None:
-    """Registers ONE secret in cerebro-memory and cerebro-docs (SS13).
+def _auth_client() -> AuthClient:
+    return AuthClient()
 
-    Partial failure: explicitly reports each service's status and exits with
-    exit code != 0 if any failed. The generated secret is persisted locally
-    (`cerebro_cli.tokens`) until BOTH services confirm success, so that
-    retrying the same command reuses the same secret -- registration is idempotent
-    by name in each API (same name + same hash doesn't duplicate the row).
+
+def cmd_token_create(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
+    """Creates a token in cerebro-auth, the ecosystem's single source of truth for
+    identity and tokens (SS13, updated). One call, one response -- no more
+    per-service partial failure to reconcile (see `tokens.py`'s docstring for what
+    this replaced).
+
+    `--user` and `--access-level` are mutually exclusive (matches the server's own
+    `CHECK ((user_id IS NULL) = (access_level IS NOT NULL))`): a user-owned token
+    inherits its level from the user (or their groups), a service/root-adjacent
+    token (no `--user`) must state its own level explicitly. Likewise
+    `allowed_modules` is mandatory for a service token (no `--user`) and optional --
+    narrowing, never widening -- for a user-owned one.
     """
-    scopes = _split_csv(args.scopes) or []
-    contexts = _split_csv(args.contexts)
-    categories = _split_csv(args.categories)
-
-    pending = load_pending_value(args.name)
-    if pending is not None:
-        value = pending
-        print(f"Reanudando el registro pendiente de '{args.name}' (mismo secreto de un intento anterior).")
-    else:
-        value = generate_transversal_token()
-        save_pending_value(args.name, value)
-
-    memory_client = memory_client or MemoryClient()
-    docs_client = docs_client or DocsClient()
-
-    results: dict[str, str] = {}
-
-    try:
-        memory_client.create_token(args.name, scopes, allowed_contexts=contexts, value=value)
-        results["cerebro-memory"] = "ok"
-    except CerebroConnectionError as exc:
-        results["cerebro-memory"] = f"error de conexion: {exc}"
-    except CerebroAPIError as exc:
-        results["cerebro-memory"] = f"error {exc.status_code}: {exc.detail}"
-
-    try:
-        docs_client.create_token(args.name, scopes, allowed_categories=categories, value=value)
-        results["cerebro-docs"] = "ok"
-    except CerebroConnectionError as exc:
-        results["cerebro-docs"] = f"error de conexion: {exc}"
-    except CerebroAPIError as exc:
-        results["cerebro-docs"] = f"error {exc.status_code}: {exc.detail}"
-
-    print(f"Registro de token transversal '{args.name}' (scopes: {', '.join(scopes)}):")
-    for service, status in results.items():
-        marker = "+" if status == "ok" else "x"
-        print(f"  {marker} {service}: {status}")
-
-    if all(status == "ok" for status in results.values()):
-        clear_pending_value(args.name)
-        print()
-        print(f"  {value}")
-        print()
+    if args.user and args.access_level:
         print(
-            "Guarda este token ahora - ningun servicio vuelve a mostrarlo. Usalo como "
-            "CEREBRO_TOKEN (valido para cerebro-memory y cerebro-docs)."
+            "Error: no pases --user y --access-level juntos -- el nivel de un token de "
+            "usuario lo define el usuario (o sus grupos), nunca el propio token.",
+            file=sys.stderr,
         )
-        return
+        sys.exit(1)
+    if not args.user and not args.access_level:
+        print("Error: pasa --user <nombre> o --access-level user|owner|admin.", file=sys.stderr)
+        sys.exit(1)
 
+    modules = _split_csv(args.modules)
+    if not args.user and not modules:
+        print(
+            "Error: un token sin --user (de servicio) necesita --modules explicito "
+            "(no puede heredarlo de ningun usuario).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    scopes = _split_csv(args.scopes) or []
+
+    module_scopes: dict[str, dict[str, list[str]]] = {}
+    if args.memory_contexts is not None:
+        module_scopes["memory"] = {"contexts": _split_csv(args.memory_contexts) or []}
+    if args.docs_categories is not None:
+        module_scopes["docs"] = {"categories": _split_csv(args.docs_categories) or []}
+    if args.flows_categories is not None:
+        module_scopes["flows"] = {"categories": _split_csv(args.flows_categories) or []}
+
+    client = client or _auth_client()
+    try:
+        data = client.create_token(
+            args.name,
+            scopes,
+            allowed_modules=modules,
+            module_scopes=module_scopes or None,
+            user=args.user,
+            access_level=args.access_level,
+        )
+    except CerebroConnectionError as exc:
+        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except CerebroAPIError as exc:
+        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Token '{data.get('name', args.name)}' creado (scopes: {', '.join(data.get('scopes', scopes))}).")
+    print()
+    print(f"  {data['token']}")
     print()
     print(
-        f"Registro parcial: reintenta `cerebro token create {args.name} --scopes {args.scopes}` "
-        "(reusa el mismo secreto, es seguro) para completar el servicio que fallo, o revoca "
-        "manualmente el que si quedo registrado.",
-        file=sys.stderr,
+        "Guarda este token ahora - cerebro-auth solo guarda su hash y no puede volver a "
+        "mostrarlo. Usalo como CEREBRO_TOKEN (valido en todo el ecosistema)."
     )
-    sys.exit(1)
 
 
-def cmd_token_revoke(
-    args: argparse.Namespace,
-    *,
-    memory_client: MemoryClient | None = None,
-    docs_client: DocsClient | None = None,
-) -> None:
-    """Revokes by name in both services (SS13). A 404 (already revoked/nonexistent in
-    that service) counts as success -- the desired state ("not active there") is
-    already met, and it also makes retrying after a partial failure safe."""
-    memory_client = memory_client or MemoryClient()
-    docs_client = docs_client or DocsClient()
-
-    results: dict[str, str] = {}
+def cmd_token_revoke(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
+    """Revokes a token by name in cerebro-auth. A 404 (already revoked/nonexistent)
+    counts as success -- the desired state ("not active") is already met, same
+    idempotent-revoke behavior as before the unification (SS13)."""
+    client = client or _auth_client()
 
     try:
-        memory_client.revoke_token(args.name)
-        results["cerebro-memory"] = "ok"
+        client.revoke_token(args.name)
     except CerebroConnectionError as exc:
-        results["cerebro-memory"] = f"error de conexion: {exc}"
-    except CerebroAPIError as exc:
-        if exc.status_code == 404:
-            results["cerebro-memory"] = "ok (ya no estaba activo)"
-        else:
-            results["cerebro-memory"] = f"error {exc.status_code}: {exc.detail}"
-
-    try:
-        docs_client.revoke_token(args.name)
-        results["cerebro-docs"] = "ok"
-    except CerebroConnectionError as exc:
-        results["cerebro-docs"] = f"error de conexion: {exc}"
-    except CerebroAPIError as exc:
-        if exc.status_code == 404:
-            results["cerebro-docs"] = "ok (ya no estaba activo)"
-        else:
-            results["cerebro-docs"] = f"error {exc.status_code}: {exc.detail}"
-
-    print(f"Revocacion de token transversal '{args.name}':")
-    for service, status in results.items():
-        marker = "+" if status.startswith("ok") else "x"
-        print(f"  {marker} {service}: {status}")
-
-    if not all(status.startswith("ok") for status in results.values()):
-        print()
-        print(f"Revocacion parcial: reintenta `cerebro token revoke {args.name}`.", file=sys.stderr)
+        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
         sys.exit(1)
+    except CerebroAPIError as exc:
+        if exc.status_code == 404:
+            print(f"Token '{args.name}' ya no estaba activo.")
+            return
+        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Token '{args.name}' revocado.")

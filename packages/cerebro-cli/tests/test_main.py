@@ -4,7 +4,7 @@ function, without making any real network call."""
 
 from __future__ import annotations
 
-from cerebro_cli import docs_commands, memory_commands, shared_commands
+from cerebro_cli import auth_commands, docs_commands, memory_commands, shared_commands
 from cerebro_cli.main import build_parser
 
 
@@ -99,10 +99,55 @@ class TestSharedSubcommands:
         args = _parse(["restore", "backup.sql"])
         assert args.func is shared_commands.cmd_restore
 
-    def test_token_create_transversal(self):
-        args = _parse(["token", "create", "agente-x", "--scopes", "read,write"])
+    def test_token_create(self):
+        args = _parse(
+            ["token", "create", "agente-x", "--scopes", "read,write", "--modules", "memory,docs", "--access-level", "user"]
+        )
         assert args.func is shared_commands.cmd_token_create
+        assert args.modules == "memory,docs"
+        assert args.user is None
 
-    def test_token_revoke_transversal(self):
+    def test_token_create_with_user(self):
+        args = _parse(["token", "create", "agente-x", "--scopes", "read", "--user", "jose"])
+        assert args.func is shared_commands.cmd_token_create
+        assert args.user == "jose"
+        assert args.access_level is None
+
+    def test_token_revoke(self):
         args = _parse(["token", "revoke", "agente-x"])
         assert args.func is shared_commands.cmd_token_revoke
+
+
+class TestAuthSubcommands:
+    def test_login(self):
+        args = _parse(["login", "--token", "cbr_abc123"])
+        assert args.func is auth_commands.cmd_login
+        assert args.token == "cbr_abc123"
+        assert args.url is None
+
+    def test_login_with_url(self):
+        args = _parse(["login", "--token", "cbr_abc123", "--url", "http://localhost:8030"])
+        assert args.url == "http://localhost:8030"
+
+    def test_user_create(self):
+        args = _parse(["user", "create", "jose", "--email", "jose@example.com", "--access-level", "admin"])
+        assert args.func is auth_commands.cmd_user_create
+        assert args.access_level == "admin"
+
+    def test_user_list(self):
+        args = _parse(["user", "list"])
+        assert args.func is auth_commands.cmd_user_list
+
+    def test_group_create(self):
+        args = _parse(["group", "create", "eco", "--name", "Ecosistema"])
+        assert args.func is auth_commands.cmd_group_create
+
+    def test_group_set_scopes(self):
+        args = _parse(["group", "set-scopes", "eco", "--modules", "memory,docs", "--memory-contexts", "ctx-a"])
+        assert args.func is auth_commands.cmd_group_set_scopes
+        assert args.memory_contexts == "ctx-a"
+
+    def test_group_add_member(self):
+        args = _parse(["group", "add-member", "eco", "jose"])
+        assert args.func is auth_commands.cmd_group_add_member
+        assert args.user == "jose"

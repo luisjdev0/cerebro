@@ -212,39 +212,6 @@ def test_get_stats():
     assert transport.last["path"] == "/stats"
 
 
-class TestTokens:
-    def test_create_token_minimal(self):
-        transport = RecordingTransport()
-        make_client(transport).create_token("agente-x", ["read"])
-        assert transport.last["method"] == "POST"
-        assert transport.last["path"] == "/tokens"
-        assert transport.last["json"] == {"name": "agente-x", "scopes": ["read"]}
-
-    def test_create_token_with_categories_and_value(self):
-        transport = RecordingTransport()
-        make_client(transport).create_token(
-            "agente-x", ["read", "write"], allowed_categories=["eco"], value="cbrd_provided-secret"
-        )
-        assert transport.last["json"] == {
-            "name": "agente-x",
-            "scopes": ["read", "write"],
-            "allowed_categories": ["eco"],
-            "value": "cbrd_provided-secret",
-        }
-
-    def test_list_tokens(self):
-        transport = RecordingTransport(response_json=[])
-        make_client(transport).list_tokens()
-        assert transport.last["method"] == "GET"
-        assert transport.last["path"] == "/tokens"
-
-    def test_revoke_token(self):
-        transport = RecordingTransport()
-        make_client(transport).revoke_token("agente-x")
-        assert transport.last["method"] == "DELETE"
-        assert transport.last["path"] == "/tokens/agente-x"
-
-
 class TestErrorPropagation:
     def test_http_error_raises_cerebro_api_error_with_detail(self):
         transport = RecordingTransport(response_json={"detail": "categoria inexistente"}, status_code=404)

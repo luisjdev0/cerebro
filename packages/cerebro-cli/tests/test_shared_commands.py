@@ -1,6 +1,10 @@
-"""`cerebro backup`/`restore` (mocked subprocess.run, no real docker) and cross-cutting
-`cerebro token create/revoke` (mocked MemoryClient/DocsClient) -- in particular the
-partial-failure and retry-idempotency semantics (ecosistema-cerebro.md SS13).
+"""`cerebro backup`/`restore` (mocked subprocess.run, no real docker) and
+`cerebro token create/revoke` (mocked `AuthClient`) -- token management now lives in
+exactly one service (cerebro-auth, ecosistema-cerebro.md SS13, updated), so there's
+no more partial-failure/retry semantics to test across services -- just the
+client-side validation (`--user`/`--access-level` mutual exclusion, `--modules`
+required for a service token) and that the CSV flags get packed the way the server
+expects.
 """
 
 from __future__ import annotations
@@ -11,18 +15,26 @@ from unittest.mock import MagicMock
 import pytest
 from cerebro_clients import CerebroAPIError, CerebroConnectionError
 
-from cerebro_cli import shared_commands, tokens
-
-
-@pytest.fixture(autouse=True)
-def isolated_pending_dir(tmp_path, monkeypatch):
-    pending_dir = tmp_path / "pending-tokens"
-    monkeypatch.setattr(tokens, "PENDING_TOKENS_DIR", pending_dir)
-    return pending_dir
+from cerebro_cli import shared_commands
 
 
 def _api_error(status_code, detail="boom"):
     return CerebroAPIError(status_code, detail, response=MagicMock())
+
+
+def _token_create_args(**overrides):
+    defaults = dict(
+        name="agente-x",
+        scopes="read,write",
+        modules="memory,docs",
+        user=None,
+        access_level="user",
+        memory_contexts=None,
+        docs_categories=None,
+        flows_categories=None,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
 
 
 # --------------------------------------------------------------------------- backup / restore
@@ -97,95 +109,115 @@ class TestRestore:
         run_mock.assert_not_called()
 
 
-# --------------------------------------------------------------------------- token transversal
+# --------------------------------------------------------------------------- token create
 
 
-class TestTokenCreateTransversal:
-    def test_full_success_prints_token_and_clears_pending_state(self, capsys):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
-        args = argparse.Namespace(name="agente-x", scopes="read,write", contexts=None, categories=None)
+class TestTokenCreate:
+    def test_full_success_prints_token(self, capsys):
+        client = MagicMock()
+        client.create_token.return_value = {"name": "agente-x", "scopes": ["read", "write"], "token": "sometoken123"}
+        args = _token_create_args()
 
-        shared_commands.cmd_token_create(args, memory_client=memory_client, docs_client=docs_client)
+        shared_commands.cmd_token_create(args, client=client)
 
-        # the SAME secret was passed to both services
-        memory_value = memory_client.create_token.call_args.kwargs["value"]
-        docs_value = docs_client.create_token.call_args.kwargs["value"]
-        assert memory_value == docs_value
-        assert memory_value.startswith(tokens.TOKEN_PREFIX)
-
+        client.create_token.assert_called_once_with(
+            "agente-x",
+            ["read", "write"],
+            allowed_modules=["memory", "docs"],
+            module_scopes=None,
+            user=None,
+            access_level="user",
+        )
         out = capsys.readouterr().out
-        assert memory_value in out
-        assert tokens.load_pending_value("agente-x") is None  # cleared after full success
+        assert "sometoken123" in out
 
-    def test_partial_failure_exits_nonzero_and_keeps_pending_state(self, capsys):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
-        docs_client.create_token.side_effect = _api_error(500, "internal error")
-        args = argparse.Namespace(name="agente-y", scopes="read", contexts=None, categories=None)
-
+    def test_rejects_user_and_access_level_together(self):
+        args = _token_create_args(user="jose", access_level="owner")
         with pytest.raises(SystemExit) as exc_info:
-            shared_commands.cmd_token_create(args, memory_client=memory_client, docs_client=docs_client)
+            shared_commands.cmd_token_create(args, client=MagicMock())
         assert exc_info.value.code != 0
 
-        out = capsys.readouterr().out
-        assert "cerebro-memory: ok" in out
-        assert "cerebro-docs" in out and "error" in out
-        assert tokens.load_pending_value("agente-y") is not None  # stays pending for retry
-
-    def test_retry_after_partial_failure_reuses_same_secret_and_completes(self, capsys):
-        # First attempt: memory ok, docs fails.
-        memory_client_1 = MagicMock()
-        docs_client_1 = MagicMock()
-        docs_client_1.create_token.side_effect = CerebroConnectionError("http://docs", RuntimeError("refused"))
-        args = argparse.Namespace(name="agente-z", scopes="read", contexts=None, categories=None)
+    def test_requires_user_or_access_level(self):
+        args = _token_create_args(user=None, access_level=None)
         with pytest.raises(SystemExit):
-            shared_commands.cmd_token_create(args, memory_client=memory_client_1, docs_client=docs_client_1)
-        first_value = memory_client_1.create_token.call_args.kwargs["value"]
+            shared_commands.cmd_token_create(args, client=MagicMock())
 
-        # Retry (same command): must reuse the SAME secret, not generate a new one.
-        memory_client_2 = MagicMock()
-        docs_client_2 = MagicMock()
-        shared_commands.cmd_token_create(args, memory_client=memory_client_2, docs_client=docs_client_2)
+    def test_service_token_without_user_requires_modules(self):
+        args = _token_create_args(user=None, access_level="admin", modules=None)
+        with pytest.raises(SystemExit):
+            shared_commands.cmd_token_create(args, client=MagicMock())
 
-        assert memory_client_2.create_token.call_args.kwargs["value"] == first_value
-        assert docs_client_2.create_token.call_args.kwargs["value"] == first_value
-        assert tokens.load_pending_value("agente-z") is None
+    def test_user_owned_token_can_omit_modules(self):
+        client = MagicMock()
+        client.create_token.return_value = {"name": "agente-x", "scopes": ["read"], "token": "tok"}
+        args = _token_create_args(user="jose", access_level=None, modules=None)
 
-    def test_scopes_and_allowed_lists_are_parsed_from_csv(self):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
-        args = argparse.Namespace(
-            name="agente-w", scopes="read, write", contexts="ctx-a,ctx-b", categories="cat-a"
+        shared_commands.cmd_token_create(args, client=client)
+
+        client.create_token.assert_called_once_with(
+            "agente-x",
+            ["read", "write"],
+            allowed_modules=None,
+            module_scopes=None,
+            user="jose",
+            access_level=None,
         )
-        shared_commands.cmd_token_create(args, memory_client=memory_client, docs_client=docs_client)
 
-        assert memory_client.create_token.call_args.args[1] == ["read", "write"]
-        assert memory_client.create_token.call_args.kwargs["allowed_contexts"] == ["ctx-a", "ctx-b"]
-        assert docs_client.create_token.call_args.kwargs["allowed_categories"] == ["cat-a"]
+    def test_packs_module_scopes_only_for_flags_actually_given(self):
+        client = MagicMock()
+        client.create_token.return_value = {"name": "agente-x", "scopes": ["read"], "token": "tok"}
+        args = _token_create_args(memory_contexts="ctx-a, ctx-b", docs_categories="cat-a")
+
+        shared_commands.cmd_token_create(args, client=client)
+
+        module_scopes = client.create_token.call_args.kwargs["module_scopes"]
+        assert module_scopes == {"memory": {"contexts": ["ctx-a", "ctx-b"]}, "docs": {"categories": ["cat-a"]}}
+        assert "flows" not in module_scopes
+
+    def test_connection_error_exits(self):
+        client = MagicMock()
+        client.create_token.side_effect = CerebroConnectionError("http://x", RuntimeError("refused"))
+        args = _token_create_args()
+        with pytest.raises(SystemExit):
+            shared_commands.cmd_token_create(args, client=client)
+
+    def test_api_error_exits(self):
+        client = MagicMock()
+        client.create_token.side_effect = _api_error(400, "invalid scopes")
+        args = _token_create_args()
+        with pytest.raises(SystemExit):
+            shared_commands.cmd_token_create(args, client=client)
 
 
-class TestTokenRevokeTransversal:
-    def test_full_success(self, capsys):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
+# --------------------------------------------------------------------------- token revoke
+
+
+class TestTokenRevoke:
+    def test_success(self, capsys):
+        client = MagicMock()
         args = argparse.Namespace(name="agente-x")
-        shared_commands.cmd_token_revoke(args, memory_client=memory_client, docs_client=docs_client)
-        memory_client.revoke_token.assert_called_once_with("agente-x")
-        docs_client.revoke_token.assert_called_once_with("agente-x")
+        shared_commands.cmd_token_revoke(args, client=client)
+        client.revoke_token.assert_called_once_with("agente-x")
+        assert "revocado" in capsys.readouterr().out
 
-    def test_404_on_one_service_counts_as_already_done_not_a_failure(self, capsys):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
-        docs_client.revoke_token.side_effect = _api_error(404, "no active token")
+    def test_404_counts_as_already_done_not_a_failure(self, capsys):
+        client = MagicMock()
+        client.revoke_token.side_effect = _api_error(404, "no active token")
         args = argparse.Namespace(name="agente-x")
         # must not raise SystemExit - a 404 means "was already revoked", equivalent to success.
-        shared_commands.cmd_token_revoke(args, memory_client=memory_client, docs_client=docs_client)
+        shared_commands.cmd_token_revoke(args, client=client)
+        assert "ya no estaba activo" in capsys.readouterr().out
 
-    def test_real_failure_on_one_service_exits_nonzero(self):
-        memory_client = MagicMock()
-        docs_client = MagicMock()
-        docs_client.revoke_token.side_effect = _api_error(500, "internal error")
+    def test_real_failure_exits_nonzero(self):
+        client = MagicMock()
+        client.revoke_token.side_effect = _api_error(500, "internal error")
         args = argparse.Namespace(name="agente-x")
         with pytest.raises(SystemExit):
-            shared_commands.cmd_token_revoke(args, memory_client=memory_client, docs_client=docs_client)
+            shared_commands.cmd_token_revoke(args, client=client)
+
+    def test_connection_error_exits(self):
+        client = MagicMock()
+        client.revoke_token.side_effect = CerebroConnectionError("http://x", RuntimeError("refused"))
+        args = argparse.Namespace(name="agente-x")
+        with pytest.raises(SystemExit):
+            shared_commands.cmd_token_revoke(args, client=client)

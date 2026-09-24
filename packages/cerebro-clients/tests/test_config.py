@@ -68,6 +68,33 @@ class TestDocsToken:
         assert config.docs_token() == ""
 
 
+class TestAuthBaseUrl:
+    def test_default_when_nothing_set(self, monkeypatch):
+        monkeypatch.delenv("CEREBRO_AUTH_URL", raising=False)
+        assert config.auth_base_url() == config.DEFAULT_AUTH_URL
+
+    def test_cerebro_var_is_used(self, monkeypatch):
+        monkeypatch.setenv("CEREBRO_AUTH_URL", "http://auth-host:3333")
+        assert config.auth_base_url() == "http://auth-host:3333"
+
+
+class TestAuthToken:
+    def test_default_is_empty(self, monkeypatch):
+        monkeypatch.delenv("CEREBRO_TOKEN", raising=False)
+        assert config.auth_token() == ""
+
+    def test_has_no_legacy_fallback(self, monkeypatch):
+        # Like docs (unlike memory), auth is a new service with no legacy variable
+        # to preserve - only CEREBRO_TOKEN or nothing.
+        monkeypatch.delenv("CEREBRO_TOKEN", raising=False)
+        monkeypatch.setenv("KNOWLEDGEOS_API_TOKEN", "legacy-secret")
+        assert config.auth_token() == ""
+
+    def test_cerebro_token_is_used(self, monkeypatch):
+        monkeypatch.setenv("CEREBRO_TOKEN", "unified-secret")
+        assert config.auth_token() == "unified-secret"
+
+
 class TestAgentName:
     def test_default_when_nothing_set(self, monkeypatch):
         monkeypatch.delenv("CEREBRO_AGENT_NAME", raising=False)
