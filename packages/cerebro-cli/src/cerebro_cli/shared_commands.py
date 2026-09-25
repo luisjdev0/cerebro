@@ -1,11 +1,16 @@
 """Ecosystem-level commands, with no module prefix (ecosistema-cerebro.md SS11):
 
-- `cerebro backup` / `cerebro restore`: pg_dump/psql via docker compose. A single
-  shared Postgres (SS8) means a single dump covers all schemas in one operation --
-  ported as-is from the original `cerebro_memory.cli`, with no mechanism changes
-  (SS9).
-- `cerebro token create/revoke`: token management for the whole ecosystem, now via
-  `AuthClient` against the single `cerebro-auth` service (SS13, updated). This used
+- `cerebro backup`: streams `POST /backup` from `cerebro-auth` (admin-only) to a
+  local file -- a full `pg_dump` of the whole shared Postgres instance (all 4
+  schemas), run server-side and piped straight through, same as a browser
+  download. Works against any deployment (local or remote) the caller has an
+  admin token for, unlike the old `docker compose exec` mechanism this replaced,
+  which only worked against a local checkout with Docker running.
+- `cerebro restore`: unchanged -- still `psql` via `docker compose exec` against
+  a local checkout. Restore was explicitly left out of the `cerebro-auth`
+  `/backup` design (extraction only, see `luisjdev-pendientes/ecosistema-cerebro`).
+- `cerebro token create/revoke`: token management for the whole ecosystem, via
+  `AuthClient` against the single `cerebro-auth` service (SS13). This used
   to orchestrate one secret across cerebro-memory and cerebro-docs independently,
   with local pending-retry state for partial failures (see git history / `tokens.py`'s
   docstring) -- now that there's exactly one service to talk to, it's a single call
@@ -42,27 +47,29 @@ POSTGRES_DB = "knowledgeos"
 # --------------------------------------------------------------------------- backup / restore
 
 
-def cmd_backup(args: argparse.Namespace) -> None:
+def cmd_backup(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
     out_dir = Path(args.output) if args.output else DEFAULT_BACKUP_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_file = out_dir / f"cerebro-{timestamp}.sql"
 
-    cmd = ["docker", "compose", "exec", "-T", "postgres", "pg_dump", "-U", POSTGRES_USER, POSTGRES_DB]
-    print(f"Ejecutando: {' '.join(cmd)} > {out_file}")
+    # A full pg_dump can run well past the default 30s client timeout on a
+    # database of any real size - the request is a single streamed download, not
+    # a quick CRUD call, so it gets a generous timeout of its own.
+    client = client or AuthClient(timeout=1800.0)
+    print(f"Descargando backup de {client.base_url} -> {out_file}")
     try:
-        with open(out_file, "wb") as fh:
-            result = subprocess.run(cmd, cwd=REPO_ROOT, stdout=fh, stderr=subprocess.PIPE)
-    except FileNotFoundError:
-        print("Error: no se encontro el comando 'docker'. ¿Docker Desktop esta corriendo?", file=sys.stderr)
-        sys.exit(1)
-
-    if result.returncode != 0:
+        client.backup(out_file)
+    except CerebroConnectionError as exc:
         out_file.unlink(missing_ok=True)
-        print(f"Error en pg_dump (exit {result.returncode}): {result.stderr.decode(errors='replace')}", file=sys.stderr)
+        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except CerebroAPIError as exc:
+        out_file.unlink(missing_ok=True)
+        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
         sys.exit(1)
 
-    # The dump contains all the content of both schemas (includes cerebro-docs
+    # The dump contains all content of all 4 schemas (includes cerebro-docs
     # documents, which by design may carry secrets pasted in by mistake - see
     # ecosistema-cerebro.md SS9) - it must never end up readable by
     # other system users. Best-effort: no-op on Windows.
@@ -72,7 +79,7 @@ def cmd_backup(args: argparse.Namespace) -> None:
         pass
 
     size = out_file.stat().st_size
-    print(f"Backup guardado en {out_file} ({size} bytes) - cubre cerebro_memory y cerebro_docs (un solo Postgres compartido).")
+    print(f"Backup guardado en {out_file} ({size} bytes) - cubre memory, docs, flows y auth (un solo Postgres compartido).")
 
 
 def cmd_restore(args: argparse.Namespace) -> None:

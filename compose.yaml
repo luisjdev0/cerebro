@@ -243,6 +243,7 @@ services:
         condition: service_healthy
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./gateway/install:/srv/install:ro
     ports:
       # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
       # 8080) - same reason as POSTGRES_HOST_PORT above.

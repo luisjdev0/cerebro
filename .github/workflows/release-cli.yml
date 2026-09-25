@@ -1,0 +1,75 @@
+# Builds and publishes standalone `cerebro` CLI binaries to a GitHub Release.
+#
+# This is the first GitHub Actions workflow in the repo -- deliberately scoped
+# to just this (no general test/lint CI here, that's a separate concern for a
+# separate workflow if it's ever added). See
+# `luisjdev-pendientes/ecosistema-cerebro` §"CLI (cerebro-cli)" for the design
+# this implements: a generic, no-secrets-embedded binary per platform, fetched
+# straight from Releases at install time by gateway/install/install.sh|ps1.
+#
+# macOS is intentionally out of scope (see the same pendientes doc).
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: cerebro-linux-amd64
+            build_name: cerebro
+          - os: windows-latest
+            asset_name: cerebro-windows-amd64.exe
+            build_name: cerebro.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Install order matters: cerebro-cli depends on cerebro-clients and
+      # cerebro-memory (both local packages, not on PyPI) -- same order as
+      # README.md's dev setup instructions.
+      - name: Install cerebro-cli and its local dependencies
+        run: |
+          pip install ./packages/cerebro-clients ./packages/cerebro-memory ./packages/cerebro-cli pyinstaller
+
+      - name: Build binary with PyInstaller
+        working-directory: packages/cerebro-cli
+        run: |
+          pyinstaller --onefile --name cerebro --distpath dist src/cerebro_cli/main.py
+
+      - name: Rename build output to its release asset name
+        shell: bash
+        run: |
+          mv "packages/cerebro-cli/dist/${{ matrix.build_name }}" "${{ matrix.asset_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release with both binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cerebro-linux-amd64
+            dist/cerebro-windows-amd64.exe

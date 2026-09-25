@@ -9,6 +9,7 @@ cerebro-auth's own route set.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import uuid
 
 import asyncpg
@@ -337,3 +338,50 @@ class TestLogin:
         assert body["name"] == name
         assert body["access_level"] == "user"
         assert sorted(body["allowed_modules"]) == ["docs", "flows"]
+
+
+# --------------------------------------------------------------------------- backup
+
+
+@pytest.fixture(scope="module")
+def pg_dump_available():
+    # POST /backup shells out to the `pg_dump` binary on PATH (see api.py) -- inside
+    # the real container it's installed by the Dockerfile (PGDG postgresql-client-17),
+    # but pytest here runs directly on the host, not inside that container. Skip
+    # rather than fail if this host happens not to have it, same spirit as
+    # `_db_reachable` skipping when Postgres itself isn't reachable.
+    if shutil.which("pg_dump") is None:
+        pytest.skip("pg_dump not found on PATH - install postgresql-client to test POST /backup locally")
+
+
+class TestBackup:
+    def test_requires_admin(self, client, root_headers):
+        name = _unique("backup-non-admin")
+        token = client.post(
+            "/tokens",
+            json={"name": name, "scopes": ["read"], "access_level": "user", "allowed_modules": ["memory"]},
+            headers=root_headers,
+        ).json()["token"]
+        resp = client.post("/backup", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 403
+
+    def test_missing_auth_is_401(self, client):
+        assert client.post("/backup").status_code == 401
+
+    def test_dump_is_streamed_sql_covering_this_databases_schema(self, client, root_headers, pg_dump_available):
+        # This suite's `cerebro_test` only has cerebro-auth's own migrations applied
+        # (this package's conftest.py doesn't pull in memory/docs/flows) -- it can only
+        # assert the `cerebro_auth` schema shows up. That `pg_dump` with no `--schema`
+        # flag covers every schema in the target database (memory/docs/flows/auth
+        # together, in a real deployment where all 4 share one Postgres instance) is
+        # verified by the manual end-to-end pass on the test server (see the plan's
+        # verification section), not by this unit test.
+        resp = client.post("/backup", headers=root_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"].startswith("application/sql")
+        assert "attachment" in resp.headers["content-disposition"]
+        assert ".sql" in resp.headers["content-disposition"]
+
+        body = resp.text
+        assert "PostgreSQL database dump" in body
+        assert "CREATE SCHEMA cerebro_auth" in body or "cerebro_auth.users" in body

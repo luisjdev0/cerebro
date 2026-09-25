@@ -10,7 +10,7 @@ import pytest
 from cerebro_clients.auth_client import AuthClient
 from cerebro_clients.base import CerebroAPIError, CerebroConnectionError
 
-from ._helpers import RaisingTransport, RecordingTransport
+from ._helpers import BytesTransport, RaisingTransport, RecordingTransport
 
 
 def make_client(transport, **kwargs) -> AuthClient:
@@ -120,6 +120,39 @@ class TestTokens:
         make_client(transport).revoke_token("agente-x")
         assert transport.last["method"] == "DELETE"
         assert transport.last["path"] == "/tokens/agente-x"
+
+
+class TestBackup:
+    def test_streams_response_body_to_dest_file(self, tmp_path):
+        transport = BytesTransport(content=b"-- pg_dump output --")
+        dest = tmp_path / "dump.sql"
+
+        make_client(transport).backup(dest)
+
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/backup"
+        assert dest.read_bytes() == b"-- pg_dump output --"
+
+    def test_sends_this_client_own_auth_header(self, tmp_path):
+        transport = BytesTransport(content=b"data")
+        make_client(transport).backup(tmp_path / "dump.sql")
+        assert transport.last["headers"]["authorization"] == "Bearer tok-abc"
+
+    def test_error_response_raises_and_writes_no_file(self, tmp_path):
+        transport = BytesTransport(status_code=403, detail_json={"detail": "admin access required"})
+        dest = tmp_path / "dump.sql"
+
+        with pytest.raises(CerebroAPIError) as exc_info:
+            make_client(transport).backup(dest)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "admin access required"
+        assert not dest.exists()
+
+    def test_connection_failure_raises_cerebro_connection_error(self, tmp_path):
+        client = make_client(RaisingTransport())
+        with pytest.raises(CerebroConnectionError):
+            client.backup(tmp_path / "dump.sql")
 
 
 class TestLogin:

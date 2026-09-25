@@ -11,15 +11,18 @@ behalf of the other services, not something that gates cerebro-auth's own
 routes.
 """
 
+import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from cerebro_auth.auth import (
@@ -366,6 +369,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await revoke_api_token(pool, name)
         except TokenNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no active token named '{exc}'") from exc
+
+    # ---------------------------------------------------------------- backup
+
+    @app.post("/backup", dependencies=[Depends(require_admin)])
+    async def backup(request: Request) -> StreamingResponse:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pg_dump",
+                request.app.state.settings.database_url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="pg_dump is not available in this deployment",
+            ) from exc
+
+        async def stream() -> AsyncIterator[bytes]:
+            assert proc.stdout is not None
+            try:
+                while chunk := await proc.stdout.read(65536):
+                    yield chunk
+            finally:
+                await proc.wait()
+                if proc.returncode != 0:
+                    assert proc.stderr is not None
+                    stderr = await proc.stderr.read()
+                    logger.error(
+                        "pg_dump exited with status %s: %s",
+                        proc.returncode,
+                        stderr.decode(errors="replace"),
+                    )
+
+        filename = f"cerebro-backup-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.sql"
+        return StreamingResponse(
+            stream(),
+            media_type="application/sql",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
 
     return app
 

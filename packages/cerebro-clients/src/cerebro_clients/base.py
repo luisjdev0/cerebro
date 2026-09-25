@@ -11,6 +11,7 @@ pass through or, worse, swallowing it silently.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -99,3 +100,29 @@ class BaseClient:
             raise CerebroAPIError(resp.status_code, detail, response=resp) from None
 
         return resp
+
+    def _stream_to_file(self, method: str, path: str, dest: Path, *, chunk_size: int = 65536) -> None:
+        """Stream a response body straight to `dest` on disk instead of buffering it
+        in memory first -- for large downloads like cerebro-auth's `POST /backup` (a
+        full `pg_dump`), where `_request(...).content` would hold the whole dump in
+        RAM before the caller ever got to write it out. Same auth/error handling as
+        `_request` (still a Bearer-authenticated request, still raises
+        `CerebroAPIError`/`CerebroConnectionError`), just backed by
+        `httpx.Client.stream()` so bytes land on disk as they arrive.
+        """
+        try:
+            with self._client.stream(method, path) as resp:
+                if resp.status_code >= 400:
+                    resp.read()
+                    detail: Any
+                    try:
+                        body = resp.json()
+                        detail = body.get("detail", resp.text) if isinstance(body, dict) else body
+                    except ValueError:
+                        detail = resp.text
+                    raise CerebroAPIError(resp.status_code, detail, response=resp)
+                with open(dest, "wb") as fh:
+                    for chunk in resp.iter_bytes(chunk_size):
+                        fh.write(chunk)
+        except httpx.RequestError as exc:
+            raise CerebroConnectionError(self.base_url, exc) from exc

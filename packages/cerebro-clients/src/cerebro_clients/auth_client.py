@@ -12,6 +12,7 @@ NOT send the `Authorization` header this client was constructed with -- see
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -98,6 +99,13 @@ class AuthClient(BaseClient):
 
     def revoke_token(self, name: str) -> dict[str, Any]:
         return self._request("DELETE", f"/tokens/{name}").json()
+
+    # --------------------------------------------------------------------- backup
+
+    def backup(self, dest: Path) -> None:
+        """Stream `POST /backup` (a full `pg_dump` of the whole instance) straight to
+        `dest` -- see `BaseClient._stream_to_file`. Admin-only on the server side."""
+        self._stream_to_file("POST", "/backup", dest)
 
     # --------------------------------------------------------------------- login
 

@@ -37,7 +37,16 @@
 		reverse_proxy cerebro-auth-api:8000
 	}
 
+	# Serves the CLI installer scripts (gateway/install/*, mounted read-only into
+	# this container at /srv/install -- see compose.yaml) as plain static files,
+	# no backend involved. /install/install.sh -> /srv/install/install.sh, same
+	# prefix-stripping as the handle_path blocks above.
+	handle_path /install/* {
+		root * /srv/install
+		file_server
+	}
+
 	handle {
-		respond "cerebro gateway: use /memory, /docs, /flows or /auth" 404
+		respond "cerebro gateway: use /memory, /docs, /flows, /auth or /install" 404
 	}
 }

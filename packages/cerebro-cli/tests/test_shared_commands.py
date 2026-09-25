@@ -1,10 +1,10 @@
-"""`cerebro backup`/`restore` (mocked subprocess.run, no real docker) and
-`cerebro token create/revoke` (mocked `AuthClient`) -- token management now lives in
-exactly one service (cerebro-auth, ecosistema-cerebro.md SS13, updated), so there's
-no more partial-failure/retry semantics to test across services -- just the
-client-side validation (`--user`/`--access-level` mutual exclusion, `--modules`
-required for a service token) and that the CSV flags get packed the way the server
-expects.
+"""`cerebro backup` (mocked `AuthClient`, no real cerebro-auth), `cerebro restore`
+(mocked subprocess.run, no real docker) and `cerebro token create/revoke` (mocked
+`AuthClient`) -- token management now lives in exactly one service (cerebro-auth,
+ecosistema-cerebro.md SS13, updated), so there's no more partial-failure/retry
+semantics to test across services -- just the client-side validation
+(`--user`/`--access-level` mutual exclusion, `--modules` required for a service
+token) and that the CSV flags get packed the way the server expects.
 """
 
 from __future__ import annotations
@@ -41,38 +41,40 @@ def _token_create_args(**overrides):
 
 
 class TestBackup:
-    def test_runs_pg_dump_and_reports_success(self, monkeypatch, tmp_path):
-        captured = {}
+    def test_downloads_via_auth_client_and_reports_success(self, tmp_path):
+        client = MagicMock()
 
-        def fake_run(cmd, cwd, stdout, stderr):
-            captured["cmd"] = cmd
-            stdout.write(b"-- dump content --")
-            result = MagicMock()
-            result.returncode = 0
-            return result
+        def fake_backup(dest):
+            dest.write_bytes(b"-- dump content --")
 
-        monkeypatch.setattr(shared_commands.subprocess, "run", fake_run)
+        client.backup.side_effect = fake_backup
         args = argparse.Namespace(output=str(tmp_path))
-        shared_commands.cmd_backup(args)
 
-        assert captured["cmd"][:4] == ["docker", "compose", "exec", "-T"]
-        assert "pg_dump" in captured["cmd"]
+        shared_commands.cmd_backup(args, client=client)
+
+        client.backup.assert_called_once()
+        (dest_arg,) = client.backup.call_args.args
+        assert dest_arg.parent == tmp_path
         files = list(tmp_path.glob("cerebro-*.sql"))
         assert len(files) == 1
         assert files[0].read_bytes() == b"-- dump content --"
 
-    def test_nonzero_exit_removes_partial_file_and_exits(self, monkeypatch, tmp_path):
-        def fake_run(cmd, cwd, stdout, stderr):
-            stdout.write(b"partial")
-            result = MagicMock()
-            result.returncode = 1
-            result.stderr = b"pg_dump failed"
-            return result
-
-        monkeypatch.setattr(shared_commands.subprocess, "run", fake_run)
+    def test_connection_error_exits_and_leaves_no_partial_file(self, tmp_path):
+        client = MagicMock()
+        client.backup.side_effect = CerebroConnectionError("http://x", RuntimeError("refused"))
         args = argparse.Namespace(output=str(tmp_path))
+
         with pytest.raises(SystemExit):
-            shared_commands.cmd_backup(args)
+            shared_commands.cmd_backup(args, client=client)
+        assert list(tmp_path.glob("cerebro-*.sql")) == []
+
+    def test_api_error_exits_and_leaves_no_partial_file(self, tmp_path):
+        client = MagicMock()
+        client.backup.side_effect = _api_error(403, "admin access required")
+        args = argparse.Namespace(output=str(tmp_path))
+
+        with pytest.raises(SystemExit):
+            shared_commands.cmd_backup(args, client=client)
         assert list(tmp_path.glob("cerebro-*.sql")) == []
 
 

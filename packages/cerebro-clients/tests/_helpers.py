@@ -37,6 +37,34 @@ class RecordingTransport(httpx.BaseTransport):
         return self.calls[-1]
 
 
+class BytesTransport(httpx.BaseTransport):
+    """Like `RecordingTransport`, but returns a raw `bytes` body instead of JSON --
+    for streaming endpoints like cerebro-auth's `POST /backup`, which never uses
+    a JSON envelope (see `AuthClient.backup`/`BaseClient._stream_to_file`)."""
+
+    def __init__(self, content: bytes = b"", status_code: int = 200, detail_json: Any = None):
+        self.calls: list[dict[str, Any]] = []
+        self.content = content
+        self.status_code = status_code
+        self.detail_json = detail_json
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(
+            {
+                "method": request.method,
+                "path": request.url.path,
+                "headers": dict(request.headers),
+            }
+        )
+        if self.detail_json is not None:
+            return httpx.Response(self.status_code, json=self.detail_json, request=request)
+        return httpx.Response(self.status_code, content=self.content, request=request)
+
+    @property
+    def last(self) -> dict[str, Any]:
+        return self.calls[-1]
+
+
 class RaisingTransport(httpx.BaseTransport):
     """Simulates a total network failure (DNS, connection refused...)."""
 
