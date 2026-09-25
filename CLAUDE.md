@@ -161,14 +161,24 @@ this writing:
 - **Auth unification + user system — DONE**, merged to `main`. See "Auth model"
   above. Not yet implemented: password-based login (`users.password_hash` exists,
   nullable, no endpoint/flow yet — token-only login for now).
-- **Standalone CLI installer**: agreed design (not implemented) — CI (GitHub
-  Actions, Linux+Windows matrix) compiles generic binaries and publishes them to
-  GitHub Releases; an installer script (`.sh`/`.ps1`) served by the gateway itself
-  at `/install/*` downloads straight from Releases when run (no polling, no
-  binary volume on the server) and configures that instance's URL as local
-  config. The repo to download from is a variable (`CEREBRO_REPO`), not
-  hardcoded, so a fork points at its own Releases.
-- **Remote backups via API**: unblocked now that `cerebro_auth` exists (a token's
-  `allowed_modules` answers "which schemas can it see"), but still has open design
-  questions — dump format (`pg_dump` vs. structured export), extraction-only vs.
-  also restore, on-demand vs. scheduled. Not implemented.
+- **Remote backups — DONE**. `POST /backup` on `cerebro-auth` (admin-only) streams
+  a full `pg_dump` of the whole shared Postgres instance straight to the client
+  (`StreamingResponse`, no buffering, no JSON envelope — same as a browser
+  download). `cerebro backup` downloads from it instead of shelling out to
+  `docker compose exec`, so it works against any deployment the caller has an
+  admin token for. Extraction only — no restore, no scheduling, no MCP tool
+  (same rationale as `docs import-markdown`: dumping raw SQL into a model's
+  context has no sane use case). The runtime image installs
+  `postgresql-client-17` via the PGDG apt repo (codename read from
+  `/etc/os-release`, not hardcoded — the base image's own Debian codename can
+  change across rebuilds).
+- **Standalone CLI installer — DONE**. First GitHub Actions workflow in the repo
+  (`.github/workflows/release-cli.yml`, tag-triggered, Linux+Windows matrix)
+  builds generic `cerebro` binaries with PyInstaller and publishes them to GitHub
+  Releases. `gateway/install/install.sh`/`install.ps1` (served statically by the
+  gateway at `/install/*`) download the right one for `CEREBRO_REPO` (default
+  `luisjdev0/cerebro`, so a fork points at its own Releases) and place it on the
+  PATH. Deliberately minimal: the script only installs the binary — it does not
+  know this deployment's URL or any token, and does not touch
+  `~/.cerebro/config.json` itself. Configuring the CLI is a separate, manual step
+  with the already-implemented `cerebro login --token <token> --url <gateway>`.

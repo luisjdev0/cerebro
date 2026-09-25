@@ -8,3 +8,6 @@ __pycache__/
 api.log
 api_local.log
 *.log
+packages/cerebro-cli/build/
+packages/cerebro-cli/dist/
+*.spec

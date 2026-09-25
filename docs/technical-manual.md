@@ -573,15 +573,19 @@ MCP server — no parallel implementation of any API call.
   any pending file older than 24h, so a forgotten partial registration doesn't
   sit on disk indefinitely without anyone noticing — it never prints the
   plaintext secret in that warning, only the name and age.
-- **`backup`/`restore`** (`shared_commands.py`): `cerebro backup` shells out to
-  `docker compose exec -T postgres pg_dump -U knowledgeos knowledgeos`,
-  writing to a directory **outside the repo tree** by default
+- **`backup`/`restore`** (`shared_commands.py`): `cerebro backup` downloads
+  `POST /backup` from `cerebro-auth` (admin-only) — a `pg_dump` of the whole
+  shared Postgres instance, streamed straight from the server (`AuthClient.backup`
+  → `BaseClient._stream_to_file`, no buffering the dump in memory, no JSON
+  envelope) to a directory **outside the repo tree** by default
   (`../cerebro-backups/`, sibling of the repo) with `chmod 0600` on the output
-  file — because a single shared Postgres instance means one dump already
-  covers every service's schema in one operation, and because `cerebro-docs`
-  content isn't filtered for secrets (§2.2), the dump file itself is treated
-  as sensitive. `cerebro restore <file>` requires typed `yes` confirmation
-  unless `--yes` is passed, then pipes the file into `psql` the same way.
+  file. Because it goes through the API rather than `docker compose exec`, it
+  works against any deployment the caller has an admin token for, not just a
+  local checkout with Docker running — and because `cerebro-docs` content isn't
+  filtered for secrets (§2.2), the dump file itself is still treated as
+  sensitive. `cerebro restore <file>` is unchanged (local-only, no API
+  counterpart yet): requires typed `yes` confirmation unless `--yes` is passed,
+  then pipes the file into `psql` via `docker compose exec`.
 - **`import-markdown`** reuses `cerebro_memory.markdown_importer` directly
   (pure parsing, no API calls in that module) and does the orchestration
   itself: search for near-duplicates, call `POST /memories`, handle 422s

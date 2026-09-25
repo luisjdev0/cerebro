@@ -277,13 +277,19 @@ your machine). Test the restore at least once:
 gunzip -c backups/cerebro-XXXXXXXX.sql.gz | docker compose exec -T postgres psql -U knowledgeos -d knowledgeos_restore_test
 ```
 
-**Local alternative**: `cerebro backup` (with no arguments) does the same thing via
-the CLI, but writes **outside the repo tree** (`../cerebro-backups/`, a sibling of
-`cerebro/`) with `0600` permissions on the file — designed to avoid it accidentally
-getting committed or being readable by other users on the system (cerebro-docs
-documents don't filter content, so a dump could carry secrets pasted in by mistake).
-`cerebro restore <file>` performs the reverse restore, with an interactive confirmation
-unless `--yes` is passed.
+**Remote alternative**: `cerebro backup` (with no arguments) downloads the same
+`pg_dump` — now covering all 4 schemas (`cerebro_memory`, `cerebro_docs`,
+`cerebro_flows`, `cerebro_auth`) — from `POST /backup` on `cerebro-auth`
+(admin-only, streamed straight to disk, no buffering the whole dump in memory).
+Unlike the cron job above, this doesn't need to run ON the VPS: any machine with
+an admin token and network access to the gateway can pull a backup. It writes
+**outside the repo tree** (`../cerebro-backups/`, a sibling of `cerebro/`) with
+`0600` permissions on the file — designed to avoid it accidentally getting
+committed or being readable by other users on the system (cerebro-docs documents
+don't filter content, so a dump could carry secrets pasted in by mistake).
+`cerebro restore <file>` still performs the reverse restore via `docker compose
+exec` (local-only, unchanged — extraction over the API has no restore
+counterpart yet), with an interactive confirmation unless `--yes` is passed.
 
 ## 10. Update to a new version
 
