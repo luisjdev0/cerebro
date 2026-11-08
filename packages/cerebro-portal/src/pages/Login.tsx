@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { ArrowRight, Lock, User } from 'lucide-react';
 import { AuthLoadingState, Button, InputField, InputGroup, LoginBrandIntro } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
@@ -12,14 +12,12 @@ import { ApiError } from '../lib/api';
 export function Login() {
   const { t } = useTranslation();
   const { session, login } = useAuth();
-  const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? '/';
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [nameError, setNameError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  if (session) return <Navigate to={from} replace />;
+  if (session) return <Navigate to="/" replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

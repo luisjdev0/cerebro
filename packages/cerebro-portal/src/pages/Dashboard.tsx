@@ -4,6 +4,8 @@ import { Brain, FileText, Workflow } from 'lucide-react';
 import { Button, PageHeader, StatCard } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
 import { Heatmap } from '../components/Heatmap';
+import { ModuleChart } from '../components/ModuleChart';
+import { monthlySeries, topSlices, type Slice } from '../lib/charts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { fetchActivity, totalsByDate, type ActivityByModule, type ModuleKey } from '../lib/activity';
@@ -16,6 +18,8 @@ type Stats = {
   flows: number | null;
   runs: number | null;
 };
+type Breakdown = { memory: Slice[]; docs: Slice[]; flows: Slice[] };
+type CategoryCount = { slug: string; name: string; count: number };
 
 const EMPTY: Stats = { memories: null, contexts: null, documents: null, categories: null, flows: null, runs: null };
 const FILTERS: { key: 'all' | ModuleKey; label: string }[] = [
@@ -46,6 +50,7 @@ export function Dashboard() {
   const { canSee } = useAuth();
   const modules = useMemo(() => (['memory', 'docs', 'flows'] as ModuleKey[]).filter((m) => canSee(m)), [canSee]);
   const [stats, setStats] = useState<Stats>(EMPTY);
+  const [breakdown, setBreakdown] = useState<Breakdown>({ memory: [], docs: [], flows: [] });
   const [activity, setActivity] = useState<ActivityByModule | null>(null);
   const [filter, setFilter] = useState<'all' | ModuleKey>('all');
 
@@ -54,8 +59,8 @@ export function Dashboard() {
     void (async () => {
       const [m, d, f, act] = await Promise.all([
         modules.includes('memory') ? tryGet<{ memories_by_context: { context: string; status: string; count: number }[] }>('/memory/stats') : null,
-        modules.includes('docs') ? tryGet<{ categories: number; documents: number }>('/docs/stats') : null,
-        modules.includes('flows') ? tryGet<{ flows: number; runs: number }>('/flows/stats') : null,
+        modules.includes('docs') ? tryGet<{ categories: number; documents: number; documents_by_category: CategoryCount[] }>('/docs/stats') : null,
+        modules.includes('flows') ? tryGet<{ flows: number; runs: number; flows_by_category: CategoryCount[] }>('/flows/stats') : null,
         fetchActivity(modules),
       ]);
       if (cancelled) return;
@@ -67,6 +72,12 @@ export function Dashboard() {
         categories: d?.categories ?? null,
         flows: f?.flows ?? null,
         runs: f?.runs ?? null,
+      });
+      const toSlices = (rows: CategoryCount[] | undefined) => topSlices((rows ?? []).map((r) => ({ key: r.slug, name: r.name, value: r.count })), 5, { key: '__other', name: '' });
+      setBreakdown({
+        memory: topSlices(active.map((r) => ({ key: r.context, name: r.context, value: r.count })), 5, { key: '__other', name: '' }),
+        docs: toSlices(d?.documents_by_category),
+        flows: toSlices(f?.flows_by_category),
       });
       setActivity(act);
     })();
@@ -113,6 +124,19 @@ export function Dashboard() {
         </div>
         {activity ? <Heatmap totals={totals} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
       </section>
+      {activity && (
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {modules.includes('memory') && (
+            <ModuleChart title={t('charts.memoryTitle')} updatedLabel={t('charts.memoryUpdated')} series={monthlySeries(activity.memory)} slices={breakdown.memory} pieCaption={t('charts.memoryPie')} />
+          )}
+          {modules.includes('docs') && (
+            <ModuleChart title={t('charts.docsTitle')} updatedLabel={t('charts.docsUpdated')} series={monthlySeries(activity.docs)} slices={breakdown.docs} pieCaption={t('charts.docsPie')} />
+          )}
+          {modules.includes('flows') && (
+            <ModuleChart title={t('charts.flowsTitle')} updatedLabel={t('charts.flowsUpdated')} series={monthlySeries(activity.flows)} slices={breakdown.flows} pieCaption={t('charts.flowsPie')} />
+          )}
+        </div>
+      )}
     </>
   );
 }

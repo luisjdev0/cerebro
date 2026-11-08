@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { useAuth } from './lib/auth';
 import { ComingSoon } from './pages/ComingSoon';
@@ -10,8 +10,7 @@ import { useTranslation } from 'react-i18next';
 // (/memory, /docs, /flows, /auth, /install): hence /memories, /documents, /workflows.
 function RequireAuth({ admin = false, children }: { admin?: boolean; children: React.ReactNode }) {
   const { session, isAdmin } = useAuth();
-  const location = useLocation();
-  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!session) return <Navigate to="/login" replace />;
   if (admin && !isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

@@ -98,10 +98,17 @@ class ActivityResponse(BaseModel):
     days: list[ActivityDay]
 
 
+class CategoryCount(BaseModel):
+    slug: str
+    name: str
+    count: int
+
+
 class StatsOut(BaseModel):
     categories: int
     flows: int
     runs: int
+    flows_by_category: list[CategoryCount] = []
 
 
 class DecisionIn(StrictIn):
@@ -229,7 +236,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 allowed,
             )
-        return StatsOut(categories=categories, flows=flows, runs=runs)
+        # Per-category breakdown (portal pie chart): same category scope and ownership
+        # gate as /activity.
+        params: list[Any] = []
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"f.owner_user_id = ${len(params)}")
+            else:
+                params.append(principal.owner_filter["user_id_in"])
+                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await pool.fetch(
+            f"""
+            SELECT c.slug, c.name, count(*)::int AS count
+            FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+            {where} GROUP BY c.slug, c.name ORDER BY count(*) DESC, c.name
+            """,
+            *params,
+        )
+        return StatsOut(
+            categories=categories,
+            flows=flows,
+            runs=runs,
+            flows_by_category=[CategoryCount(**dict(r)) for r in rows],
+        )
 
     # ---------------------------------------------------------------- activity
 

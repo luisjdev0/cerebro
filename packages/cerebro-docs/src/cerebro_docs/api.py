@@ -151,6 +151,12 @@ class ActivityResponse(BaseModel):
     days: list[ActivityDay]
 
 
+class CategoryCount(BaseModel):
+    slug: str
+    name: str
+    count: int
+
+
 class StatsOut(BaseModel):
     """Minimal mirror of cerebro-memory's GET /stats (ecosistema-cerebro.md SS11):
     cerebro-docs has no disambiguations or learned preferences, so only these
@@ -159,6 +165,7 @@ class StatsOut(BaseModel):
     categories: int
     documents: int
     versions: int
+    documents_by_category: list[CategoryCount] = []
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -270,7 +277,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 allowed,
             )
-        return StatsOut(categories=categories, documents=documents, versions=versions)
+        # Per-category breakdown (portal pie chart): same category scope and ownership
+        # gate as /activity, so a restricted token never sees other people's counts.
+        params: list[Any] = []
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        apply_owner_filter(filters, params, principal.owner_filter)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await pool.fetch(
+            f"""
+            SELECT c.slug, c.name, count(*)::int AS count
+            FROM documents d JOIN categories c ON c.id = d.category_id
+            {where} GROUP BY c.slug, c.name ORDER BY count(*) DESC, c.name
+            """,
+            *params,
+        )
+        return StatsOut(
+            categories=categories,
+            documents=documents,
+            versions=versions,
+            documents_by_category=[CategoryCount(**dict(r)) for r in rows],
+        )
 
     # ---------------------------------------------------------------- activity
 

@@ -309,6 +309,8 @@ class TestStats:
         assert after["categories"] == before["categories"] + 1
         assert after["flows"] == before["flows"] + 1
         assert after["runs"] == before["runs"] + 1
+        by_cat = {c["slug"]: c["count"] for c in after["flows_by_category"]}
+        assert by_cat[cat] == 1
 
 
 class TestActivity:

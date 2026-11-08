@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Portal overview: three charts (memories, documents, flows) under the activity heatmap, each switchable between a line (created/updated per month over the last year) and a pie (memories per context, documents per category, flows per category; the 5 biggest slices plus "Other"). `GET /stats` of `cerebro-docs` and `cerebro-flows` gained `documents_by_category` / `flows_by_category` (honoring category scope and the ownership gate); existing fields are unchanged.
 - Portal i18n (English/Spanish) with `i18next`: language switcher in the top-right corner of every screen, including the login; the choice is persisted in `localStorage` (`cerebro.lang`) and defaults to the browser language. The login is a custom form because Ixchel's `LoginScreen` ships fixed Spanish copy.
 - `cerebro-portal`: a React + Vite + TypeScript + Tailwind web portal (Ixchel
   components) served by its own nginx container behind the gateway, which now routes
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [2.8.2] - English everywhere
 
 ### Changed
+- Portal login always lands on the overview (it no longer returns to the screen the session was left on).
 - Everything user- or model-facing that was still Spanish is now English: API error
   messages of `cerebro-docs`, `cerebro-flows` (including the step-by-step engine and
   the YAML schema validation errors) and `cerebro-memory` (secret-rejection message,

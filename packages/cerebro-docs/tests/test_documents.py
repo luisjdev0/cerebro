@@ -538,7 +538,9 @@ class TestStats:
         # `allowed` is a fresh category created in this test with exactly 1 document
         # and no versions - a token restricted to it must see exactly that, never
         # anything belonging to `other`.
-        assert data == {"categories": 1, "documents": 1, "versions": 0}
+        assert data["categories"] == 1 and data["documents"] == 1 and data["versions"] == 0
+        # the per-category breakdown is scoped too: only `allowed`, with its single document
+        assert [(c["slug"], c["count"]) for c in data["documents_by_category"]] == [(allowed, 1)]
 
 
 class TestActivity:
