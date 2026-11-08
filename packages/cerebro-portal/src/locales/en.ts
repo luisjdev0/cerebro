@@ -115,6 +115,7 @@ export const en = {
       none: 'No contexts yet.',
       done: 'Done',
     },
+    editTitle: 'Edit memory',
     editNote: 'Changing the content saves a new version and keeps the previous one as replaced; changing only title, type, importance or date edits this memory in place.',
     forgetTitle: 'Forget this memory?',
     forgetDesc: 'It will stop appearing in searches. It stays in the database as archived.',

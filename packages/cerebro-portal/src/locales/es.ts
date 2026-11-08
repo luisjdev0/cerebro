@@ -115,6 +115,7 @@ export const es = {
       none: 'Aún no hay contextos.',
       done: 'Listo',
     },
+    editTitle: 'Editar memoria',
     editNote: 'Si cambias el contenido se guarda una versión nueva y la anterior queda como reemplazada; si solo cambias título, tipo, importancia o fecha, se edita esta misma memoria.',
     forgetTitle: '¿Olvidar esta memoria?',
     forgetDesc: 'Dejará de aparecer en las búsquedas. Queda en la base de datos como archivada.',

@@ -1,63 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { Badge, Button, ConfirmDialog, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
+import { useCallback, useEffect, useState } from 'react';
+import { Badge, Button, ConfirmDialog, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
 import { Calendar, GitBranch, Gauge, Pencil, ShieldCheck, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { forgetMemory, getMemory, getRelated, MEMORY_TYPES, updateMemory, type Memory, type MemoryPatch, type MemoryType, type Related } from '../lib/memories';
 import { Field, INPUT, useErrorMessage } from './formUi';
+import { ResizableSheet } from './ResizableSheet';
 import { statusVariant, typeVariant, useDateTime } from './memoryUi';
 
-const WIDTH_KEY = 'cerebro.memory.panelWidth';
-const MIN_W = 380;
-const DEFAULT_W = 560;
-
 const occurredDay = (m: Memory) => (m.occurred_at ? m.occurred_at.slice(0, 10) : '');
-
-const maxWidth = () => Math.min(1100, Math.floor(window.innerWidth * 0.9));
-const clamp = (w: number) => Math.max(MIN_W, Math.min(maxWidth(), w));
-
-function loadWidth(): number {
-  try {
-    const n = Number(localStorage.getItem(WIDTH_KEY));
-    return Number.isFinite(n) && n > 0 ? clamp(n) : DEFAULT_W;
-  } catch {
-    return DEFAULT_W;
-  }
-}
-
-/** Panel width that the user resizes by dragging its left edge; remembered across visits. */
-function useResizableWidth() {
-  const [width, setWidth] = useState(loadWidth);
-  const drag = useRef<{ startX: number; startW: number } | null>(null);
-
-  const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
-    drag.current = { startX: e.clientX, startW: width };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
-    if (drag.current) setWidth(clamp(drag.current.startW + (drag.current.startX - e.clientX)));
-  };
-  const onPointerUp = () => {
-    if (!drag.current) return;
-    drag.current = null;
-    try {
-      localStorage.setItem(WIDTH_KEY, String(width));
-    } catch {
-      /* the width just will not be remembered */
-    }
-  };
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const w = clamp(width + (e.key === 'ArrowLeft' ? 24 : -24));
-    setWidth(w);
-    try {
-      localStorage.setItem(WIDTH_KEY, String(w));
-    } catch {
-      /* ignore */
-    }
-  };
-  return { width, handleProps: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onKeyDown } };
-}
 
 function Stat({ icon: Icon, label, children }: { icon: typeof Gauge; label: string; children: React.ReactNode }) {
   return (
@@ -90,7 +40,6 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
   const { t } = useTranslation();
   const fmt = useDateTime();
   const errMsg = useErrorMessage();
-  const { width, handleProps } = useResizableWidth();
   const [memory, setMemory] = useState<Memory | null>(null);
   const [related, setRelated] = useState<Related[]>([]);
   const [error, setError] = useState(false);
@@ -173,20 +122,7 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
   const editable = memory?.status === 'active';
 
   return (
-    <Sheet open={id !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 data-[side=right]:sm:max-w-none" style={{ width: `min(${width}px, 100vw)` }}>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('memory.detail.resize')}
-          title={t('memory.detail.resize')}
-          tabIndex={0}
-          {...handleProps}
-          className="group absolute inset-y-0 left-0 z-10 hidden w-2 cursor-col-resize touch-none items-center justify-center sm:flex"
-        >
-          <span className="h-12 w-1 rounded-full bg-border transition-colors group-hover:bg-brand-soft group-focus-visible:bg-brand-soft" />
-        </div>
-
+    <ResizableSheet open={id !== null} onClose={onClose}>
         <SheetHeader className="space-y-2 border-b bg-muted/30 p-6 pr-12">
           <div className="flex flex-wrap items-center gap-1.5">
             {memory && (
@@ -197,7 +133,7 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
               </>
             )}
           </div>
-          <SheetTitle className="text-xl leading-snug">{memory?.title || (error ? t('memory.detail.loadError') : '…')}</SheetTitle>
+          <SheetTitle className="text-xl leading-snug">{editing ? t('memory.editTitle') : memory?.title || (error ? t('memory.detail.loadError') : '…')}</SheetTitle>
           <SheetDescription className="sr-only">{memory?.title}</SheetDescription>
         </SheetHeader>
 
@@ -260,7 +196,7 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
                 {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
               </section>
 
-              <section className="space-y-3">
+              {!editing && <section className="space-y-3">
                 <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('memory.detail.details')}</h3>
                 <dl className="grid grid-cols-2 gap-3">
                   <Stat icon={Gauge} label={t('memory.importance')}>
@@ -281,9 +217,9 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
                     {t('memory.detail.supersededBy')} →
                   </button>
                 )}
-              </section>
+              </section>}
 
-              <section className="space-y-3">
+              {!editing && <section className="space-y-3">
                 <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('memory.detail.related')}</h3>
                 {related.length === 0 ? (
                   <p className="text-sm text-muted-foreground">{t('memory.detail.noRelated')}</p>
@@ -303,12 +239,12 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
                     ))}
                   </ul>
                 )}
-              </section>
+              </section>}
             </>
           )}
         </div>
 
-        {memory && editable && (
+        {memory && editable && !editing && (
           <div className="flex justify-end border-t p-3">
             <Button size="sm" variant="ghost" className="text-destructive-text" leadingIcon={Trash2} onClick={() => setConfirmForget(true)}>
               {t('memory.actions.forget')}
@@ -326,7 +262,6 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
           isPending={busy}
           onConfirm={() => void forget()}
         />
-      </SheetContent>
-    </Sheet>
+    </ResizableSheet>
   );
 }
