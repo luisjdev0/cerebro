@@ -1,5 +1,9 @@
 FROM node:22-alpine AS build
 RUN apk add --no-cache git && corepack enable
+# The lockfile records the Ixchel dependency with an ssh URL; no ssh/keys in the
+# build, so fetch it over anonymous https (the repo is public).
+RUN git config --global url."https://github.com/".insteadOf "git@github.com:" \
+ && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
