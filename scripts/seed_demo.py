@@ -170,6 +170,8 @@ def main() -> int:
             auth.add_group_member("platform", member)
         except CerebroAPIError:
             pass
+    # owners inherit their groups' scopes: without this their session tokens reach no module
+    auth.set_group_scopes("platform", ["memory", "docs", "flows"])
 
     def user_clients(name: str):
         tok = AuthClient(f"{base}/auth", None).login_password(name, DEMO_PASSWORD)["token"]
