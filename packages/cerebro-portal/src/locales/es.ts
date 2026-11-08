@@ -270,7 +270,7 @@ export const es = {
       refPrompt: 'Prompt de «{{step}}»',
       refMissing: 'No encontrado',
     },
-    diagram: { error: 'No se pudo dibujar el diagrama.', copySource: 'Copiar código Mermaid', downloadSvg: 'Descargar como .svg' },
+    diagram: { error: 'No se pudo dibujar el diagrama.', copySource: 'Copiar código Mermaid', zoomIn: 'Acercar', zoomOut: 'Alejar', fit: 'Ver el diagrama completo', actualSize: 'Tamaño real', fullscreen: 'Pantalla completa', exitFullscreen: 'Salir de pantalla completa', hint: 'Arrastra para mover · rueda para zoom · doble clic para ajustar', export: 'Exportar', exporting: 'Exportando…', exportError: 'No se pudo exportar.', as_png: 'Imagen PNG', as_svg: 'SVG (vectorial)', as_pdf: 'Documento PDF' },
     upload: { drop: 'Suelta un archivo .yaml aquí o haz clic para elegirlo', hint: 'Un solo archivo; reemplaza el texto de abajo', one: 'Elige un archivo a la vez.', type: 'Solo archivos .yaml o .yml.', size: 'El archivo pesa más de 1 MB.', empty: 'El archivo está vacío.' },
     deleteTitle: '¿Eliminar este flujo?',
     deleteDesc: 'La definición se elimina junto con su historial de versiones y sus ejecuciones. No se puede deshacer.',

@@ -59,7 +59,8 @@ def flow_to_mermaid(flow: FlowDefinitionSchema) -> str:
 
     lines.append(f'{indent}{START_ID}(("start"))')
     if flow.tools:
-        tools = ", ".join(_text(t) for t in flow.tools)
+        shown = flow.tools[:4]
+        tools = ", ".join(_text(t) for t in shown) + (f" (+{len(flow.tools) - 4} more)" if len(flow.tools) > 4 else "")
         lines.append(f'{indent}{PREREQUISITES_ID}["<b>prerequisites</b><br/>tools: {tools}"]')
         lines.append(f"{indent}{START_ID} --> {PREREQUISITES_ID}")
         lines.append(f"{indent}{PREREQUISITES_ID} --> {_node_id(flow.entry)}")
