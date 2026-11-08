@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `cerebro-portal`: a React + Vite + TypeScript + Tailwind web portal (Ixchel
+  components) served by its own nginx container behind the gateway, which now routes
+  everything that is not an API prefix to it. First screens: username/password login
+  (same session tokens as the CLI) and an overview with clickable module cards and a
+  GitHub-style activity heatmap. Client-side routes are `/memories`, `/documents`,
+  `/workflows` and `/admin` so they never collide with the API prefixes.
+- `GET /activity?days=N` in `cerebro-memory`, `cerebro-docs` and `cerebro-flows`:
+  per-day counts (created / updated; for flows, definitions created / runs started),
+  honoring the token's scope and the ownership gate. Feeds the heatmap.
+- `scripts/seed_demo.py`: fills a **disposable** instance with simulated users,
+  contexts, memories, documents and flows, backdated over ~6 months.
+- `CEREBRO_GATEWAY_BIND` in `compose.yaml` (default `127.0.0.1`) to expose the gateway
+  on the LAN of a throwaway test server.
+
 ## [2.8.2] - English everywhere
 
 ### Changed

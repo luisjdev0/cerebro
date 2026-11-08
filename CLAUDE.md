@@ -21,6 +21,7 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
 | `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
 | `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients`; interactive layer (`rich` + `questionary`) that walks the argparse tree | — |
+| `cerebro-portal` | Web portal (React + Vite + TS + Tailwind, Ixchel components); static SPA served by nginx behind the gateway, talks to the same APIs and session tokens | 80 (internal, via the gateway) |
 
 Each internal API runs on port 8000 inside its container; `compose.yaml` maps
 each one to a different host port via `.env` (`CEREBRO_MEMORY_HOST_PORT`, etc. —
