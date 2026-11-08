@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { buildGrid, levelFor } from '../lib/activity';
+import { useLocale } from '../lib/i18n';
 
 const LEVEL_CLASS = [
   'bg-muted',
@@ -8,10 +10,11 @@ const LEVEL_CLASS = [
   'bg-brand-soft/75',
   'bg-brand-soft',
 ];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** GitHub-style contribution grid: one square per day, darker = more activity. */
 export function Heatmap({ totals, weeks = 53 }: { totals: Map<string, number>; weeks?: number }) {
+  const { t } = useTranslation();
+  const { months, formatDate, lang } = useLocale();
   const grid = useMemo(() => buildGrid(new Date(), weeks), [weeks]);
   const max = useMemo(() => Math.max(0, ...totals.values()), [totals]);
   const total = useMemo(() => [...totals.values()].reduce((a, b) => a + b, 0), [totals]);
@@ -20,7 +23,7 @@ export function Heatmap({ totals, weeks = 53 }: { totals: Map<string, number>; w
   const monthLabels = grid.map((col, i) => {
     const m = new Date(col[0].date + 'T00:00:00Z').getUTCMonth();
     const prev = i > 0 ? new Date(grid[i - 1][0].date + 'T00:00:00Z').getUTCMonth() : -1;
-    return m !== prev ? MONTHS[m] : '';
+    return m !== prev ? months[m] : '';
   });
 
   return (
@@ -32,7 +35,7 @@ export function Heatmap({ totals, weeks = 53 }: { totals: Map<string, number>; w
               <div key={i} className="w-3 overflow-visible whitespace-nowrap">{label}</div>
             ))}
           </div>
-          <div className="flex gap-[3px]" role="img" aria-label={`${total} events in the last year`}>
+          <div className="flex gap-[3px]" role="img" aria-label={t('heatmap.summary', { total: total.toLocaleString(lang) })}>
             {grid.map((col, ci) => (
               <div key={ci} className="flex flex-col gap-[3px]">
                 {col.map((d) => {
@@ -41,7 +44,7 @@ export function Heatmap({ totals, weeks = 53 }: { totals: Map<string, number>; w
                   return (
                     <div
                       key={d.date}
-                      title={`${count} ${count === 1 ? 'event' : 'events'} on ${d.date}`}
+                      title={t('heatmap.cell', { count, date: formatDate(d.date) })}
                       className={`size-3 rounded-[3px] ${LEVEL_CLASS[levelFor(count, max)]}`}
                     />
                   );
@@ -52,13 +55,13 @@ export function Heatmap({ totals, weeks = 53 }: { totals: Map<string, number>; w
         </div>
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{total.toLocaleString()} events in the last year</span>
+        <span>{t('heatmap.summary', { total: total.toLocaleString(lang) })}</span>
         <span className="flex items-center gap-1">
-          Less
+          {t('heatmap.less')}
           {LEVEL_CLASS.map((c) => (
             <span key={c} className={`size-3 rounded-[3px] ${c}`} />
           ))}
-          More
+          {t('heatmap.more')}
         </span>
       </div>
     </div>

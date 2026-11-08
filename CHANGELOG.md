@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Portal i18n (English/Spanish) with `i18next`: language switcher in the top-left corner of every screen, including the login; the choice is persisted in `localStorage` (`cerebro.lang`) and defaults to the browser language. The login is a custom form because Ixchel's `LoginScreen` ships fixed Spanish copy.
 - `cerebro-portal`: a React + Vite + TypeScript + Tailwind web portal (Ixchel
   components) served by its own nginx container behind the gateway, which now routes
   everything that is not an API prefix to it. First screens: username/password login

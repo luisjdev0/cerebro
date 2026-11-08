@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Brain, FileText, Workflow } from 'lucide-react';
 import { Button, PageHeader, StatCard } from '@alquimias/ixchel';
+import { useTranslation } from 'react-i18next';
 import { Heatmap } from '../components/Heatmap';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -18,10 +19,10 @@ type Stats = {
 
 const EMPTY: Stats = { memories: null, contexts: null, documents: null, categories: null, flows: null, runs: null };
 const FILTERS: { key: 'all' | ModuleKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'memory', label: 'Memory' },
-  { key: 'docs', label: 'Documents' },
-  { key: 'flows', label: 'Flows' },
+  { key: 'all', label: 'dashboard.filterAll' },
+  { key: 'memory', label: 'nav.memory' },
+  { key: 'docs', label: 'nav.documents' },
+  { key: 'flows', label: 'nav.workflows' },
 ];
 
 async function tryGet<T>(path: string): Promise<T | null> {
@@ -41,6 +42,7 @@ function CardLink({ to, children }: { to: string; children: ReactNode }) {
 }
 
 export function Dashboard() {
+  const { t } = useTranslation();
   const { canSee } = useAuth();
   const modules = useMemo(() => (['memory', 'docs', 'flows'] as ModuleKey[]).filter((m) => canSee(m)), [canSee]);
   const [stats, setStats] = useState<Stats>(EMPTY);
@@ -79,37 +81,37 @@ export function Dashboard() {
 
   return (
     <>
-      <PageHeader title="Overview" description="State of your cerebro instance" />
+      <PageHeader title={t('dashboard.title')} description={t('dashboard.description')} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {modules.includes('memory') && (
           <CardLink to="/memories">
-            <StatCard icon={<Brain className="size-4" />} label="Active memories" value={val(stats.memories)} description={stats.contexts === null ? undefined : `${stats.contexts} contexts`} />
+            <StatCard icon={<Brain className="size-4" />} label={t('dashboard.activeMemories')} value={val(stats.memories)} description={stats.contexts === null ? undefined : t('dashboard.contexts', { count: stats.contexts })} />
           </CardLink>
         )}
         {modules.includes('docs') && (
           <CardLink to="/documents">
-            <StatCard icon={<FileText className="size-4" />} label="Documents" value={val(stats.documents)} description={stats.categories === null ? undefined : `${stats.categories} categories`} />
+            <StatCard icon={<FileText className="size-4" />} label={t('dashboard.documents')} value={val(stats.documents)} description={stats.categories === null ? undefined : t('dashboard.categories', { count: stats.categories })} />
           </CardLink>
         )}
         {modules.includes('flows') && (
           <CardLink to="/workflows">
-            <StatCard icon={<Workflow className="size-4" />} label="Flows" value={val(stats.flows)} description={stats.runs === null ? undefined : `${stats.runs} runs`} />
+            <StatCard icon={<Workflow className="size-4" />} label={t('dashboard.flows')} value={val(stats.flows)} description={stats.runs === null ? undefined : t('dashboard.runs', { count: stats.runs })} />
           </CardLink>
         )}
       </div>
 
       <section className="space-y-3 rounded-2xl border p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">Activity</h2>
+          <h2 className="text-sm font-semibold">{t('dashboard.activity')}</h2>
           <div className="flex gap-1">
             {FILTERS.filter((f) => f.key === 'all' || modules.includes(f.key)).map((f) => (
               <Button key={f.key} size="sm" variant={filter === f.key ? 'primary' : 'ghost'} onClick={() => setFilter(f.key)}>
-                {f.label}
+                {t(f.label)}
               </Button>
             ))}
           </div>
         </div>
-        {activity ? <Heatmap totals={totals} /> : <p className="text-sm text-muted-foreground">Loading activity…</p>}
+        {activity ? <Heatmap totals={totals} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
       </section>
     </>
   );

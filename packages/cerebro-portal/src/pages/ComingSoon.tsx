@@ -1,5 +1,7 @@
 import { PageHeader } from '@alquimias/ixchel';
+import { useTranslation } from 'react-i18next';
 
 export function ComingSoon({ title }: { title: string }) {
-  return <PageHeader title={title} description="This screen is being built." />;
+  const { t } = useTranslation();
+  return <PageHeader title={title} description={t('comingSoon')} />;
 }
