@@ -246,8 +246,10 @@ services:
       - ./gateway/install:/srv/install:ro
     ports:
       # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
-      # 8080) - same reason as POSTGRES_HOST_PORT above.
-      - "127.0.0.1:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
+      # 8080) - same reason as POSTGRES_HOST_PORT above. The bind address defaults
+      # to localhost (put a reverse proxy in front); set CEREBRO_GATEWAY_BIND=0.0.0.0
+      # only on a disposable test server that must be reachable from the LAN.
+      - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
       interval: 10s
