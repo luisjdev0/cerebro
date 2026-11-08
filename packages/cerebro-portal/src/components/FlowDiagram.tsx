@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronDown, Copy, Download, Focus, Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { copyText } from '../lib/clipboard';
@@ -8,7 +8,7 @@ import { getFlowDiagram } from '../lib/flows';
 let counter = 0;
 const MIN = 0.05;
 const MAX = 4;
-const BTN = 'inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border bg-background px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50';
+const BTN = 'inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-md border bg-background px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50';
 
 /** Whether the app is in dark mode (the shell toggles a `dark` class on <html>). */
 function useIsDark(): boolean {
@@ -191,7 +191,7 @@ function Actions({ source, basename }: { source: string; basename: string }) {
   };
 
   return (
-    <div className="flex items-center justify-end gap-1.5">
+    <div className="flex items-center gap-1.5">
       {failed && <span role="alert" className="mr-1 text-xs text-destructive-text">{t('flows.diagram.exportError')}</span>}
       <button
         type="button"
@@ -229,7 +229,7 @@ function Actions({ source, basename }: { source: string; basename: string }) {
 
 /** The flow drawn as a flowchart. The API generates the Mermaid source from the complete
  *  definition; the Mermaid library (large) is only loaded when someone opens this view. */
-export function FlowDiagram({ code, version }: { code: string; version?: number }) {
+export function FlowDiagram({ code, version, leading }: { code: string; version?: number; leading?: ReactNode }) {
   const { t } = useTranslation();
   const dark = useIsDark();
   const [source, setSource] = useState<string | null>(null);
@@ -268,10 +268,23 @@ export function FlowDiagram({ code, version }: { code: string; version?: number 
     };
   }, [source, dark]);
 
-  if (error) return <p className="rounded-xl border p-4 text-sm text-muted-foreground">{t('flows.diagram.error')}</p>;
+  const header = (
+    <div className="flex items-center justify-between gap-2">
+      <div>{leading}</div>
+      {source && <Actions source={source} basename={`${code}${version ? `-v${version}` : ''}`} />}
+    </div>
+  );
+  if (error) {
+    return (
+      <div className="space-y-2">
+        {header}
+        <p className="rounded-xl border p-4 text-sm text-muted-foreground">{t('flows.diagram.error')}</p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
-      {source && <Actions source={source} basename={`${code}${version ? `-v${version}` : ''}`} />}
+      {header}
       {svg ? <Viewer key={svg} svg={svg} size={svgSize(svg)} fillHeight={false} /> : <div className="h-40 animate-pulse rounded-xl bg-muted" />}
     </div>
   );

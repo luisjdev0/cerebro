@@ -573,3 +573,50 @@ class TestPortalListings:
         # ...while the owner still has full access
         assert client.get(f"/runs/{run_id}", headers=h1).status_code == 200
         assert client.get("/runs", params={"category": cat}, headers=h1).json()["total"] == 1
+
+
+class TestCategoryManagement:
+    def test_patch_name_and_description_keeps_slug_and_code(self, client, auth_headers):
+        cat = _make_category(client, auth_headers, code="CMG")
+        resp = client.patch(f"/categories/{cat}", json={"name": "Nuevo nombre", "description": "Descripción"}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert (body["slug"], body["code"], body["name"], body["description"]) == (cat, "CMG", "Nuevo nombre", "Descripción")
+        cleared = client.patch(f"/categories/{cat}", json={"description": "  "}, headers=auth_headers).json()
+        assert cleared["description"] is None and cleared["name"] == "Nuevo nombre"
+
+    def test_patch_rejects_empty_unknown_fields_and_missing_category(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        assert client.patch(f"/categories/{cat}", json={}, headers=auth_headers).status_code == 422
+        assert client.patch(f"/categories/{cat}", json={"code": "ZZZ"}, headers=auth_headers).status_code == 422
+        assert client.patch("/categories/no-existe", json={"name": "x"}, headers=auth_headers).status_code == 404
+
+    def test_delete_empty_category(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        resp = client.delete(f"/categories/{cat}", headers=auth_headers)
+        assert resp.status_code == 200 and resp.json() == {"slug": cat, "status": "deleted", "flows_deleted": 0}
+        assert client.delete(f"/categories/{cat}", headers=auth_headers).status_code == 404
+
+    def test_delete_with_flows_needs_force_and_cascades(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        flow = _make_flow(client, auth_headers, cat)
+        run_id = client.post(f"/flows/{flow['code']}/start", headers=auth_headers).json()["run_id"]
+        blocked = client.delete(f"/categories/{cat}", headers=auth_headers)
+        assert blocked.status_code == 409 and "1 flows" in blocked.text
+        assert client.get(f"/flows/{flow['code']}", headers=auth_headers).status_code == 200
+        done = client.delete(f"/categories/{cat}", params={"force": True}, headers=auth_headers)
+        assert done.status_code == 200 and done.json()["flows_deleted"] == 1
+        assert client.get(f"/flows/{flow['code']}", headers=auth_headers).status_code == 404
+        assert client.get(f"/runs/{run_id}/events", headers=auth_headers).status_code == 404
+
+    def test_delete_requires_admin_scope(self, client, auth_headers):
+        dsn = get_settings().database_url
+
+        async def setup():
+            uid = await insert_user(dsn, access_level="user")
+            return await insert_token(dsn, name=f"cat-t-{uuid.uuid4().hex[:8]}", user_id=uid, allowed_modules=["flows"])
+
+        token = asyncio.run(setup())
+        cat = _make_category(client, auth_headers)
+        resp = client.delete(f"/categories/{cat}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code in (401, 403), resp.text

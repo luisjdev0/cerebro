@@ -67,6 +67,15 @@ export const browseFlows = (p: FlowListParams) => api<{ items: FlowSummary[]; to
 export const getFlow = (code: string) => api<Flow>(`/flows/flows/${encodeURIComponent(code)}`);
 export const getFlowVersions = (code: string) => api<FlowVersion[]>(`/flows/flows/${encodeURIComponent(code)}/versions`);
 export const listFlowCategories = () => api<FlowCategory[]>('/flows/categories');
+export const createFlowCategory = (c: { slug: string; code: string; name: string; description?: string }) =>
+  api<FlowCategory>('/flows/categories', { method: 'POST', json: c });
+/** Only name and description change: the slug (token scopes) and the code (flow ids) are permanent. */
+export const updateFlowCategory = (slug: string, c: { name?: string; description?: string }) =>
+  api<FlowCategory>(`/flows/categories/${encodeURIComponent(slug)}`, { method: 'PATCH', json: c });
+export const deleteFlowCategory = (slug: string, force: boolean) =>
+  api<{ slug: string; status: string; flows_deleted: number }>(`/flows/categories/${encodeURIComponent(slug)}?force=${force}`, { method: 'DELETE' });
+export const countCategoryFlows = (slug: string) =>
+  browseFlows({ category: slug, sort: 'updated_at', order: 'desc', limit: 1, offset: 0 }).then((r) => r.total);
 export const validateFlow = (yaml_content: string) => api<{ valid: boolean }>('/flows/flows/validate', { method: 'POST', json: { yaml_content } });
 export const createFlow = (category: string, yaml_content: string) => api<Flow>('/flows/flows', { method: 'POST', json: { category, yaml_content } });
 export const updateFlow = (code: string, yaml_content: string) => api<Flow>(`/flows/flows/${encodeURIComponent(code)}`, { method: 'PATCH', json: { yaml_content } });

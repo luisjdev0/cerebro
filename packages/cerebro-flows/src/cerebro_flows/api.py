@@ -62,6 +62,20 @@ class CategoryOut(BaseModel):
     updated_at: datetime
 
 
+class CategoryUpdate(StrictIn):
+    """Only the display data. The slug (tokens scope by it) and the code (flow ids like
+    OPS-1 are built from it) never change."""
+
+    name: str | None = Field(default=None, min_length=1)
+    description: str | None = None  # an empty string clears it
+
+
+class CategoryDeleteOut(BaseModel):
+    slug: str
+    status: str
+    flows_deleted: int
+
+
 class FlowValidateIn(StrictIn):
     yaml_content: str = Field(min_length=1)
 
@@ -435,6 +449,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"category slug '{body.slug}' or code '{body.code}' already exists",
             ) from exc
         return dict(row)
+
+    @app.patch("/categories/{slug}", response_model=CategoryOut)
+    async def update_category(
+        slug: str,
+        body: CategoryUpdate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        """Edits a category's name/description (portal-only, no client/MCP/CLI mirror)."""
+        require_category_allowed(principal, slug)
+        sets: list[str] = []
+        params: list[Any] = []
+        if body.name is not None:
+            params.append(body.name)
+            sets.append(f"name = ${len(params)}")
+        if body.description is not None:
+            params.append(body.description.strip() or None)
+            sets.append(f"description = ${len(params)}")
+        if not sets:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="nothing to update")
+        params.append(slug)
+        row = await pool.fetchrow(
+            f"""
+            UPDATE flow_categories SET {", ".join(sets)}, updated_at = now() WHERE slug = ${len(params)}
+            RETURNING id, slug, code, name, description, created_at, updated_at
+            """,
+            *params,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
+        return dict(row)
+
+    @app.delete("/categories/{slug}", response_model=CategoryDeleteOut)
+    async def delete_category(
+        slug: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        force: bool = False,
+    ):
+        """409 while the category still has flows, unless `?force=true`: the FKs' ON DELETE
+        CASCADE then remove its flows, their versions and their runs. `admin`-only, like
+        deleting a docs category or a memory context (destructive)."""
+        require_category_allowed(principal, slug)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                category_id = await conn.fetchval("SELECT id FROM flow_categories WHERE slug = $1 FOR UPDATE", slug)
+                if category_id is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
+                count = await conn.fetchval("SELECT count(*) FROM flow_definitions WHERE category_id = $1", category_id)
+                if count > 0 and not force:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"category '{slug}' still has {count} flows - "
+                            "pass ?force=true to hard-delete them (with their versions and runs) along with the category"
+                        ),
+                    )
+                await conn.execute("DELETE FROM flow_categories WHERE id = $1", category_id)
+        return {"slug": slug, "status": "deleted", "flows_deleted": count}
 
     @app.get("/categories", response_model=list[CategoryOut])
     async def list_categories(

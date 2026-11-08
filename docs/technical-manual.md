@@ -685,6 +685,8 @@ the route; `admin` does **not** imply `read`/`write`.
 | DELETE | `/tokens/{name}` | admin | revoke a token |
 | POST | `/categories` | write | create a flow category (`slug`, `code`, `name`, `description?`) |
 | GET | `/categories` | read | list categories |
+| PATCH | `/categories/{slug}` | write | portal-only: edit `name`/`description` (slug and code are immutable; empty description clears it) |
+| DELETE | `/categories/{slug}` | admin | portal-only: 409 while the category has flows unless `?force=true`, which cascades to its flows, versions and runs |
 | POST | `/flows/validate` | write | validate YAML without saving it — returns the specific error |
 | POST | `/flows` | write | create a definition (`category`, `yaml_content`, `code?`, auto-generated if omitted) |
 | GET | `/flows/{code}` | read | full current-version YAML |

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ArrowUpDown, Plus, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, FolderCog, Plus, Search, X } from 'lucide-react';
 import { Badge, Button, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
+import { FlowCategoriesPanel } from '../components/FlowCategoriesPanel';
 import { FlowDetail, NewFlowPanel } from '../components/FlowPanels';
 import { FilterField, loadPageSize, PAGE_SIZES, RunStatusBadge, SELECT, useDebounced } from '../components/flowUi';
 import { useDateTime, useShortDate } from '../components/memoryUi';
@@ -116,6 +117,7 @@ function FlowsTab({ categories, reloadCategories, onChanged, changeKey }: { cate
   const [pageSize, setPageSizeState] = useState(() => loadPageSize('cerebro.flows.pageSize'));
   const [reloadKey, setReloadKey] = useState(0);
   const [newFlow, setNewFlow] = useState(false);
+  const [manageCats, setManageCats] = useState(false);
   const [items, setItems] = useState<FlowSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -174,7 +176,8 @@ function FlowsTab({ categories, reloadCategories, onChanged, changeKey }: { cate
 
   return (
     <>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button variant="tertiary" leadingIcon={FolderCog} onClick={() => setManageCats(true)}>{t('flows.actions.manageCategories')}</Button>
         <Button variant="primary" leadingIcon={Plus} onClick={() => setNewFlow(true)}>{t('flows.actions.newFlow')}</Button>
       </div>
       <div className="space-y-4 rounded-2xl border bg-card p-4">
@@ -243,6 +246,16 @@ function FlowsTab({ categories, reloadCategories, onChanged, changeKey }: { cate
       <Pager barRef={barRef} loading={loading} error={error} total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} holdBar={holdBar} />
 
       <FlowDetail code={openCode} onClose={() => setOpenCode(null)} onChanged={() => { setReloadKey((k) => k + 1); onChanged(); }} />
+      <FlowCategoriesPanel
+        open={manageCats}
+        categories={categories}
+        onClose={() => setManageCats(false)}
+        onChanged={() => {
+          reloadCategories();
+          setReloadKey((k) => k + 1);
+          onChanged();
+        }}
+      />
       <NewFlowPanel
         open={newFlow}
         categories={categories}
