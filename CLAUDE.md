@@ -199,4 +199,4 @@ this writing:
   PATH. Deliberately minimal: the script only installs the binary — it does not
   know this deployment's URL or any token, and does not touch
   `~/.cerebro/config.json` itself. Configuring the CLI is a separate, manual step
-  with the already-implemented `cerebro login --token <token> --url <gateway>`.
+  with the already-implemented `cerebro login` (interactive, or `--user`/`--token` plus `--url <gateway>`).
