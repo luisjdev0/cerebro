@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The CLI release is now automatic: merging to `main` a change whose newest
+  CHANGELOG heading (`## [X.Y.Z]`) has no release yet builds the binaries and
+  publishes release `vX.Y.Z` (the tag is created by the workflow). Manual `v*`
+  tags and `workflow_dispatch` still work.
+
 ## [2.7.0] - Phase 1A: interactive CLI and user/password login
 
 ### Added

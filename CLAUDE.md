@@ -187,7 +187,9 @@ this writing:
 - **Standalone CLI installer — DONE**. First GitHub Actions workflow in the repo
   (`.github/workflows/release-cli.yml`, tag-triggered, Linux+Windows matrix)
   builds generic `cerebro` binaries with PyInstaller and publishes them to GitHub
-  Releases. `gateway/install/install.sh`/`install.ps1` (served statically by the
+  Releases. It runs **automatically** when a merge to `main` brings a new
+  `## [X.Y.Z]` heading to `CHANGELOG.md` (tag created by the workflow; no manual
+  tagging). Deploying the services to the VPS stays a separate, explicit step. `gateway/install/install.sh`/`install.ps1` (served statically by the
   gateway at `/install/*`) download the right one for `CEREBRO_REPO` (default
   `luisjdev0/cerebro`, so a fork points at its own Releases) and place it on the
   PATH. Deliberately minimal: the script only installs the binary — it does not
