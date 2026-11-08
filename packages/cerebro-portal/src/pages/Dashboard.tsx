@@ -55,7 +55,7 @@ export function Dashboard() {
   const [activity, setActivity] = useState<ActivityByModule | null>(null);
   const [years, setYears] = useState<number[]>([]);
   const [year, setYear] = useState<number | null>(null); // null = rolling last 12 months
-  const [yearActivity, setYearActivity] = useState<ActivityByModule | null>(null);
+  const [yearData, setYearData] = useState<{ year: number; data: ActivityByModule } | null>(null);
   const [filter, setFilter] = useState<'all' | ModuleKey>('all');
 
   useEffect(() => {
@@ -92,20 +92,19 @@ export function Dashboard() {
   }, [modules]);
 
   useEffect(() => {
-    if (year === null) {
-      setYearActivity(null);
-      return;
-    }
+    if (year === null) return;
     let cancelled = false;
     void fetchActivity(modules, { year }).then((res) => {
-      if (!cancelled) setYearActivity(res.byModule);
+      if (!cancelled) setYearData({ year, data: res.byModule });
     });
     return () => {
       cancelled = true;
     };
   }, [year, modules]);
 
-  const heatSource = year === null ? activity : yearActivity;
+  // While a year loads the grid keeps its size (cells just stay empty), so the card never
+  // collapses and the page does not jump under the cursor.
+  const heatSource = year === null ? activity : yearData?.year === year ? yearData.data : null;
   const grid = useMemo(() => (year === null ? buildGrid(new Date(), 53) : buildYearGrid(year, new Date())), [year]);
   const shown = filter === 'all' ? modules : modules.filter((m) => m === filter);
   const totals = useMemo(() => (heatSource ? totalsByDate(heatSource, shown) : new Map<string, number>()), [heatSource, shown]);
@@ -145,7 +144,7 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-        {heatSource ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
+        {activity ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
       </section>
       {yearOptions.length > 1 && (
         <section className="space-y-3 rounded-2xl border p-4 lg:w-56 lg:shrink-0">
