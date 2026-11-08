@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, ConfirmDialog, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   countCategoryDocuments,
@@ -45,6 +45,7 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [files, setFiles] = useState<File[]>([]);
   const [batch, setBatch] = useState<ReadResult | null>(null);
   const [ignored, setIgnored] = useState<string[]>([]);
   const [existing, setExisting] = useState<'skip' | 'update'>('skip');
@@ -56,6 +57,7 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
     setTitle('');
     setSlug('');
     setContent('');
+    setFiles([]);
     setBatch(null);
     setIgnored([]);
     setResults(null);
@@ -67,16 +69,23 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
     if (!open) reset(); // reopening starts clean, not on the last import's result
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onFiles = async (files: File[]) => {
+  // Every drop adds to what was already chosen; the form or the batch list is derived from all of it.
+  const apply = async (all: File[]) => {
+    setFiles(all);
     setError(undefined);
     setResults(null);
-    const r = await readFiles(files);
+    if (all.length === 0) {
+      setBatch(null);
+      setIgnored([]);
+      return;
+    }
+    const r = await readFiles(all);
     setIgnored(r.ignored);
     if (r.items.length === 0) {
       setBatch(null);
       setError(t('docs.import.nothing'));
-    } else if (r.single) {
-      const [it] = r.items; // one file: fill the form so it can be reviewed before creating
+    } else if (r.items.length === 1) {
+      const [it] = r.items; // a single document: fill the form so it can be reviewed before creating
       setBatch(null);
       setTitle(it.title);
       setSlug(it.slug);
@@ -84,6 +93,10 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
     } else {
       setBatch(r);
     }
+  };
+  const addFiles = (added: File[]) => {
+    const same = (a: File, b: File) => a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+    void apply([...files, ...added.filter((n) => !files.some((f) => same(f, n)))]);
   };
 
   const submit = async (e: FormEvent) => {
@@ -96,6 +109,7 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
         const out = await importItems(batch.items, cat, existing, errMsg, (d, n) => setProgress([d, n]));
         setResults(out);
         setBatch(null);
+        setFiles([]); // the next drop starts a new selection
         if (out.some((o) => o.status === 'created' || o.status === 'updated')) onImported();
       } else {
         const d = await createDocument({ title: title.trim(), content, category: cat, slug: slug.trim() || undefined });
@@ -119,7 +133,7 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
     <ResizableSheet open={open} onClose={() => !busy && onClose()}>
       <PanelHeader title={t('docs.form.newTitle')} description={t('docs.form.newDesc')} />
       <form id="new-doc-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-5 overflow-y-auto p-6">
-        <FileDrop onFiles={(f) => void onFiles(f)} disabled={busy} />
+        <FileDrop onFiles={addFiles} disabled={busy} />
         {ignored.length > 0 && (
           <p className="text-xs text-muted-foreground">{t('docs.import.ignored', { count: ignored.length })}: {ignored.slice(0, 5).join(', ')}{ignored.length > 5 ? '…' : ''}</p>
         )}
@@ -157,8 +171,18 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
             <ul className="max-h-72 divide-y overflow-y-auto rounded-xl border text-sm">
               {batch.items.map((i) => (
                 <li key={i.slug} className="flex items-baseline justify-between gap-3 px-3 py-2">
-                  <span className="min-w-0 truncate font-medium">{i.title}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{i.title}</span>
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">{i.slug}</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    title={t('docs.import.remove')}
+                    aria-label={t('docs.import.remove')}
+                    onClick={() => void apply(files.filter((f) => f !== i.source))}
+                    className="shrink-0 self-center rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-destructive-text"
+                  >
+                    <X className="size-3.5" />
+                  </button>
                 </li>
               ))}
             </ul>

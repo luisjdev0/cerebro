@@ -195,6 +195,7 @@ export const en = {
       toImport_one: '{{count}} document to import',
       toImport_other: '{{count}} documents to import',
       discard: 'Discard files',
+      remove: 'Remove from the list',
       progress: 'Importing {{done}} of {{total}}…',
       importN_one: 'Import {{count}} document',
       importN_other: 'Import {{count}} documents',
