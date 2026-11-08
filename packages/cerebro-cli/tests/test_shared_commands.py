@@ -200,7 +200,7 @@ class TestTokenRevoke:
         args = argparse.Namespace(name="agente-x")
         shared_commands.cmd_token_revoke(args, client=client)
         client.revoke_token.assert_called_once_with("agente-x")
-        assert "revocado" in capsys.readouterr().out
+        assert "revoked" in capsys.readouterr().out
 
     def test_404_counts_as_already_done_not_a_failure(self, capsys):
         client = MagicMock()
@@ -208,7 +208,7 @@ class TestTokenRevoke:
         args = argparse.Namespace(name="agente-x")
         # must not raise SystemExit - a 404 means "was already revoked", equivalent to success.
         shared_commands.cmd_token_revoke(args, client=client)
-        assert "ya no estaba activo" in capsys.readouterr().out
+        assert "was no longer active" in capsys.readouterr().out
 
     def test_real_failure_exits_nonzero(self):
         client = MagicMock()

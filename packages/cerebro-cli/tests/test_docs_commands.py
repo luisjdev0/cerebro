@@ -30,7 +30,7 @@ def test_category_create_hidden_locked(capsys):
     args = argparse.Namespace(slug="eco", name=None, description=None, hidden=True, locked=True)
     docs_commands.cmd_category_create(args, client=client)
     client.create_category.assert_called_once_with("eco", "eco", description=None, hidden=True, locked=True)
-    assert "oculta, bloqueada" in capsys.readouterr().out
+    assert "hidden, locked" in capsys.readouterr().out
 
 
 def test_category_list_prints(capsys):
@@ -218,7 +218,7 @@ def test_archive_routes_to_client(capsys):
     client.archive_document.return_value = {"id": "d1", "category": "eco", "slug": "mi-doc"}
     docs_commands.cmd_archive(argparse.Namespace(document_id="d1"), client=client)
     client.archive_document.assert_called_once_with("d1")
-    assert "archivado" in capsys.readouterr().out
+    assert "archived" in capsys.readouterr().out
 
 
 def test_unarchive_routes_to_client(capsys):
@@ -226,7 +226,7 @@ def test_unarchive_routes_to_client(capsys):
     client.unarchive_document.return_value = {"id": "d1", "category": "eco", "slug": "mi-doc"}
     docs_commands.cmd_unarchive(argparse.Namespace(document_id="d1"), client=client)
     client.unarchive_document.assert_called_once_with("d1")
-    assert "desarchivado" in capsys.readouterr().out
+    assert "unarchived" in capsys.readouterr().out
 
 
 def test_history_prints_versions(capsys):
@@ -244,7 +244,7 @@ def test_history_empty_prints_placeholder(capsys):
     client = MagicMock()
     client.get_document_versions.return_value = []
     docs_commands.cmd_history(argparse.Namespace(document_id="d1"), client=client)
-    assert "sin versiones" in capsys.readouterr().out
+    assert "no previous versions" in capsys.readouterr().out
 
 
 class TestImportMarkdown:

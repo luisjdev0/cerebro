@@ -88,9 +88,9 @@ def menu(parser: argparse.ArgumentParser, path: list[str], *, has_session: bool,
         if not has_session and not path:
             entries = [(n, h) for n, h in entries if n == "login"]
         choices = [questionary.Choice(f"{n}  -  {h}" if h else n, value=n) for n, h in entries]
-        choices.append(questionary.Choice("Salir" if root else "Volver", value=EXIT if root else BACK))
+        choices.append(questionary.Choice("Quit" if root else "Back", value=EXIT if root else BACK))
         title = "cerebro" + ("".join(f" {p}" for p in path))
-        picked = _ask(questionary.select(f"{title}: ¿que quieres hacer?", choices=choices))
+        picked = _ask(questionary.select(f"{title}: what do you want to do?", choices=choices))
         if picked == EXIT:
             return None
         if picked == BACK:
@@ -145,7 +145,7 @@ def _prompt_for(action: argparse.Action) -> str | None:
     if _is_secret(action):
         return _ask(questionary.password(f"{label}:"))
     required = action.required or not action.option_strings
-    validate = (lambda v: bool(v.strip()) or "Obligatorio") if required else None
+    validate = (lambda v: bool(v.strip()) or "Required") if required else None
     answer = _ask(questionary.text(f"{label}:", validate=validate) if validate else questionary.text(f"{label}:"))
     return answer.strip() or None
 
@@ -182,15 +182,15 @@ def login_argv() -> list[str]:
     cfg = tokens.load_login_config() or {}
     url = _ask(
         questionary.text(
-            "URL del gateway de cerebro (ej. https://cerebro.example.com):",
+            "Cerebro gateway URL (e.g. https://cerebro.example.com):",
             default=str(cfg.get("url") or os.environ.get("CEREBRO_GATEWAY_URL") or ""),
         )
     ).strip()
     method = _ask(
         questionary.select(
-            "¿Como quieres iniciar sesion?",
+            "How do you want to log in?",
             choices=[
-                questionary.Choice("Usuario y contrasena", value="user"),
+                questionary.Choice("Username and password", value="user"),
                 questionary.Choice("Token", value="token"),
             ],
         )
@@ -199,8 +199,8 @@ def login_argv() -> list[str]:
     if url:
         argv += ["--url", url]
     if method == "user":
-        name = _ask(questionary.text("Usuario:", validate=lambda v: bool(v.strip()) or "Obligatorio")).strip()
-        password = _ask(questionary.password("Contrasena:"))
+        name = _ask(questionary.text("Username:", validate=lambda v: bool(v.strip()) or "Required")).strip()
+        password = _ask(questionary.password("Password:"))
         os.environ["CEREBRO_PASSWORD"] = password  # in-process only; never written anywhere
         argv += ["--user", name]
     else:
@@ -214,6 +214,6 @@ def has_session() -> bool:
 
 def banner(state: str) -> None:
     if state == "expired":
-        console.print("[yellow]Tu sesion ha caducado: inicia sesion de nuevo.[/yellow]")
+        console.print("[yellow]Your session has expired: log in again.[/yellow]")
     elif state == "none":
-        console.print("[bold]cerebro[/bold]: no hay sesion iniciada. Inicia sesion para continuar.")
+        console.print("[bold]cerebro[/bold]: you are not logged in. Log in to continue.")

@@ -72,16 +72,16 @@ def cmd_backup(args: argparse.Namespace, *, client: AuthClient | None = None) ->
     # database of any real size - the request is a single streamed download, not
     # a quick CRUD call, so it gets a generous timeout of its own.
     client = client or AuthClient(timeout=1800.0)
-    print(f"Descargando backup de {client.base_url} -> {out_file}")
+    print(f"Downloading backup from {client.base_url} -> {out_file}")
     try:
         client.backup(out_file)
     except CerebroConnectionError as exc:
         out_file.unlink(missing_ok=True)
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
+        print(f"Could not connect to cerebro-auth: {exc}", file=sys.stderr)
         sys.exit(1)
     except CerebroAPIError as exc:
         out_file.unlink(missing_ok=True)
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
+        print(f"The API returned {exc.status_code}: {exc.detail}", file=sys.stderr)
         sys.exit(1)
 
     # The dump contains all content of all 4 schemas (includes cerebro-docs
@@ -94,48 +94,48 @@ def cmd_backup(args: argparse.Namespace, *, client: AuthClient | None = None) ->
         pass
 
     size = out_file.stat().st_size
-    print(f"Backup guardado en {out_file} ({size} bytes) - cubre memory, docs, flows y auth (un solo Postgres compartido).")
+    print(f"Backup saved to {out_file} ({size} bytes) - covers memory, docs, flows and auth (a single shared Postgres).")
 
 
 def cmd_restore(args: argparse.Namespace) -> None:
     if REPO_ROOT is None:
         print(
-            "Error: 'cerebro restore' necesita correr desde un checkout del repo "
-            "cerebro (usa 'docker compose exec' contra compose.yaml) -- no disponible "
-            "desde el binario standalone.",
+            "Error: 'cerebro restore' must run from a checkout of the cerebro repo "
+            "(it uses 'docker compose exec' against compose.yaml) -- not available "
+            "from the standalone binary.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     path = Path(args.file)
     if not path.exists():
-        print(f"Error: no existe el archivo '{path}'", file=sys.stderr)
+        print(f"Error: file '{path}' does not exist", file=sys.stderr)
         sys.exit(1)
 
     if not args.yes:
         answer = input(
-            f"Esto SOBREESCRIBIRA la base de datos '{POSTGRES_DB}' (schemas cerebro_memory y "
-            f"cerebro_docs) con el contenido de '{path}'. Esta accion es DESTRUCTIVA e "
-            "irreversible.\nEscribe 'yes' para continuar: "
+            f"This will OVERWRITE the database '{POSTGRES_DB}' (schemas cerebro_memory and "
+            f"cerebro_docs) with the contents of '{path}'. This action is DESTRUCTIVE and "
+            "irreversible.\nType 'yes' to continue: "
         )
         if answer.strip().lower() != "yes":
-            print("Cancelado.")
+            print("Cancelled.")
             return
 
     cmd = ["docker", "compose", "exec", "-T", "postgres", "psql", "-U", POSTGRES_USER, "-d", POSTGRES_DB]
-    print(f"Ejecutando: {' '.join(cmd)} < {path}")
+    print(f"Running: {' '.join(cmd)} < {path}")
     try:
         with open(path, "rb") as fh:
             result = subprocess.run(cmd, cwd=REPO_ROOT, stdin=fh, stderr=subprocess.PIPE)
     except FileNotFoundError:
-        print("Error: no se encontro el comando 'docker'. ¿Docker Desktop esta corriendo?", file=sys.stderr)
+        print("Error: the 'docker' command was not found. Is Docker Desktop running?", file=sys.stderr)
         sys.exit(1)
 
     if result.returncode != 0:
-        print(f"Error en restore (exit {result.returncode}): {result.stderr.decode(errors='replace')}", file=sys.stderr)
+        print(f"Restore failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}", file=sys.stderr)
         sys.exit(1)
 
-    print("Restore completado.")
+    print("Restore completed.")
 
 
 # --------------------------------------------------------------------------- token (cerebro-auth)
@@ -166,20 +166,20 @@ def cmd_token_create(args: argparse.Namespace, *, client: AuthClient | None = No
     """
     if args.user and args.access_level:
         print(
-            "Error: no pases --user y --access-level juntos -- el nivel de un token de "
-            "usuario lo define el usuario (o sus grupos), nunca el propio token.",
+            "Error: do not pass --user and --access-level together -- a user token's level "
+            "is defined by the user (or their groups), never by the token itself.",
             file=sys.stderr,
         )
         sys.exit(1)
     if not args.user and not args.access_level:
-        print("Error: pasa --user <nombre> o --access-level user|owner|admin.", file=sys.stderr)
+        print("Error: pass --user <name> or --access-level user|owner|admin.", file=sys.stderr)
         sys.exit(1)
 
     modules = _split_csv(args.modules)
     if not args.user and not modules:
         print(
-            "Error: un token sin --user (de servicio) necesita --modules explicito "
-            "(no puede heredarlo de ningun usuario).",
+            "Error: a token without --user (service token) needs an explicit --modules "
+            "(it cannot inherit it from any user).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -205,19 +205,19 @@ def cmd_token_create(args: argparse.Namespace, *, client: AuthClient | None = No
             access_level=args.access_level,
         )
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
+        print(f"Could not connect to cerebro-auth: {exc}", file=sys.stderr)
         sys.exit(1)
     except CerebroAPIError as exc:
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
+        print(f"The API returned {exc.status_code}: {exc.detail}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Token '{data.get('name', args.name)}' creado (scopes: {', '.join(data.get('scopes', scopes))}).")
+    print(f"Token '{data.get('name', args.name)}' created (scopes: {', '.join(data.get('scopes', scopes))}).")
     print()
     print(f"  {data['token']}")
     print()
     print(
-        "Guarda este token ahora - cerebro-auth solo guarda su hash y no puede volver a "
-        "mostrarlo. Usalo como CEREBRO_TOKEN (valido en todo el ecosistema)."
+        "Save this token now - cerebro-auth only stores its hash and cannot show it "
+        "again. Use it as CEREBRO_TOKEN (valid across the whole ecosystem)."
     )
 
 
@@ -230,13 +230,13 @@ def cmd_token_revoke(args: argparse.Namespace, *, client: AuthClient | None = No
     try:
         client.revoke_token(args.name)
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
+        print(f"Could not connect to cerebro-auth: {exc}", file=sys.stderr)
         sys.exit(1)
     except CerebroAPIError as exc:
         if exc.status_code == 404:
-            print(f"Token '{args.name}' ya no estaba activo.")
+            print(f"Token '{args.name}' was no longer active.")
             return
-        print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
+        print(f"The API returned {exc.status_code}: {exc.detail}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Token '{args.name}' revocado.")
+    print(f"Token '{args.name}' revoked.")
