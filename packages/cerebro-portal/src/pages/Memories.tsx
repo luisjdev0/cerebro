@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, FolderCog, Plus, Search, X } from 'lucide-react';
 import { Badge, Button, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@alquimias/ixchel';
@@ -19,6 +19,15 @@ function loadPageSize(): number {
   } catch {
     return 10;
   }
+}
+
+/** Nearest ancestor that actually scrolls (the app shell scrolls, not the window). */
+function scrollParent(el: HTMLElement): HTMLElement {
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    const o = getComputedStyle(n).overflowY;
+    if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+  }
+  return (document.scrollingElement as HTMLElement) ?? document.documentElement;
 }
 
 function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -62,6 +71,9 @@ export function Memories() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(loadPageSize);
   const [reloadKey, setReloadKey] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
+  const anchorTop = useRef<number | null>(null);
   const [newMemory, setNewMemory] = useState(false);
   const [manageContexts, setManageContexts] = useState(false);
   const [createContextFirst, setCreateContextFirst] = useState(false);
@@ -104,6 +116,7 @@ export function Memories() {
   }, [query, searching, context, type, status, sort, order, page, pageSize, reloadKey]);
 
   const reset = <T,>(set: (v: T) => void) => (v: T) => {
+    resetTableHeight();
     set(v);
     setPage(1);
   };
@@ -116,6 +129,7 @@ export function Memories() {
     setPage(1);
   };
   const setPageSize = (n: number) => {
+    resetTableHeight();
     setPageSizeState(n);
     setPage(1);
     try {
@@ -126,6 +140,7 @@ export function Memories() {
   };
   const filtered = q !== '' || context !== '' || type !== '' || status !== 'active';
   const clearFilters = () => {
+    resetTableHeight();
     setQ('');
     setContext('');
     setType('');
@@ -144,6 +159,33 @@ export function Memories() {
       )}
     </TableHead>
   );
+
+  // Remember where the pagination bar sits before a page change...
+  const holdBar = () => {
+    anchorTop.current = barRef.current?.getBoundingClientRect().top ?? null;
+  };
+  // ...and, once the new rows are in, scroll by however far the bar moved, so it stays
+  // under the pointer however tall each page turns out to be (rapid clicking stays safe).
+  // The table never gets shorter while paging (a short last page leaves blank space), so the
+  // pagination bar keeps its place and can be clicked repeatedly. Filters and page size reset it.
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el || loading) return;
+    const h = el.offsetHeight;
+    const min = parseFloat(el.style.minHeight) || 0;
+    if (h > min) el.style.minHeight = `${h}px`;
+  }, [loading, items]);
+  const resetTableHeight = () => {
+    if (tableRef.current) tableRef.current.style.minHeight = '';
+  };
+
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (loading || anchorTop.current === null || !bar) return;
+    const delta = bar.getBoundingClientRect().top - anchorTop.current;
+    anchorTop.current = null;
+    if (delta !== 0) scrollParent(bar).scrollBy({ top: delta, behavior: 'instant' });
+  }, [loading, items]);
 
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -206,7 +248,7 @@ export function Memories() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border">
+      <div ref={tableRef} className="overflow-hidden rounded-2xl border">
         <Table>
           <TableHeader>
             <TableRow>
@@ -217,14 +259,14 @@ export function Memories() {
               {searching ? <TableHead>{t('memory.relevance')}</TableHead> : <SortHead k="updated_at" label={t('memory.updated')} />}
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {loading ? (
-              Array.from({ length: 6 }, (_, i) => (
+          <TableBody className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+            {loading && items.length === 0 ? (
+              Array.from({ length: pageSize }, (_, i) => (
                 <TableRow key={i}>
                   <TableCell colSpan={5}><div className="h-8 animate-pulse rounded bg-muted" /></TableCell>
                 </TableRow>
               ))
-            ) : error || items.length === 0 ? (
+            ) : (error || items.length === 0) && !loading ? (
               <TableRow>
                 <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
                   {error ? t('memory.loadError') : searching ? t('memory.emptySearch') : t('memory.empty')}
@@ -259,7 +301,7 @@ export function Memories() {
         </Table>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+      <div ref={barRef} className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
         <span>{loading || error ? '' : searching ? t('memory.searchResults', { count: total }) : t('memory.range', { from, to, total })}</span>
         {!searching && (
           <div className="flex flex-wrap items-center gap-4">
@@ -272,9 +314,9 @@ export function Memories() {
               </select>
             </label>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t('memory.previous')}</Button>
+              <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => { holdBar(); setPage((p) => p - 1); }}>{t('memory.previous')}</Button>
               <span>{t('memory.page', { page, pages })}</span>
-              <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>{t('memory.next')}</Button>
+              <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => { holdBar(); setPage((p) => p + 1); }}>{t('memory.next')}</Button>
             </div>
           </div>
         )}
