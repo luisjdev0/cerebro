@@ -269,6 +269,7 @@ services:
       # `:80` (the default) keeps the gateway on plain HTTP behind an external
       # reverse proxy; a domain or IP turns on Caddy's own HTTPS -- see gateway/Caddyfile.
       CEREBRO_DOMAIN: "${CEREBRO_DOMAIN:-:80}"
+      CEREBRO_GATEWAY_HTTPS_PORT: "${CEREBRO_GATEWAY_HTTPS_PORT:-8443}"
     ports:
       # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
       # 8080) - same reason as POSTGRES_HOST_PORT above. The bind address defaults
@@ -278,7 +279,7 @@ services:
       # HTTPS (only used when CEREBRO_DOMAIN is set). For automatic Let's Encrypt
       # certificates the host must expose 80 and 443: CEREBRO_GATEWAY_HOST_PORT=80,
       # CEREBRO_GATEWAY_HTTPS_PORT=443, CEREBRO_GATEWAY_BIND=0.0.0.0.
-      - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HTTPS_PORT:-8443}:443"
+      - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HTTPS_PORT:-8443}:${CEREBRO_GATEWAY_HTTPS_PORT:-8443}"
     healthcheck:
       # Caddy's admin endpoint answers in both modes; `:80/health` would not once a
       # domain is set (port 80 then only redirects to https).

@@ -152,7 +152,7 @@ kept in the `cerebro-gateway-data` volume.
 
 **LAN / test server (no domain):** set `CEREBRO_DOMAIN` to the server's IP address instead
 (and keep non-privileged ports if you like, e.g. `CEREBRO_GATEWAY_HTTPS_PORT=8443`, then browse
-to `https://<ip>:8443` directly — the automatic http redirect always targets port 443). Caddy
+to `https://<ip>:8443`; the http port redirects there). Caddy
 issues the certificate from its own local CA, so browsers show a warning until they trust it:
 
 ```bash
