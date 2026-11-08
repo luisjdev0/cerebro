@@ -1009,9 +1009,11 @@ container does not request them again. Two details that matter: a global `defaul
 `CEREBRO_DOMAIN`, because a client connecting to an IP sends no SNI and, behind Docker's port
 mapping, Caddy cannot infer the name from the local address (TLS handshake fails otherwise); and the
 container healthcheck queries Caddy's admin endpoint (`127.0.0.1:2019`), since port 80 stops serving
-`/health` once a domain turns on the http-to-https redirect. The container listens for HTTPS on the same port number the host publishes
-(`https_port {$CEREBRO_GATEWAY_HTTPS_PORT}` plus a 1:1 port mapping), so the automatic http-to-https redirect
-lands on a reachable address even with a non-standard port such as 8443.
+`/health` once a domain turns on the http-to-https redirect. Caddy's automatic http-to-https
+redirect always targets port 443, which breaks when the host publishes HTTPS elsewhere (e.g. 8443), so the redirect is
+explicit: `compose.yaml` sets `CEREBRO_TLS` to `-tls` when a domain is configured and the Caddyfile imports
+`gateway/modes/redirect-tls.caddy` (an `http://` site that redirects to `https://<host>:<CEREBRO_GATEWAY_HTTPS_PORT>`), otherwise
+the empty `redirect.caddy`.
 
 ---
 

@@ -22,10 +22,6 @@
 # always send SNI, and with plain HTTP).
 {
 	default_sni {$CEREBRO_DOMAIN::80}
-	# Port Caddy serves HTTPS on, also used by its automatic http->https redirect. The
-	# container listens on the same number the host publishes (compose.yaml maps it 1:1),
-	# so the redirect lands on a port that is actually reachable (443 by default).
-	https_port {$CEREBRO_GATEWAY_HTTPS_PORT:443}
 }
 
 # Site address. Default `:80` = plain HTTP (an external reverse proxy, e.g. the VPS's
@@ -36,6 +32,11 @@
 # a certificate from its own local CA instead (LAN/test servers -- browsers must trust
 # that CA, see DEPLOY.md). compose.yaml always passes the variable, defaulting it to
 # `:80`; the `::80` default below only matters if this file is used outside compose.
+# Plain-HTTP-to-HTTPS redirect, only when a domain/IP is configured (see modes/).
+# Caddy's own automatic redirect always targets port 443, which is wrong when the host
+# publishes HTTPS on another port (e.g. 8443), so it is done explicitly here.
+import /etc/caddy/modes/redirect{$CEREBRO_TLS}.caddy
+
 {$CEREBRO_DOMAIN::80} {
 	handle /health {
 		respond "cerebro gateway: ok" 200

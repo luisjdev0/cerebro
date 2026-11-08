@@ -1,0 +1,2 @@
+# Intentionally empty: no CEREBRO_DOMAIN, so the gateway stays on plain HTTP and
+# there is nothing to redirect. Selected by CEREBRO_TLS (see compose.yaml / Caddyfile).
