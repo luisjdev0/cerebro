@@ -232,11 +232,18 @@ retrieval fuses over.
   disambiguations is the documented threshold before it's worth revisiting;
   `GET /disambiguations/export` / `cerebro memory export-disambiguations`
   exists to produce that dataset when the time comes).
-- **Updates never edit in place.** `PATCH /memories/{id}` inserts a *new* row
-  and marks the old one `status='superseded', superseded_by=<new id>` inside a
+- **Content updates never edit in place.** `PATCH /memories/{id}` with a new
+  `content` inserts a *new* row (carrying over any `title`/`type`/`importance`/
+  `confidence`/`occurred_at` sent with it) and marks the old one
+  `status='superseded', superseded_by=<new id>` inside a
   transaction with `SELECT ... FOR UPDATE` — the full history survives, and
   retrieval simply excludes `superseded` rows unless `include_superseded=true`
   is passed.
+  A PATCH that changes only metadata (`title`, `type`, `importance`, `confidence`,
+  `occurred_at`) updates the row in place and keeps its id: it is the same
+  knowledge, so it creates no version. `PATCH /contexts/{slug}` edits a context's
+  `name`/`kind`/`description`; the slug is immutable because token and group
+  scopes reference it.
 - **The relationship graph lives in the same Postgres, not a dedicated graph
   database** (`graph.py`, `memory_edges` table) — an explicit project rule.
   The relation vocabulary is a Postgres `CHECK`, not free text:
@@ -502,7 +509,7 @@ The full tool list:
 
 | Family | Tools |
 |---|---|
-| `memory_*` | `memory_search`, `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`, `memory_create_context`, `memory_stats`, `memory_link`, `memory_related`, `memory_timeline` |
+| `memory_*` | `memory_search`, `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`, `memory_create_context`, `memory_update_context`, `memory_delete_context`, `memory_stats`, `memory_link`, `memory_related`, `memory_timeline` |
 | `docs_*` | `docs_create_category`, `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`, `docs_update`, `docs_patch_section`, `docs_delete`, `docs_archive`, `docs_unarchive`, `docs_list_archived`, `docs_history` |
 | `flow_*` | `flow_create_category`, `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_list`, `flow_update`, `flow_delete`, `flow_start`, `flow_next`, `flow_approve_checkpoint`, `flow_reject_checkpoint`, `flow_abort` |
 
