@@ -16,7 +16,15 @@
 # code changes at all -- they already build URLs by concatenating base_url +
 # relative path.
 
-:80 {
+# Site address. Default `:80` = plain HTTP (an external reverse proxy, e.g. the VPS's
+# Caddy, terminates TLS in front of this container -- the original, still-default
+# setup). Set CEREBRO_DOMAIN (see .env.example / DEPLOY.md) to a domain name and Caddy
+# serves HTTPS itself with an automatic Let's Encrypt certificate (renewed by Caddy,
+# kept in the `cerebro-gateway-data` volume); set it to an IP address and Caddy issues
+# a certificate from its own local CA instead (LAN/test servers -- browsers must trust
+# that CA, see DEPLOY.md). compose.yaml always passes the variable, defaulting it to
+# `:80`; the `::80` default below only matters if this file is used outside compose.
+{$CEREBRO_DOMAIN::80} {
 	handle /health {
 		respond "cerebro gateway: ok" 200
 	}

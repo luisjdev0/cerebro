@@ -262,14 +262,27 @@ services:
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./gateway/install:/srv/install:ro
+      # Certificates and Caddy's local CA live here, so a rebuild/recreate of the
+      # container does not re-request them (Let's Encrypt rate-limits duplicates).
+      - cerebro-gateway-data:/data
+    environment:
+      # `:80` (the default) keeps the gateway on plain HTTP behind an external
+      # reverse proxy; a domain or IP turns on Caddy's own HTTPS -- see gateway/Caddyfile.
+      CEREBRO_DOMAIN: "${CEREBRO_DOMAIN:-:80}"
     ports:
       # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
       # 8080) - same reason as POSTGRES_HOST_PORT above. The bind address defaults
       # to localhost (put a reverse proxy in front); set CEREBRO_GATEWAY_BIND=0.0.0.0
       # only on a disposable test server that must be reachable from the LAN.
       - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
+      # HTTPS (only used when CEREBRO_DOMAIN is set). For automatic Let's Encrypt
+      # certificates the host must expose 80 and 443: CEREBRO_GATEWAY_HOST_PORT=80,
+      # CEREBRO_GATEWAY_HTTPS_PORT=443, CEREBRO_GATEWAY_BIND=0.0.0.0.
+      - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HTTPS_PORT:-8443}:443"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      # Caddy's admin endpoint answers in both modes; `:80/health` would not once a
+      # domain is set (port 80 then only redirects to https).
+      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -278,3 +291,4 @@ services:
 volumes:
   knowledgeos-pgdata:
   cerebro-redis-data:
+  cerebro-gateway-data:
