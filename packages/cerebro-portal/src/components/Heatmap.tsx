@@ -58,7 +58,7 @@ export function Heatmap({ grid, totals, year }: Props) {
                 key={d.date}
                 style={style}
                 title={t('heatmap.cell', { count, date: formatDate(d.date) })}
-                className={`aspect-square rounded-[3px] ${LEVEL_CLASS[levelFor(count, max)]}`}
+                className={`h-3.5 rounded-[3px] ${LEVEL_CLASS[levelFor(count, max)]}`}
               />
             );
           }),
