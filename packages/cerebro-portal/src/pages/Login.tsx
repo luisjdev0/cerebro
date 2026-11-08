@@ -39,7 +39,7 @@ export function Login() {
 
   return (
     <div className="relative flex min-h-svh w-full items-center justify-center bg-muted p-6 dark:bg-background">
-      <LanguageSwitcher className="absolute top-4 left-4 z-20 md:top-6 md:left-6" />
+      <LanguageSwitcher className="absolute top-4 right-4 z-20 md:top-6 md:right-6" />
       <div className="mx-auto w-full max-w-lg">
         {busy ? (
           <AuthLoadingState title={t('login.connecting')} description={t('login.checking')} />

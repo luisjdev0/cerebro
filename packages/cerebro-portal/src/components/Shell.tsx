@@ -113,8 +113,8 @@ export function Shell() {
       <SidebarInset>
         <div className="flex items-center gap-2 p-4 pb-0">
           <SidebarTrigger />
-          <LanguageSwitcher />
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <LanguageSwitcher />
             <Button variant="ghost" size="sm" onClick={toggle} aria-label={t('shell.toggleTheme')}>
               {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
