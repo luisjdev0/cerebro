@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
-import { ArrowRight, Lock, User } from 'lucide-react';
+import { ArrowRight, Brain, FileText, Lock, User, Workflow } from 'lucide-react';
 import { AuthLoadingState, Button, InputField, InputGroup, LoginBrandIntro, LoginScreenDivider } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
-import { CodeBlock } from '../components/CodeBlock';
+import { Terminal } from '../components/Terminal';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { useAuth } from '../lib/auth';
 import { ApiError } from '../lib/api';
@@ -46,9 +46,9 @@ export function Login() {
         <LanguageSwitcher className="absolute top-4 right-4 z-20 md:top-6 md:right-6" />
         <LoginScreenDivider />
 
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4 md:p-8 lg:w-[44%] lg:shrink-0 lg:flex-none">
-          <div className="w-full max-w-lg px-4 py-6 md:px-8">
-            <div className="mx-auto w-full max-w-lg">
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4 md:p-8 lg:w-[58%] lg:shrink-0 lg:flex-none">
+          <div className="w-full max-w-xl px-4 py-6 md:px-8">
+            <div className="mx-auto w-full max-w-xl">
               {busy ? (
                 <AuthLoadingState title={t('login.connecting')} description={t('login.checking')} />
               ) : (
@@ -103,31 +103,37 @@ export function Login() {
           </div>
         </div>
 
-        <div className="hidden min-h-0 flex-1 flex-col overflow-hidden lg:flex lg:w-[56%]">
-          <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden border border-border bg-gradient-to-br from-card via-brand-ghost to-accent p-10 text-foreground shadow-xl lg:border-l-0 dark:border-transparent dark:bg-card dark:from-card dark:via-card dark:to-card dark:text-white dark:shadow-2xl">
-            <div className="pointer-events-none absolute -top-10 -right-10 size-[500px] bg-gradient-to-br from-brand-soft/35 via-brand-peri/15 to-transparent opacity-70 dark:hidden" />
-            <div className="pointer-events-none absolute top-0 right-0 size-80 rounded-full bg-brand-soft/15 blur-3xl dark:bg-white/[0.04]" />
+        <div className="hidden min-h-0 flex-1 flex-col overflow-hidden lg:flex lg:w-[42%]">
+          <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden border-l border-border bg-gradient-to-br from-card via-brand-ghost to-accent p-8 text-foreground xl:p-10 dark:border-white/10 dark:bg-card dark:from-card dark:via-card dark:to-card dark:text-white">
+            <div className="pointer-events-none absolute -top-24 -right-24 size-[420px] rounded-full bg-brand-soft/30 blur-3xl dark:bg-brand-soft/10" />
+            <div className="pointer-events-none absolute -bottom-32 -left-20 size-[360px] rounded-full bg-brand-peri/20 blur-3xl dark:bg-white/[0.03]" />
 
-            <div className="relative z-10 flex min-h-0 flex-1 flex-col justify-between gap-8 overflow-y-auto">
-              <div className="max-w-xl pt-12">
-                <h2 className="font-display text-3xl leading-tight font-extrabold tracking-tight">{t('login.tagline')}</h2>
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col justify-between gap-6 overflow-y-auto">
+              <div className="pt-10">
+                <h2 className="font-display text-3xl leading-tight font-extrabold tracking-tight xl:text-4xl">{t('login.tagline')}</h2>
                 <p className="mt-3 text-sm leading-relaxed text-muted-foreground dark:text-white/70">{t('login.taglineBody')}</p>
+                <ul className="mt-6 space-y-3">
+                  {[
+                    { icon: Brain, title: t('nav.memory'), text: t('login.featMemory') },
+                    { icon: FileText, title: t('nav.documents'), text: t('login.featDocs') },
+                    { icon: Workflow, title: t('nav.workflows'), text: t('login.featFlows') },
+                  ].map(({ icon: Icon, title, text }) => (
+                    <li key={title} className="flex items-start gap-3 rounded-xl border bg-background/60 p-3 backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft/15 text-brand-soft">
+                        <Icon className="size-[18px]" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">{title}</p>
+                        <p className="text-xs leading-relaxed text-muted-foreground dark:text-white/60">{text}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
 
-              <div className="max-w-xl space-y-3">
+              <div className="space-y-3">
                 <h3 className="text-xs font-bold tracking-wider text-brand-soft uppercase">{t('login.cliTitle')}</h3>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{t('login.cliLinux')}</p>
-                  <CodeBlock code={`curl -fsSL ${origin}/install/install.sh | sh`} />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{t('login.cliWindows')}</p>
-                  <CodeBlock code={`irm ${origin}/install/install.ps1 | iex`} />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{t('login.cliLogin')}</p>
-                  <CodeBlock code={`cerebro login --url ${origin}`} />
-                </div>
+                <Terminal origin={origin} />
               </div>
 
               <footer className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-4 text-xs text-muted-foreground dark:border-white/10">
