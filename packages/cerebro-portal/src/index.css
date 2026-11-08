@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+@import '@alquimias/ixchel/styles.css';
+@source "../node_modules/@alquimias/ixchel/src";
+
+/* cerebro palette (Ixchel exposes five brand variables; everything else derives from them). */
+:root {
+  --color-brand-black: #0f172a;
+  --color-brand-lavender: #94a3b8;
+  --color-brand-soft: #2563eb;
+  --color-brand-peri: #60a5fa;
+  --color-brand-ghost: #f8fafc;
+}

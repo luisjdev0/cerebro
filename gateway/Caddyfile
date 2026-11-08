@@ -46,7 +46,9 @@
 		file_server
 	}
 
+	# Everything that is not an API prefix is the web portal (a static SPA served by
+	# the cerebro-portal container, with its own client-side routing fallback).
 	handle {
-		respond "cerebro gateway: use /memory, /docs, /flows, /auth or /install" 404
+		reverse_proxy cerebro-portal:80
 	}
 }
