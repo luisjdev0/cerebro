@@ -282,7 +282,7 @@ services:
     healthcheck:
       # Caddy's admin endpoint answers in both modes; `:80/health` would not once a
       # domain is set (port 80 then only redirects to https).
-      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -16,6 +16,14 @@
 # code changes at all -- they already build URLs by concatenating base_url +
 # relative path.
 
+# Global options. A client that connects to an IP address sends no SNI, and behind
+# Docker's port mapping Caddy cannot infer the name from the local address, so name
+# the certificate to use when none is requested (a no-op with a domain, where browsers
+# always send SNI, and with plain HTTP).
+{
+	default_sni {$CEREBRO_DOMAIN::80}
+}
+
 # Site address. Default `:80` = plain HTTP (an external reverse proxy, e.g. the VPS's
 # Caddy, terminates TLS in front of this container -- the original, still-default
 # setup). Set CEREBRO_DOMAIN (see .env.example / DEPLOY.md) to a domain name and Caddy
