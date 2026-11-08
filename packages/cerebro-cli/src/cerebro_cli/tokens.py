@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,16 +46,64 @@ def _chmod_best_effort(path: Path, mode: int) -> None:
         pass  # Windows (or another FS without the same permissions model): acceptable no-op.
 
 
-def save_login_config(token: str, url: str | None) -> None:
+def save_login_config(
+    token: str,
+    url: str | None,
+    *,
+    kind: str = "token",
+    user: str | None = None,
+    expires_at: str | None = None,
+) -> None:
     """Persists the credentials resolved by `cerebro login` to
-    `~/.cerebro/config.json`. Overwrites any previous login."""
+    `~/.cerebro/config.json`. Overwrites any previous login.
+
+    `kind` is "token" (a token the user pasted: never expires from the CLI's point
+    of view, and `logout` only forgets it) or "session" (minted by a user/password
+    login: carries `expires_at` and is revoked server-side on `logout`)."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     _chmod_best_effort(STATE_DIR, 0o700)
-    data: dict[str, Any] = {"token": token}
+    data: dict[str, Any] = {"token": token, "kind": kind}
     if url:
         data["url"] = url
+    if user:
+        data["user"] = user
+    if expires_at:
+        data["expires_at"] = expires_at
     CONFIG_PATH.write_text(json.dumps(data), encoding="utf-8")
     _chmod_best_effort(CONFIG_PATH, 0o600)
+
+
+def clear_login_config() -> bool:
+    """Forget the saved credentials. Returns True if there was something to remove."""
+    if not CONFIG_PATH.exists():
+        return False
+    try:
+        CONFIG_PATH.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def session_state() -> str:
+    """"none" (no credentials at all), "expired" (a saved session whose expiry has
+    passed) or "valid". Credentials in the environment (`CEREBRO_TOKEN`) count as a
+    session: the user configured them explicitly and the server is the judge."""
+    if os.environ.get("CEREBRO_TOKEN"):
+        return "valid"
+    cfg = load_login_config()
+    if not cfg or not cfg.get("token"):
+        return "none"
+    expires = cfg.get("expires_at")
+    if expires:
+        try:
+            when = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+        except ValueError:
+            return "valid"
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when <= datetime.now(timezone.utc):
+            return "expired"
+    return "valid"
 
 
 def load_login_config() -> dict[str, Any] | None:

@@ -542,6 +542,24 @@ structure — per-module subcommands (`cerebro memory ...`, `cerebro docs ...`,
 entirely on `cerebro-clients`, so it takes exactly the same HTTP path as the
 MCP server — no parallel implementation of any API call.
 
+- **Interactive layer** (`interactive.py`, Phase 1A, `rich` + `questionary`):
+  does **not** duplicate the command tree. It walks the `argparse` tree built by
+  `main.py` to draw menus (`cerebro` → main menu, `cerebro <module>` → submenu)
+  and, for a leaf command, parses the partial line with every required
+  argument temporarily relaxed to find what is missing and prompt for it; the
+  completed argv then goes through the normal `parse_args` → `args.func(args)`
+  path, so scripted and interactive use cannot drift. Prompts happen only with a
+  TTY on stdin **and** stdout and without `--no-interactive` /
+  `CEREBRO_NO_INTERACTIVE`. Without a valid session (`tokens.session_state()`:
+  `none`/`expired`/`valid`; `CEREBRO_TOKEN` counts as valid) only login is
+  offered.
+- **Login/session** (`auth_commands.py`, `tokens.py`): `cerebro login --user`
+  (password from prompt, `--password-stdin`, `CEREBRO_PASSWORD` or inline
+  `--password=`) calls `POST /auth/login/password`; `--token` keeps the old flow.
+  `~/.cerebro/config.json` stores `token`, `kind` (`session`|`token`), `url`,
+  `user`, `expires_at`. `cerebro logout` revokes a `session` server-side
+  (`POST /auth/logout`, best effort) and always deletes the file. An expired
+  saved session is reported before running any command.
 - **`main.py`** wires an `argparse` tree: `memory` → `stats`/
   `export-disambiguations`/`import-markdown`/`token {create,list,revoke}`;
   `docs` → `category {create,list,rename,delete}`/`save`/`get`/`list`/
@@ -756,29 +774,47 @@ create` (CLI) generates one secret and registers it independently, via
 works against every service without any of them knowing about the others (see
 §2.6 for the partial-failure-safe mechanics).
 
-### 4.2 Planned, not yet implemented: auth unification + user system
+### 4.2 Unified auth (`cerebro-auth`) — implemented
 
-**This section describes an agreed design that has not been built yet.**
-Recorded in `CLAUDE.md`'s "Work in progress" section (which points to
-`luisjdev-pendientes/ecosistema-cerebro` in `cerebro-docs` for the
-up-to-date detail — that document is the living source of truth for pending
-work, not this manual):
+`cerebro-auth` owns the shared `cerebro_auth` schema (`users`, `groups`,
+`user_groups`, `group_scopes`, `api_tokens`) and all identity management
+(`/users`, `/groups`, `/tokens`, `/login`, `/login/password`, `/logout`,
+`/backup`). memory/docs/flows validate every request by **reading that schema
+directly** (same Postgres, no network hop); they never write to it. Two
+independent gates apply: what is visible (`allowed_modules` + `module_scopes`,
+shaped by `access_level` `user`/`owner`/`admin`) and who owns it
+(`owner_user_id`). See `CLAUDE.md` for the details.
 
-- A single shared `cerebro_auth` Postgres schema, replacing the three
-  duplicated `api_tokens` tables, with tokens carrying `allowed_modules` +
-  `module_scopes` instead of one scopes/allow-list pair per service.
-- Later extended with a `users`/`user_tokens`/`groups`/`user_groups`/
-  `group_scopes` system implementing three levels: `user`/`owner`/`admin`.
-- **Management operations** (login, creating a user/token/group, backups) will
-  live in a new `cerebro-auth` service. **Per-request validation stays local**
-  to each service, reading the shared schema directly — explicitly *not* a
-  network hop to a central auth service on every request, to avoid making
-  every API call depend on a fourth service being up.
-- Remote backups via API are blocked on this: knowing which schemas a given
-  token/user is allowed to see requires `cerebro_auth` to exist first.
+### 4.3 Password login (Phase 1A)
 
-Nothing beyond what's written above is agreed yet — do not build ahead of this
-without checking the living design doc first.
+- **Storage**: `users.password_hash` holds an **argon2id** hash (`argon2-cffi`
+  defaults, RFC 9106 low-memory profile; transparently re-hashed on login if the
+  parameters change). NULL = token-only user. Length 10–256.
+- **`POST /login/password`** `{name, password}` → `{name, access_level,
+  allowed_modules, token, expires_at}`. The `token` is a **session token**: an
+  ordinary `api_tokens` row named `session:<user>:<hex>` that inherits the user's
+  access level and scopes and has `expires_at` (`SESSION_TTL_HOURS`, default 12).
+  Because it is a normal row, memory/docs/flows accept it with no new code path;
+  the only change in them is `AND (expires_at IS NULL OR expires_at > now())`
+  in their token lookup (expired = invalid, like revoked).
+- **No user enumeration**: unknown user, revoked user, token-only user and wrong
+  password return the same `401`, and a dummy hash is verified so timing does not
+  reveal which case it was.
+- **Brute-force lockout (per user)**: `MAX_FAILED_ATTEMPTS` (5) consecutive
+  failures lock the account for `LOCKOUT_MINUTES` (15): `429` + `Retry-After`,
+  answered *before* any password check. Success resets the counter.
+  `failed_attempts`/`locked_until` live on `users` (migration `002`).
+- **`POST /users/{name}/password`**: admin sets anyone's; any other user may only
+  change their own and must send `current_password` (verified with the same
+  lockout). A change clears the lockout and revokes all the user's sessions.
+- **`POST /logout`**: revokes the calling token if (and only if) it is a session;
+  the root token and ordinary named tokens cannot be logged out.
+- **Bootstrap**: existing users have no password; an admin (or the root token)
+  runs `cerebro user set-password NAME`.
+- **No MCP tool** exposes passwords, on purpose.
+- Known limits (see the audit report): the lockout is per account, so someone can
+  lock a known username out (availability trade-off); there is no per-IP rate
+  limit — put one in the reverse proxy if the gateway is exposed.
 
 ---
 

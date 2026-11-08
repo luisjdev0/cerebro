@@ -183,6 +183,7 @@ async def resolve_effective_scope(pool: asyncpg.Pool, token_hash: str) -> Resolv
         SELECT name, user_id, access_level, allowed_modules, module_scopes
         FROM api_tokens
         WHERE token_hash = $1 AND revoked_at IS NULL
+          AND (expires_at IS NULL OR expires_at > now())
         """,
         token_hash,
     )
@@ -321,6 +322,7 @@ async def create_api_token(
     allowed_modules: list[str] | None,
     module_scopes: dict[str, Any] | None,
     value: str | None = None,
+    expires_at: Any | None = None,
 ) -> dict[str, Any]:
     invalid = sorted(set(scopes) - set(VALID_SCOPES))
     if invalid or not scopes:
@@ -336,9 +338,9 @@ async def create_api_token(
     try:
         row = await pool.fetchrow(
             """
-            INSERT INTO api_tokens (token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at
+            INSERT INTO api_tokens (token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at
             """,
             token_hash,
             name,
@@ -347,12 +349,13 @@ async def create_api_token(
             access_level,
             allowed_modules,
             module_scopes_json,
+            expires_at,
         )
     except asyncpg.UniqueViolationError as exc:
         if value is not None:
             existing = await pool.fetchrow(
                 """
-                SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, token_hash
+                SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at, token_hash
                 FROM api_tokens WHERE name = $1 AND revoked_at IS NULL
                 """,
                 name,
@@ -372,7 +375,7 @@ async def create_api_token(
 async def list_api_tokens(pool: asyncpg.Pool) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         """
-        SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at
+        SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at
         FROM api_tokens ORDER BY created_at
         """
     )
@@ -389,7 +392,7 @@ async def revoke_api_token(pool: asyncpg.Pool, name: str) -> dict[str, Any]:
         """
         UPDATE api_tokens SET revoked_at = now()
         WHERE name = $1 AND revoked_at IS NULL
-        RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at
+        RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at
         """,
         name,
     )

@@ -69,7 +69,7 @@ There are two ways to talk to a running cerebro instance:
 ### A. Through an AI assistant (MCP)
 
 `cerebro-mcp` is a single MCP server that exposes all three modules
-(`memory_*`, `docs_*`, `flow_*` — 36 tools total) over stdio. It runs on
+(`memory_*`, `docs_*`, `flow_*`, `auth_*` — 44 tools total) over stdio. It runs on
 **your** machine (e.g. inside Claude Desktop or Claude Code) and talks to the
 remote cerebro APIs over HTTPS. You don't call these tools yourself — you
 just talk to the assistant normally, and it decides when to use them (it
@@ -123,7 +123,16 @@ cerebro docs list
 ```
 
 (On Windows/PowerShell use `$env:CEREBRO_TOKEN = "..."` instead of `export`.)
-See section 6 below for the full command reference.
+
+The easiest way is to log in once and let the CLI remember it:
+
+```bash
+cerebro login --url https://your-cerebro-host --user ana      # asks for the password
+cerebro login --url https://your-cerebro-host --token <token>  # or with a token
+```
+
+Or just type `cerebro` and answer the questions (see "Interactive mode" in
+section 6). See section 6 below for the full command reference.
 
 ---
 
@@ -342,6 +351,44 @@ often edited directly as files.
 Actually *running* a flow step by step is done by a model via MCP
 (`flow_start`/`flow_next`/etc.), not from the CLI — the CLI is for authoring
 and managing definitions.
+
+### Interactive mode
+
+You don't have to remember any command:
+
+- `cerebro` on its own opens a menu with everything you can do.
+- `cerebro docs` (or `memory`, `flow`, `user`, `group`, `token`...) with nothing
+  after it opens that module's submenu.
+- If a command is missing a required argument (`cerebro docs get` without a
+  slug), the CLI asks for it.
+- **Without a saved session, the only thing on offer is logging in** (user and
+  password, or a token, plus the gateway URL). Once logged in, you get the full
+  menu.
+
+Prompts only appear in a real terminal. In scripts, pipes and CI nothing is ever
+asked: a missing argument fails with a clear message, as it always did. Add
+`--no-interactive` (or set `CEREBRO_NO_INTERACTIVE=1`) to forbid prompts even in
+a terminal.
+
+### Logging in
+
+| Command | What it does |
+|---|---|
+| `cerebro login --url URL --user NAME` | Logs in with user and password. The password is asked with a no-echo prompt. |
+| `cerebro login --user NAME --password-stdin` | Reads the password from standard input (`echo ... \| cerebro login ...`). |
+| `CEREBRO_PASSWORD=... cerebro login --user NAME` | Password from the environment variable. |
+| `cerebro login --user NAME --password=VALUE` | Password inline, like `mysql --password=`. **Insecure**: it stays in your shell history and is visible in `ps`. Only for when nothing else works. |
+| `cerebro login --url URL --token TOKEN` | Logs in with a token created by an admin. |
+| `cerebro logout` | Ends the session (revoked on the server for password logins) and deletes the saved credentials. |
+| `cerebro user create NAME [--password]` | Admin: creates a user, optionally with a password (without a value, it asks). |
+| `cerebro user set-password NAME` | Admin: sets anyone's password. A user changing their **own** adds `--current-password`. Changing a password closes that user's open sessions. |
+
+A password login creates a **session** that expires (12 hours by default); when it
+does, the CLI tells you to log in again. Five wrong passwords in a row lock the
+account for 15 minutes. Users created before passwords existed keep working with
+their token; an admin can give them a password with `cerebro user set-password`.
+There is deliberately no assistant/MCP tool for passwords: a secret must never
+pass through the model.
 
 ### Cross-cutting commands
 

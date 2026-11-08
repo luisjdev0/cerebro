@@ -155,6 +155,28 @@ class TestSharedSchemaResolution:
         resp = client.get("/categories", headers=_bearer(token))
         assert resp.status_code == 401
 
+    def test_expired_token_is_401(self, client):
+        dsn = get_settings().database_url
+
+        async def setup():
+            user_id = await insert_user(dsn, access_level="user")
+            return await insert_token(dsn, name=f"expired-{uuid.uuid4().hex[:8]}", user_id=user_id, allowed_modules=["flows"])
+
+        async def expire(token: str) -> None:
+            conn = await asyncpg.connect(dsn=dsn, timeout=8)
+            try:
+                await conn.execute(
+                    "UPDATE cerebro_auth.api_tokens SET expires_at = now() - interval '1 minute' WHERE token_hash = $1",
+                    hash_token(token),
+                )
+            finally:
+                await conn.close()
+
+        token = asyncio.run(setup())
+        assert client.get("/categories", headers=_bearer(token)).status_code == 200
+        asyncio.run(expire(token))
+        assert client.get("/categories", headers=_bearer(token)).status_code == 401
+
     def test_token_without_flows_module_is_blocked(self, client):
         dsn = get_settings().database_url
 
