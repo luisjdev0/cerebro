@@ -15,9 +15,9 @@ const SELECT = 'h-9 w-full rounded-lg border bg-background px-2.5 text-sm outlin
 function loadPageSize(): number {
   try {
     const n = Number(localStorage.getItem(PAGE_SIZE_KEY));
-    return PAGE_SIZES.includes(n) ? n : 20;
+    return PAGE_SIZES.includes(n) ? n : 10;
   } catch {
-    return 20;
+    return 10;
   }
 }
 
