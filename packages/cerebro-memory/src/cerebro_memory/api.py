@@ -761,7 +761,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         context: str | None = None,
         type: str | None = None,  # noqa: A002
         status_: Annotated[Literal["active", "superseded", "archived", "all"], Query(alias="status")] = "active",
-        sort: Literal["created_at", "updated_at", "importance"] = "created_at",
+        sort: Literal["created_at", "updated_at", "importance", "title", "type", "context"] = "created_at",
         order: Literal["asc", "desc"] = "desc",
         limit: Annotated[int, Query(ge=1, le=100)] = 25,
         offset: Annotated[int, Query(ge=0)] = 0,
@@ -800,14 +800,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         total = await pool.fetchval(
             f"SELECT count(*) FROM memories m JOIN contexts c ON c.id = m.context_id {where}", *params
         )
-        # `sort`/`order` are Literal-validated above, never user text
+        # `sort`/`order` are Literal-validated above (never user text): map to a fixed column
+        sort_column = "c.slug" if sort == "context" else f"m.{sort}"
         rows = await pool.fetch(
             f"""
             SELECT m.id, c.slug AS context, m.type, m.title, m.content, m.importance, m.confidence,
                    m.source, m.status, m.superseded_by, m.occurred_at, m.created_at, m.updated_at
             FROM memories m JOIN contexts c ON c.id = m.context_id
             {where}
-            ORDER BY m.{sort} {order.upper()}, m.id
+            ORDER BY {sort_column} {order.upper()}, m.id
             LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
             """,
             *params,

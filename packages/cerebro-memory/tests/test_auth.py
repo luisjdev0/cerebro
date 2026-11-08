@@ -537,6 +537,12 @@ class TestListAndGetMemory:
 
         only_episodic = client.get("/memories", params={"context": ctx, "type": "episodic"}, headers=root_headers).json()
         assert only_episodic["total"] == 1 and only_episodic["items"][0]["type"] == "episodic"
+        by_title = client.get("/memories", params={"context": ctx, "sort": "title", "order": "asc"}, headers=root_headers)
+        assert by_title.status_code == 200
+        titles = [m["title"] for m in by_title.json()["items"]]
+        assert titles == sorted(titles)
+        assert client.get("/memories", params={"sort": "context"}, headers=root_headers).status_code == 200
+        assert client.get("/memories", params={"sort": "content; DROP TABLE memories"}, headers=root_headers).status_code == 422
         assert client.get("/memories", params={"limit": 0}, headers=root_headers).status_code == 422
         assert client.get("/memories", params={"status": "bogus"}, headers=root_headers).status_code == 422
 

@@ -24,7 +24,7 @@ export type Memory = {
 export type Context = { slug: string; name: string; kind: string; description: string | null };
 export type Related = { relation: string; direction: 'outgoing' | 'incoming' | string; note: string | null; virtual: boolean; memory: Memory };
 
-export type SortKey = 'created_at' | 'updated_at' | 'importance';
+export type SortKey = 'created_at' | 'updated_at' | 'importance' | 'title' | 'type' | 'context';
 export type ListParams = {
   context?: string;
   type?: string;
@@ -54,3 +54,16 @@ export const searchMemories = (q: string, opts: { context?: string; type?: strin
 export const getMemory = (id: string) => api<Memory>(`/memory/memories/${id}`);
 export const getRelated = (id: string) => api<{ related: Related[] }>(`/memory/memories/${id}/related`).then((r) => r.related);
 export const listContexts = () => api<Context[]>('/memory/contexts');
+
+export const CONTEXT_KINDS = ['project', 'domain', 'person', 'org'] as const;
+
+export type NewMemory = { content: string; context: string; type: MemoryType; title?: string; importance?: number; occurred_at?: string };
+export const createMemory = (m: NewMemory) => api<Memory>('/memory/memories', { method: 'POST', json: m });
+/** Editing never rewrites in place: the API stores a new version and marks the old one superseded. */
+export const updateMemory = (id: string, content: string) => api<Memory>(`/memory/memories/${id}`, { method: 'PATCH', json: { content } });
+export const forgetMemory = (id: string) => api<unknown>(`/memory/memories/${id}`, { method: 'DELETE' });
+export const createContext = (c: { slug: string; name: string; kind: string; description?: string }) =>
+  api<Context>('/memory/contexts', { method: 'POST', json: c });
+
+export const slugify = (s: string) =>
+  s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);
