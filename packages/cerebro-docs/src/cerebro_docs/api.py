@@ -21,7 +21,7 @@ import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cerebro_docs.auth import Principal, get_principal, require_scope
+from cerebro_docs.auth import Principal, get_principal, require_admin, require_scope
 from cerebro_docs.config import Settings, get_settings
 from cerebro_docs.db import apply_migrations, check_health, create_pool
 from cerebro_docs.sections import (
@@ -521,7 +521,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def delete_category(
         slug: str,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
-        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        principal: Annotated[Principal, Depends(require_admin())],
         force: bool = False,
     ):
         """409 if the category still has documents, unless `?force=true` - in which

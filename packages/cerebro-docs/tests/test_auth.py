@@ -475,6 +475,14 @@ class TestScopeEnforcement:
         resp = client.delete(f"/categories/{slug}", headers=headers)
         assert resp.status_code == 403, resp.text
 
+    def test_delete_category_allowed_for_admin_access_level_without_admin_scope(self, client, root_headers):
+        """Only the root token carries the `admin` scope; a user whose access level is `admin`
+        (read/write token, e.g. a portal session) must still be able to delete."""
+        slug = _make_category(client, root_headers)
+        token, _ = _make_user_token(get_settings().database_url, access_level="admin", scopes=["read", "write"])
+        resp = client.delete(f"/categories/{slug}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+
     def test_token_name_overrides_x_agent_name_header_in_created_by(self, client, root_headers):
         slug = _make_category(client, root_headers)
         settings = get_settings()

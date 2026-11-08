@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from cerebro_memory.auth import (
     Principal,
     get_principal,
+    require_admin,
     require_scope,
 )
 from cerebro_memory.config import Settings, get_settings
@@ -464,7 +465,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         slug: str,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
-        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        principal: Annotated[Principal, Depends(require_admin())],
         force: bool = False,
     ):
         """Hard-deletes a context. 409 if it still has memories (of any status),

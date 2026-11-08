@@ -638,6 +638,14 @@ class TestDeleteContext:
         resp = client.delete(f"/contexts/{slug}", headers=headers)
         assert resp.status_code == 403, resp.text
 
+    def test_delete_context_allowed_for_admin_access_level_without_admin_scope(self, client, root_headers):
+        """The `admin` scope exists only on the root token; a user whose access level is
+        `admin` (read/write token, e.g. a portal session) must still be able to delete."""
+        slug = _make_context(client, root_headers)
+        token, _ = _create_user_token(access_level="admin", scopes=["read", "write"])
+        resp = client.delete(f"/contexts/{slug}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+
 
 class TestAllowedContextsEnforcementOnRelated:
     """GET /memories/{id}/related must not leak memories or neighbors from a context

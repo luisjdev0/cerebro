@@ -620,3 +620,17 @@ class TestCategoryManagement:
         cat = _make_category(client, auth_headers)
         resp = client.delete(f"/categories/{cat}", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code in (401, 403), resp.text
+
+    def test_delete_allowed_for_admin_access_level_without_admin_scope(self, client, auth_headers):
+        """The `admin` scope only exists on the root token; an `admin` user with a read/write
+        token (a portal session) must still be able to delete a category."""
+        dsn = get_settings().database_url
+
+        async def setup():
+            uid = await insert_user(dsn, access_level="admin")
+            return await insert_token(dsn, name=f"cat-a-{uuid.uuid4().hex[:8]}", user_id=uid, allowed_modules=["flows"])
+
+        token = asyncio.run(setup())
+        cat = _make_category(client, auth_headers)
+        resp = client.delete(f"/categories/{cat}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text

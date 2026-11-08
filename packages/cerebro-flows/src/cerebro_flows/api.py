@@ -24,6 +24,7 @@ from cerebro_flows.diagram import flow_references, flow_to_mermaid
 from cerebro_flows.auth import (
     Principal,
     get_principal,
+    require_admin,
     require_scope,
 )
 from cerebro_flows.config import Settings, get_settings
@@ -485,7 +486,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def delete_category(
         slug: str,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
-        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        principal: Annotated[Principal, Depends(require_admin())],
         force: bool = False,
     ):
         """409 while the category still has flows, unless `?force=true`: the FKs' ON DELETE
