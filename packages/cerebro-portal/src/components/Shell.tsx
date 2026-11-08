@@ -55,7 +55,7 @@ export function Shell() {
               <SidebarMenuButton size="lg" tooltip={t('appName')} className="cursor-default hover:bg-transparent">
                 <img src="/logo.svg" alt="" className="size-9 shrink-0" />
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate font-display text-[15px] font-bold tracking-tight">{t('appName')}</span>
+                  <span className="brand-mono-text truncate text-[15px] font-bold">{t('appName')}</span>
                   <span className="truncate text-[11px] font-semibold tracking-wide text-brand-soft uppercase">{t('portal')}</span>
                 </div>
               </SidebarMenuButton>

@@ -53,6 +53,7 @@ export function Login() {
                 <AuthLoadingState title={t('login.connecting')} description={t('login.checking')} />
               ) : (
                 <>
+                  <div className="brand-mono">
                   <LoginBrandIntro
                     logoSrc="/logo.svg"
                     logoAlt={t('appName')}
@@ -60,6 +61,7 @@ export function Login() {
                     title={t('appName')}
                     description={t('login.description')}
                   />
+                  </div>
                   <form onSubmit={(e) => void submit(e)} className="login-form space-y-4">
                     <InputGroup className="gap-4">
                       <InputField
