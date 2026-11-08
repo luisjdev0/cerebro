@@ -231,7 +231,7 @@ services:
     restart: unless-stopped
     profiles: ["full"]
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
