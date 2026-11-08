@@ -118,9 +118,9 @@ class CerebroMemoryAdapter(MemoryAdapter):
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise RuntimeError(
-                f"cerebro-memory API no responde en {API_URL}/health ({exc}). "
-                "Arráncala primero con `python -m cerebro_memory.main` "
-                "(y `docker compose up -d` para Postgres)."
+                f"The cerebro-memory API is not responding at {API_URL}/health ({exc}). "
+                "Start it first with `python -m cerebro_memory.main` "
+                "(and `docker compose up -d` for Postgres)."
             ) from exc
 
         self._uuid_to_slug = {}

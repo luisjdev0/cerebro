@@ -69,7 +69,7 @@ class TestMemorySearch:
         }
         out = server.memory_search("query")
         assert out["ambiguous"] is True
-        assert "ambigua" in out["message"]
+        assert "ambiguous" in out["message"]
         assert server._last_disambiguation_id == "d1"
 
     def test_next_call_with_context_resolves_pending_disambiguation(self, fake_clients):
@@ -247,7 +247,7 @@ class TestDocsSave:
 
     def test_unknown_category_404_lists_available(self, fake_clients):
         _, fake_docs, _, _ = fake_clients
-        fake_docs.create_document.side_effect = _api_error(404, "categoria inexistente")
+        fake_docs.create_document.side_effect = _api_error(404, "category does not exist")
         fake_docs.list_categories.return_value = [{"slug": "eco", "name": "Ecosistema"}]
         out = server.docs_save("T", "C", "no-existe")
         assert "error" in out
@@ -256,9 +256,9 @@ class TestDocsSave:
 
     def test_slug_collision_409_propagates_detail(self, fake_clients):
         _, fake_docs, _, _ = fake_clients
-        fake_docs.create_document.side_effect = _api_error(409, "ya existe un documento con slug 'x'")
+        fake_docs.create_document.side_effect = _api_error(409, "a document with slug 'x'")
         out = server.docs_save("T", "C", "eco")
-        assert "ya existe" in out["error"]
+        assert "a document with slug" in out["error"]
 
 
 def test_docs_get_routes_to_client(fake_clients):
@@ -417,7 +417,7 @@ class TestFlowSave:
 
     def test_unknown_category_404_lists_available(self, fake_clients):
         _, _, fake_flows, _ = fake_clients
-        fake_flows.create_flow.side_effect = _api_error(404, "categoria inexistente")
+        fake_flows.create_flow.side_effect = _api_error(404, "category does not exist")
         fake_flows.list_categories.return_value = [{"slug": "incident", "name": "Incidencias"}]
         out = server.flow_save("no-existe", "metadata: {}")
         assert "error" in out
@@ -512,9 +512,9 @@ def test_flow_abort_routes_to_client(fake_clients):
     fake_flows.abort_run.assert_called_once_with("r1", reason="ya no aplica")
     assert out["status"] == "aborted"
 
-    fake_flows.abort_run.side_effect = _api_error(409, "ya esta completed")
+    fake_flows.abort_run.side_effect = _api_error(409, "is already completed")
     out = server.flow_abort("r1")
-    assert "ya esta completed" in out["error"]
+    assert "is already completed" in out["error"]
 
 
 def test_docs_archive_routes_to_client(fake_clients):

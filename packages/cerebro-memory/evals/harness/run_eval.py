@@ -54,7 +54,7 @@ try:
     import yaml
 except ImportError:
     print(
-        "Falta pyyaml. Instálalo con:\n"
+        "pyyaml is missing. Install it with:\n"
         "    python -m pip install -r evals/harness/requirements.txt",
         file=sys.stderr,
     )
@@ -90,7 +90,7 @@ def validate_case_ids(cases: list[dict], known_ids: set[str]) -> None:
         missing = referenced - known_ids
         if missing:
             print(
-                f"[warn] caso '{case.get('id')}' referencia ids inexistentes en memories.yaml: "
+                f"[warn] case '{case.get('id')}' references ids that do not exist in memories.yaml: "
                 f"{sorted(missing)}",
                 file=sys.stderr,
             )
@@ -197,15 +197,15 @@ def aggregate(case_results: list[dict]) -> dict:
 def print_report(adapter_name: str, run_result: dict, agg: dict, include_superseded: bool) -> None:
     print()
     print("=" * 72)
-    print(f"cerebro-memory retrieval eval - adaptador: {adapter_name}")
+    print(f"cerebro-memory retrieval eval - adapter: {adapter_name}")
     print(
-        f"k={run_result['k']}  memorias indexadas={run_result['num_memories_indexed']}"
-        f"  incluye superseded={'si' if include_superseded else 'no'}"
-        f"  casos={len(run_result['cases'])}"
+        f"k={run_result['k']}  memories indexed={run_result['num_memories_indexed']}"
+        f"  includes superseded={'yes' if include_superseded else 'no'}"
+        f"  cases={len(run_result['cases'])}"
     )
     print("=" * 72)
 
-    header = f"{'Categoria':<12} {'Casos':>6} {'Precision@k':>13} {'Recall@k':>10} {'Contaminacion':>14}"
+    header = f"{'Category':<12} {'Cases':>6} {'Precision@k':>13} {'Recall@k':>10} {'Contamination':>14}"
     print(header)
     print("-" * len(header))
 
@@ -225,9 +225,9 @@ def print_report(adapter_name: str, run_result: dict, agg: dict, include_superse
 
     if not include_superseded:
         print(
-            "Nota: la categoria 'temporal' solo es informativa con --include-superseded "
-            "(sin esa flag las memorias superseded nunca se indexan, asi que no pueden "
-            "contaminar el top-k y la contaminacion de 'temporal' sera trivialmente 0)."
+            "Note: the 'temporal' category is only informative with --include-superseded "
+            "(without that flag superseded memories are never indexed, so they cannot "
+            "contaminate the top-k and the 'temporal' contamination will be trivially 0)."
         )
         print()
 
@@ -237,41 +237,41 @@ def print_report(adapter_name: str, run_result: dict, agg: dict, include_superse
 # ---------------------------------------------------------------------------
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Corre la suite de evaluación de retrieval de cerebro-memory.")
+    parser = argparse.ArgumentParser(description="Run the cerebro-memory retrieval evaluation suite.")
     parser.add_argument(
         "--adapter",
         required=True,
         choices=sorted(ADAPTERS.keys()),
-        help="Adaptador de memoria a evaluar.",
+        help="Memory adapter to evaluate.",
     )
-    parser.add_argument("--k", type=int, default=5, help="Top-k para precision/recall/contaminación (default: 5).")
+    parser.add_argument("--k", type=int, default=5, help="Top-k for precision/recall/contamination (default: 5).")
     parser.add_argument(
         "--include-superseded",
         action="store_true",
-        help="Inserta también las memorias con status 'superseded' (necesario para que la categoría 'temporal' sea significativa).",
+        help="Also insert memories with status 'superseded' (needed for the 'temporal' category to be meaningful).",
     )
     parser.add_argument(
         "--memories",
         type=Path,
         default=EVALS_DIR / "memories.yaml",
-        help="Ruta a memories.yaml (default: evals/memories.yaml).",
+        help="Path to memories.yaml (default: evals/memories.yaml).",
     )
     parser.add_argument(
         "--cases",
         type=Path,
         default=EVALS_DIR / "cases.yaml",
-        help="Ruta a cases.yaml (default: evals/cases.yaml).",
+        help="Path to cases.yaml (default: evals/cases.yaml).",
     )
     parser.add_argument(
         "--results-dir",
         type=Path,
         default=EVALS_DIR / "results",
-        help="Directorio donde guardar el JSON de resultados (default: evals/results).",
+        help="Directory to save the results JSON in (default: evals/results).",
     )
     parser.add_argument(
         "--no-save",
         action="store_true",
-        help="No escribe el JSON de resultados, solo imprime la tabla en consola.",
+        help="Do not write the results JSON, only print the table to the console.",
     )
     return parser.parse_args(argv)
 

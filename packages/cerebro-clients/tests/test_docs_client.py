@@ -158,12 +158,12 @@ class TestDocuments:
     def test_patch_section_full(self):
         transport = RecordingTransport()
         make_client(transport).patch_section(
-            "doc-1", "Nueva seccion", "append", body="texto nuevo", create_if_missing=True, new_heading_level=3
+            "doc-1", "New section", "append", body="new text", create_if_missing=True, new_heading_level=3
         )
         assert transport.last["json"] == {
-            "heading": "Nueva seccion",
+            "heading": "New section",
             "operation": "append",
-            "body": "texto nuevo",
+            "body": "new text",
             "create_if_missing": True,
             "new_heading_level": 3,
         }
@@ -214,12 +214,12 @@ def test_get_stats():
 
 class TestErrorPropagation:
     def test_http_error_raises_cerebro_api_error_with_detail(self):
-        transport = RecordingTransport(response_json={"detail": "categoria inexistente"}, status_code=404)
+        transport = RecordingTransport(response_json={"detail": "category does not exist"}, status_code=404)
         client = make_client(transport)
         with pytest.raises(CerebroAPIError) as exc_info:
             client.create_document("T", "C", "no-existe")
         assert exc_info.value.status_code == 404
-        assert exc_info.value.detail == "categoria inexistente"
+        assert exc_info.value.detail == "category does not exist"
 
     def test_connection_failure_raises_cerebro_connection_error(self):
         client = make_client(RaisingTransport())

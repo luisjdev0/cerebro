@@ -86,31 +86,31 @@ mcp = FastMCP(
 
 def _connection_error_message(service: str, exc: CerebroConnectionError) -> str:
     return (
-        f"No se pudo conectar con la API de {service} en {exc.base_url}: {exc.original}. "
-        f"Verifica que este corriendo y que la URL/variables de entorno sean correctas."
+        f"Could not connect to the {service} API at {exc.base_url}: {exc.original}. "
+        f"Check that it is running and that the URL/environment variables are correct."
     )
 
 
 def _auth_error_message(service: str, exc: CerebroAPIError) -> str:
     return (
-        f"La API de {service} rechazo la autenticacion (401). Verifica que la variable "
-        "de entorno CEREBRO_TOKEN tenga un valor valido para ese servicio."
+        f"The {service} API rejected the authentication (401). Check that the "
+        "CEREBRO_TOKEN environment variable holds a valid value for that service."
     )
 
 
 def _http_error_message(service: str, exc: CerebroAPIError) -> str:
-    return f"La API de {service} devolvio {exc.status_code}: {exc.detail}"
+    return f"The {service} API returned {exc.status_code}: {exc.detail}"
 
 
 def _format_context_list(contexts: list[dict[str, Any]]) -> str:
     if not contexts:
-        return "(no hay contextos creados todavia; usa memory_create_context para crear el primero)"
-    return "\n".join(f"- {c['slug']} ({c['kind']}): {c.get('description') or 'sin descripcion'}" for c in contexts)
+        return "(no contexts have been created yet; use memory_create_context to create the first one)"
+    return "\n".join(f"- {c['slug']} ({c['kind']}): {c.get('description') or 'no description'}" for c in contexts)
 
 
 def _format_category_list(categories: list[dict[str, Any]]) -> str:
     if not categories:
-        return "(no hay categorias creadas todavia; usa docs_create_category para crear la primera)"
+        return "(no categories have been created yet; use docs_create_category to create the first one)"
     return "\n".join(f"- {c['slug']}: {c.get('description') or c['name']}" for c in categories)
 
 
@@ -118,7 +118,7 @@ def _format_ambiguous_message(scope_decision: dict[str, Any]) -> str:
     candidates = scope_decision.get("candidates") or []
     results_by_candidate = scope_decision.get("results_by_candidate") or {}
 
-    lines = ["La consulta es ambigua entre estos contextos:"]
+    lines = ["The query is ambiguous between these contexts:"]
     for c in candidates:
         pct = f"{c.get('score', 0.0):.0%}"
         desc = c.get("description") or c.get("name") or c["slug"]
@@ -126,8 +126,8 @@ def _format_ambiguous_message(scope_decision: dict[str, Any]) -> str:
         for r in results_by_candidate.get(c["slug"], []):
             lines.append(f"    · {r['title']}")
     lines.append(
-        "Elige llamando memory_search con context=<slug>, o pregunta al usuario cual "
-        "corresponde."
+        "Choose by calling memory_search with context=<slug>, or ask the user which "
+        "one applies."
     )
     return "\n".join(lines)
 
@@ -238,11 +238,11 @@ def memory_search(
         try:
             _memory.resolve_disambiguation(pending_id, context)
             note = (
-                f"Aprendido: se registro que esta consulta corresponde a '{context}' "
-                "-- preguntas similares se inclinaran hacia este contexto en el futuro."
+                f"Learned: this query was recorded as belonging to '{context}' "
+                "-- similar questions will lean towards this context in the future."
             )
         except (CerebroConnectionError, CerebroAPIError):
-            pass  # best-effort: no perdemos el resultado de la busqueda por esto
+            pass  # best-effort: do not lose the search result over this
 
     if mode == "ambiguous":
         _last_disambiguation_id = scope_decision.get("disambiguation_id")
@@ -306,7 +306,7 @@ def memory_remember(
         available contexts and suggests creating one).
     """
     if type not in MEMORY_TYPES:
-        return {"error": f"type invalido: '{type}'. Debe ser uno de: {', '.join(MEMORY_TYPES)}."}
+        return {"error": f"invalid type: '{type}'. Must be one of: {', '.join(MEMORY_TYPES)}."}
 
     try:
         memory = _memory.create_memory(content, context, type, title=title, importance=importance)
@@ -322,14 +322,14 @@ def memory_remember(
                 contexts = []
             return {
                 "error": (
-                    f"El contexto '{context}' no existe. Contextos disponibles:\n"
+                    f"The context '{context}' does not exist. Available contexts:\n"
                     f"{_format_context_list(contexts)}\n\n"
-                    "Elige uno de estos, o crealo primero con "
+                    "Pick one of these, or create it first with "
                     f"memory_create_context(slug='{context}', ...)."
                 )
             }
         if exc.status_code == 422:
-            return {"error": f"cerebro-memory rechazo la memoria (422): {exc.detail}"}
+            return {"error": f"cerebro-memory rejected the memory (422): {exc.detail}"}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"memory": memory}
@@ -363,9 +363,9 @@ def memory_update(memory_id: str, content: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ninguna memoria con id '{memory_id}'."}
+            return {"error": f"No memory exists with id '{memory_id}'."}
         if exc.status_code == 409:
-            return {"error": f"No se pudo actualizar: {exc.detail}"}
+            return {"error": f"Could not update: {exc.detail}"}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"memory": memory}
@@ -398,7 +398,7 @@ def memory_forget(memory_id: str, hard: bool = False) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ninguna memoria con id '{memory_id}'."}
+            return {"error": f"No memory exists with id '{memory_id}'."}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
 
@@ -464,11 +464,11 @@ def memory_link(
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 404:
-            return {"error": f"cerebro-memory no encontro alguna de las dos memorias: {exc.detail}"}
+            return {"error": f"cerebro-memory could not find one of the two memories: {exc.detail}"}
         if exc.status_code == 409:
-            return {"error": f"Esa relacion ya existe: {exc.detail}"}
+            return {"error": f"That relation already exists: {exc.detail}"}
         if exc.status_code == 422:
-            return {"error": f"Datos invalidos: {exc.detail}"}
+            return {"error": f"Invalid data: {exc.detail}"}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"edge": edge}
@@ -508,9 +508,9 @@ def memory_related(memory_id: str, relation: str | None = None) -> dict[str, Any
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ninguna memoria con id '{memory_id}'."}
+            return {"error": f"No memory exists with id '{memory_id}'."}
         if exc.status_code == 422:
-            return {"error": f"relation invalida: {exc.detail}"}
+            return {"error": f"invalid relation: {exc.detail}"}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"related": data.get("related", [])}
@@ -552,7 +552,7 @@ def memory_timeline(
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 422:
-            return {"error": f"cerebro-memory rechazo la consulta: {exc.detail}"}
+            return {"error": f"cerebro-memory rejected the query: {exc.detail}"}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"items": data.get("items", [])}
@@ -614,7 +614,7 @@ def memory_create_context(slug: str, name: str, kind: str, description: str | No
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-memory", exc)}
         if exc.status_code == 409:
-            return {"error": f"Ya existe un contexto con slug '{slug}'."}
+            return {"error": f"A context with slug '{slug}' already exists."}
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"context": context}
@@ -693,7 +693,7 @@ def docs_create_category(
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 409:
-            return {"error": f"Ya existe una categoria con slug '{slug}'."}
+            return {"error": f"A category with slug '{slug}' already exists."}
         if exc.status_code == 422:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-docs", exc)}
@@ -769,9 +769,9 @@ def docs_save(title: str, content: str, category: str, slug: str | None = None) 
                 categories = []
             return {
                 "error": (
-                    f"La categoria '{category}' no existe. Categorias disponibles:\n"
+                    f"The category '{category}' does not exist. Available categories:\n"
                     f"{_format_category_list(categories)}\n\n"
-                    "Elige una de estas, o creala primero con "
+                    "Pick one of these, or create it first with "
                     f"docs_create_category(slug='{category}', ...)."
                 )
             }
@@ -812,7 +812,7 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun documento en '{category}/{slug}'."}
+            return {"error": f"No document exists at '{category}/{slug}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     redirected_from = document.get("redirected_from")
@@ -824,10 +824,10 @@ def docs_get(category: str, slug: str) -> dict[str, Any]:
         # too -- not just report it to the user.
         return {
             "alert": (
-                f"AVISO: la ruta '{category}/{slug}' que pediste ya no existe -- este documento se movio a "
-                f"'{document['category']}/{document['slug']}'. No vuelvas a usar la ruta vieja de aqui en "
-                "adelante; si la tenias guardada en una memoria o en otro documento, actualizala a la nueva "
-                "antes de terminar."
+                f"NOTICE: the path '{category}/{slug}' you asked for no longer exists -- this document was moved to "
+                f"'{document['category']}/{document['slug']}'. Do not use the old path from now "
+                "on; if you had it saved in a memory or another document, update it to the new one "
+                "before finishing."
             ),
             "document": document,
         }
@@ -863,7 +863,7 @@ def docs_search(query: str, category: str | None = None, limit: int = 20, offset
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 403:
-            return {"error": f"No tienes acceso a la categoria '{category}'."}
+            return {"error": f"You do not have access to the category '{category}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"documents": documents}
@@ -894,7 +894,7 @@ def docs_list(category: str | None = None, limit: int = 20, offset: int = 0) -> 
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 403:
-            return {"error": f"No tienes acceso a la categoria '{category}'."}
+            return {"error": f"You do not have access to the category '{category}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"documents": documents}
@@ -998,7 +998,7 @@ def docs_patch_section(
         `operation` isn't one of the 5 valid ones.
     """
     if operation not in SECTION_OPERATIONS:
-        return {"error": f"operation invalida: '{operation}'. Debe ser una de: {', '.join(SECTION_OPERATIONS)}."}
+        return {"error": f"invalid operation: '{operation}'. Must be one of: {', '.join(SECTION_OPERATIONS)}."}
 
     try:
         document = _docs.patch_section(
@@ -1049,7 +1049,7 @@ def docs_delete(document_id: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun documento con id '{document_id}'."}
+            return {"error": f"No document exists with id '{document_id}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
 
@@ -1074,7 +1074,7 @@ def docs_archive(document_id: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun documento con id '{document_id}'."}
+            return {"error": f"No document exists with id '{document_id}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"document": document}
@@ -1098,7 +1098,7 @@ def docs_unarchive(document_id: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun documento con id '{document_id}'."}
+            return {"error": f"No document exists with id '{document_id}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"document": document}
@@ -1127,7 +1127,7 @@ def docs_list_archived(category: str | None = None, limit: int = 20, offset: int
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 403:
-            return {"error": f"No tienes acceso a la categoria '{category}'."}
+            return {"error": f"You do not have access to the category '{category}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"documents": documents}
@@ -1157,7 +1157,7 @@ def docs_history(document_id: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-docs", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun documento con id '{document_id}'."}
+            return {"error": f"No document exists with id '{document_id}'."}
         return {"error": _http_error_message("cerebro-docs", exc)}
 
     return {"versions": versions}
@@ -1194,7 +1194,7 @@ def flow_create_category(slug: str, code: str, name: str, description: str | Non
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 409:
-            return {"error": f"Ya existe una categoria con slug '{slug}' o code '{code}'."}
+            return {"error": f"A category with slug '{slug}' or code '{code}' already exists."}
         return {"error": _http_error_message("cerebro-flows", exc)}
 
     return {"category": category}
@@ -1286,9 +1286,9 @@ def flow_save(category: str, yaml_content: str, code: str | None = None) -> dict
                 categories = []
             return {
                 "error": (
-                    f"La categoria '{category}' no existe. Categorias disponibles:\n"
+                    f"The category '{category}' does not exist. Available categories:\n"
                     f"{_format_category_list(categories)}\n\n"
-                    f"Elige una de estas, o creala primero con flow_create_category(slug='{category}', ...)."
+                    f"Pick one of these, or create it first with flow_create_category(slug='{category}', ...)."
                 )
             }
         if exc.status_code in (409, 422):
@@ -1319,7 +1319,7 @@ def flow_get(code: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun flujo con code '{code}'."}
+            return {"error": f"No flow exists with code '{code}'."}
         return {"error": _http_error_message("cerebro-flows", exc)}
 
     return {"flow": flow}
@@ -1345,7 +1345,7 @@ def flow_list(category: str | None = None, limit: int = 20, offset: int = 0) -> 
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 403:
-            return {"error": f"No tienes acceso a la categoria '{category}'."}
+            return {"error": f"You do not have access to the category '{category}'."}
         return {"error": _http_error_message("cerebro-flows", exc)}
 
     return {"flows": flows}
@@ -1373,7 +1373,7 @@ def flow_update(code: str, yaml_content: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun flujo con code '{code}'."}
+            return {"error": f"No flow exists with code '{code}'."}
         if exc.status_code == 422:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
@@ -1400,7 +1400,7 @@ def flow_delete(code: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun flujo con code '{code}'."}
+            return {"error": f"No flow exists with code '{code}'."}
         return {"error": _http_error_message("cerebro-flows", exc)}
 
 
@@ -1442,7 +1442,7 @@ def flow_start(code: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun flujo con code '{code}'."}
+            return {"error": f"No flow exists with code '{code}'."}
         return {"error": _http_error_message("cerebro-flows", exc)}
 
 
@@ -1470,7 +1470,7 @@ def flow_next(run_id: str, decision: str | None = None) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+            return {"error": f"run_id '{run_id}' does not exist or expired due to inactivity."}
         if exc.status_code in (409, 422):
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
@@ -1500,7 +1500,7 @@ def flow_approve_checkpoint(run_id: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+            return {"error": f"run_id '{run_id}' does not exist or expired due to inactivity."}
         if exc.status_code == 409:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
@@ -1527,7 +1527,7 @@ def flow_reject_checkpoint(run_id: str, reason: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"run_id '{run_id}' no existe o expiro por inactividad."}
+            return {"error": f"run_id '{run_id}' does not exist or expired due to inactivity."}
         if exc.status_code == 409:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
@@ -1556,7 +1556,7 @@ def flow_abort(run_id: str, reason: str | None = None) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-flows", exc)}
         if exc.status_code == 404:
-            return {"error": f"run_id '{run_id}' no existe."}
+            return {"error": f"run_id '{run_id}' does not exist."}
         if exc.status_code == 409:
             return {"error": str(exc.detail)}
         return {"error": _http_error_message("cerebro-flows", exc)}
@@ -1652,7 +1652,7 @@ def auth_create_group(slug: str, name: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-auth", exc)}
         if exc.status_code == 409:
-            return {"error": f"Ya existe un grupo con slug '{slug}'."}
+            return {"error": f"A group with slug '{slug}' already exists."}
         return {"error": _http_error_message("cerebro-auth", exc)}
 
     return {"group": group}
@@ -1700,9 +1700,9 @@ def auth_set_group_scopes(
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-auth", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun grupo con slug '{group_slug}'."}
+            return {"error": f"No group exists with slug '{group_slug}'."}
         if exc.status_code == 422:
-            return {"error": f"cerebro-auth rechazo los scopes: {exc.detail}"}
+            return {"error": f"cerebro-auth rejected the scopes: {exc.detail}"}
         return {"error": _http_error_message("cerebro-auth", exc)}
 
     return {"group": group}
@@ -1735,7 +1735,7 @@ def auth_add_group_member(group_slug: str, user: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-auth", exc)}
         if exc.status_code == 404:
-            return {"error": f"El grupo '{group_slug}' o el usuario '{user}' no existen."}
+            return {"error": f"The group '{group_slug}' or the user '{user}' does not exist."}
         return {"error": _http_error_message("cerebro-auth", exc)}
 
     return {"group": group}
@@ -1834,11 +1834,11 @@ def auth_create_token(
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-auth", exc)}
         if exc.status_code == 404:
-            return {"error": f"El usuario '{user}' no existe."}
+            return {"error": f"The user '{user}' does not exist."}
         if exc.status_code == 409:
-            return {"error": f"Ya existe un token con nombre '{name}'."}
+            return {"error": f"A token named '{name}' already exists."}
         if exc.status_code == 422:
-            return {"error": f"cerebro-auth rechazo el token: {exc.detail}"}
+            return {"error": f"cerebro-auth rejected the token: {exc.detail}"}
         return {"error": _http_error_message("cerebro-auth", exc)}
 
     return {"token": token}
@@ -1896,7 +1896,7 @@ def auth_revoke_token(name: str) -> dict[str, Any]:
         if exc.status_code == 401:
             return {"error": _auth_error_message("cerebro-auth", exc)}
         if exc.status_code == 404:
-            return {"error": f"No existe ningun token con nombre '{name}'."}
+            return {"error": f"No token exists named '{name}'."}
         return {"error": _http_error_message("cerebro-auth", exc)}
 
 

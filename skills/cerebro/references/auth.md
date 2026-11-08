@@ -1,63 +1,68 @@
 # cerebro-auth (`auth_*`)
 
-A diferencia de memory/docs/flows, `cerebro-auth` no es una fuente de
-conocimiento del usuario — administra el **acceso al propio ecosistema**:
-quién existe (`users`), cómo se agrupan (`groups`), qué puede ver cada grupo
-(`group_scopes`) y qué credenciales existen (`api_tokens`). Usá estas tools
-**solo cuando el usuario pida explícitamente** crear/gestionar un usuario, un
-grupo o un token — nunca como parte del protocolo normal de inicio de
-conversación (regla cero de `SKILL.md`), y nunca por iniciativa propia: es
-superficie de seguridad, no de recuperación de contexto.
+Unlike memory/docs/flows, `cerebro-auth` is not a source of knowledge about
+the user — it manages **access to the ecosystem itself**: who exists
+(`users`), how they are grouped (`groups`), what each group can see
+(`group_scopes`) and which credentials exist (`api_tokens`). Use these tools
+**only when the user explicitly asks** to create/manage a user, a group or a
+token — never as part of the normal conversation-start protocol (rule zero in
+`SKILL.md`), and never on your own initiative: this is a security surface, not
+a context-retrieval one.
 
-Todas requieren que el token con el que estás llamando sea `access_level:
-admin` — si no lo es, la tool devuelve `error` y no hay nada que reintentar
-con argumentos distintos, es un rechazo del servidor, no un problema de la
-llamada.
+All of them require the token you are calling with to be `access_level:
+admin` — if it is not, the tool returns `error` and there is nothing to retry
+with different arguments; it is a server-side rejection, not a problem with
+the call.
 
-## Herramientas
+Passwords are never handled through these tools: a secret must not pass
+through a model. Setting or changing a password is done by the user with the
+CLI (`cerebro user create --password`, `cerebro user set-password`).
 
-| Herramienta | Úsala para |
+## Tools
+
+| Tool | Use it to |
 |---|---|
-| `auth_create_user` | Crear una identidad nueva (persona o servicio). No otorga acceso por sí sola — eso requiere sumarla a un grupo. |
-| `auth_list_users` | Ver usuarios existentes y su `access_level`, antes de `auth_add_group_member` o `auth_create_token(user=...)`. |
-| `auth_create_group` | Crear un grupo nuevo — nace sin permisos, es solo un balde con nombre. |
-| `auth_set_group_scopes` | Definir qué módulos/contextos puede ver un grupo. REEMPLAZA los scopes actuales del grupo, no es aditivo. |
-| `auth_add_group_member` | Sumar un usuario existente a un grupo, para que herede sus scopes. |
-| `auth_create_token` | Emitir una credencial real. Ver "Dos ejes independientes" abajo — es la tool más delicada de las ocho. |
-| `auth_list_tokens` | Auditar qué tokens existen (metadata, nunca el valor secreto) antes de revocar algo obsoleto. |
-| `auth_revoke_token` | Revocar un token — inmediato e irreversible, quien lo usaba pierde acceso ya mismo. |
+| `auth_create_user` | Create a new identity (person or service). It grants no access by itself — that requires adding it to a group. |
+| `auth_list_users` | See existing users and their `access_level`, before `auth_add_group_member` or `auth_create_token(user=...)`. |
+| `auth_create_group` | Create a new group — it is born without permissions, it is just a named bucket. |
+| `auth_set_group_scopes` | Define which modules/contexts a group can see. REPLACES the group's current scopes, it is not additive. |
+| `auth_add_group_member` | Add an existing user to a group, so they inherit its scopes. |
+| `auth_create_token` | Issue a real credential. See "Two independent axes" below — it is the most delicate of the eight tools. |
+| `auth_list_tokens` | Audit which tokens exist (metadata, never the secret value) before revoking something obsolete. |
+| `auth_revoke_token` | Revoke a token — immediate and irreversible, whoever was using it loses access right away. |
 
-## Dos ejes independientes en `auth_create_token` / `auth_set_group_scopes`
+## Two independent axes in `auth_create_token` / `auth_set_group_scopes`
 
-1. **Nivel** (`access_level` vs. `user`, solo en `auth_create_token`) — exactamente
-   uno de los dos, nunca ambos: pasá `access_level` directo para un token de
-   servicio sin usuario asociado, o pasá `user` para que el token herede el
-   nivel de ese usuario. Pasar los dos a la vez es un error.
-2. **Alcance** (`allowed_modules`/`module_scopes`, en ambas tools) — dos capas:
-   `allowed_modules` es el candado grueso (qué módulos toca en absoluto);
-   `module_scopes` es el candado fino dentro de cada módulo permitido (ej.
-   `{"memory": {"contexts": ["proyecto-x"]}}`). Un módulo fuera de
-   `allowed_modules` es inalcanzable sin importar lo que diga `module_scopes`.
+1. **Level** (`access_level` vs. `user`, only in `auth_create_token`) — exactly
+   one of the two, never both: pass `access_level` directly for a service
+   token with no associated user, or pass `user` so the token inherits that
+   user's level. Passing both at once is an error.
+2. **Scope** (`allowed_modules`/`module_scopes`, in both tools) — two layers:
+   `allowed_modules` is the coarse lock (which modules it touches at all);
+   `module_scopes` is the fine lock inside each allowed module (e.g.
+   `{"memory": {"contexts": ["project-x"]}}`). A module outside
+   `allowed_modules` is unreachable no matter what `module_scopes` says.
 
-Para un token atado a un usuario `owner`, `allowed_modules`/`module_scopes` se
-pueden omitir del todo para heredar completo lo que sus grupos ya otorgan — es
-el caso común de "este token simplemente ES ese usuario". Si se pasan
-explícitos en ese caso, solo pueden **angostar** lo heredado, nunca
-ampliarlo — el servidor rechaza un intento de ensanchar en vez de recortarlo
-en silencio.
+For a token tied to an `owner` user, `allowed_modules`/`module_scopes` can be
+omitted entirely to fully inherit what their groups already grant — this is
+the common "this token simply IS that user" case. If they are passed
+explicitly in that case, they can only **narrow** what is inherited, never
+widen it — the server rejects an attempt to widen instead of silently
+trimming it.
 
-## El valor del token se muestra UNA sola vez
+## The token value is shown only ONCE
 
-`auth_create_token` devuelve el secreto en texto plano solo en esa respuesta.
-Nadie — ni un admin — puede volver a recuperarlo después. Si el token es para
-otra persona o servicio, entregáselo como parte de terminar la tarea, no
-asumas que vos o quien sea lo va a poder consultar más tarde. Si se perdió, la
-única salida es `auth_revoke_token` + crear uno nuevo.
+`auth_create_token` returns the plain-text secret only in that response.
+Nobody — not even an admin — can retrieve it again later. If the token is for
+another person or service, hand it over as part of finishing the task; do not
+assume you or anyone else will be able to look it up later. If it is lost,
+the only way out is `auth_revoke_token` + creating a new one.
 
-## Errores y honestidad
+## Errors and honesty
 
-Mismo criterio que el resto de cerebro (ver `SKILL.md`): un `error` se
-reporta tal cual, sin reintentar a ciegas — sobre todo un rechazo por falta de
-`access_level: admin`, que no se soluciona cambiando argumentos. Antes de
-revocar un token, confirmá con el usuario si hay dudas de que pueda romper
-algo en uso, salvo que ya haya pedido específicamente revocar ese token.
+Same criterion as the rest of cerebro (see `SKILL.md`): an `error` is
+reported as is, with no blind retries — especially a rejection for lacking
+`access_level: admin`, which is not fixed by changing arguments. Before
+revoking a token, confirm with the user if there is any doubt that it might
+break something in use, unless they already asked specifically to revoke that
+token.

@@ -1,93 +1,93 @@
 # cerebro-memory (`memory_*`)
 
-Memoria destilada: hechos, preferencias, decisiones y eventos reducidos a 1–3
-frases autocontenidas. No es un archivo de conversaciones — es un resumen
-curado, pensado para recuperarse rápido y guiar el razonamiento, no para
-reconstruir la charla completa.
+Distilled memory: facts, preferences, decisions and events reduced to 1–3
+self-contained sentences. It is not a conversation archive — it is a curated
+summary, meant to be retrieved quickly and to guide reasoning, not to
+reconstruct the full conversation.
 
-## Herramientas
+## Tools
 
-| Herramienta | Úsala para |
+| Tool | Use it to |
 |---|---|
-| `memory_search` | Recuperar hechos/decisiones/eventos antes de responder. Primera llamada por defecto. |
-| `memory_contexts` | Ver los contextos existentes y sus descripciones. |
-| `memory_create_context` | Crear un contexto nuevo SOLO si ninguno existente encaja. |
-| `memory_remember` | Guardar algo nuevo que valga a largo plazo. |
-| `memory_update` | Un hecho ya guardado cambió (nueva versión, conserva historial). |
-| `memory_forget` | El usuario pide olvidar algo, o una memoria quedó obsoleta sin reemplazo. |
-| `memory_link` | Conectar dos memorias existentes (decisión→causa, procedimiento→proyecto…). |
-| `memory_related` | Ver los vecinos a 1 salto de una memoria (relaciones + versiones). |
-| `memory_timeline` | "¿Qué pasó en X últimamente?" — eventos y decisiones por fecha. |
-| `memory_stats` | El usuario quiere ver el estado/aprendizaje del sistema. |
+| `memory_search` | Retrieve facts/decisions/events before answering. First call by default. |
+| `memory_contexts` | See the existing contexts and their descriptions. |
+| `memory_create_context` | Create a new context ONLY if no existing one fits. |
+| `memory_remember` | Save something new that is worth keeping long-term. |
+| `memory_update` | A stored fact changed (new version, keeps history). |
+| `memory_forget` | The user asks to forget something, or a memory became obsolete with no replacement. |
+| `memory_link` | Connect two existing memories (decision→cause, procedure→project…). |
+| `memory_related` | See a memory's 1-hop neighbors (relations + versions). |
+| `memory_timeline` | "What happened in X lately?" — events and decisions by date. |
+| `memory_stats` | The user wants to see the system's state/learning. |
 
-## Buscar: `memory_search`
+## Searching: `memory_search`
 
-- Escribí la consulta en lenguaje natural, como la pregunta que intentás
-  responder.
-- **Omití `context` por defecto**: el Context Engine decide solo (scope
-  automático). Pasalo solo si ya sabés con certeza de qué contexto se trata.
-- **Si la respuesta trae `ambiguous: true`**: `results` viene vacío a
-  propósito. El campo `message` lista los contextos candidatos con evidencia.
-  Decidí vos (con el contexto de la conversación) cuál corresponde, o
-  preguntale al usuario si de verdad no es deducible, y **repetí la llamada
-  con `context=<slug>`**. Esa segunda llamada, además de buscar, le enseña al
-  servidor a resolver solo consultas parecidas en el futuro — por eso importa
-  resolverla en la llamada inmediatamente siguiente y no dejarla colgada.
-- Usá `type` para filtrar ("decision" para "¿por qué decidimos X?") y
-  `expand=True` cuando quieras traer también las memorias relacionadas a los
-  resultados. Ojo: `related` son vecinos por relación, no resultados de la
-  búsqueda — no los presentes con la misma confianza.
-- **Búsqueda vacía ≠ licencia para inventar.** Decí que no hay nada guardado
-  sobre eso y, si aplica, ofrecé guardarlo.
+- Write the query in natural language, as the question you are trying to
+  answer.
+- **Omit `context` by default**: the Context Engine decides on its own
+  (automatic scoping). Pass it only if you already know for certain which
+  context it is.
+- **If the response carries `ambiguous: true`**: `results` is empty on
+  purpose. The `message` field lists the candidate contexts with evidence.
+  Decide yourself (using the conversation context) which one applies, or ask
+  the user if it truly cannot be deduced, and **repeat the call with
+  `context=<slug>`**. That second call, besides searching, teaches the server
+  to resolve similar queries on its own in the future — that is why it
+  matters to resolve it in the immediately following call and not leave it
+  hanging.
+- Use `type` to filter ("decision" for "why did we decide X?") and
+  `expand=True` when you also want the memories related to the results.
+  Careful: `related` are neighbors by relation, not search results — do not
+  present them with the same confidence.
+- **An empty search ≠ license to invent.** Say that nothing is saved about
+  it and, if applicable, offer to save it.
 
-## Guardar: `memory_remember`
+## Saving: `memory_remember`
 
-Guardá cuando el usuario comparta algo con valor futuro:
+Save when the user shares something with future value:
 
-- **`semantic`** — hechos y preferencias estables: "uso Next.js en el
-  proyecto X", "prefiero respuestas en español".
-- **`episodic`** — eventos puntuales con fecha: "hoy se cayó el servidor de
-  producción".
-- **`procedural`** — cómo se hace algo: "el deploy se hace con `make deploy`
-  desde main".
-- **`decision`** — una decisión y su motivo: "elegimos Postgres porque Mongo
-  subió precios". Guardá siempre el porqué, no solo el qué.
+- **`semantic`** — stable facts and preferences: "I use Next.js on project
+  X", "I prefer answers in Spanish".
+- **`episodic`** — dated one-off events: "today the production server went
+  down".
+- **`procedural`** — how something is done: "deploys are done with `make
+  deploy` from main".
+- **`decision`** — a decision and its reason: "we chose Postgres because Mongo
+  raised prices". Always save the why, not just the what.
 
-Reglas de escritura:
+Writing rules:
 
-- `context` y `type` son **obligatorios**. Si no sabés el contexto, llamá
-  `memory_contexts` primero y elegí el que mejor encaje por su descripción.
-  Creá uno nuevo con `memory_create_context` solo si de verdad ninguno
-  aplica — los contextos existen para AISLAR información que no debe
-  mezclarse (las finanzas personales del usuario no son el proyecto de
-  finanzas de un cliente), no para coleccionar carpetas redundantes.
-- Redactá `content` en 1–3 frases autocontenidas: alguien sin esta
-  conversación debe entenderlas. Convertí fechas relativas ("ayer", "la
-  semana pasada") en absolutas.
-- Antes de guardar algo que suena a ya-conocido, buscá primero: si existe una
-  memoria equivalente y el hecho cambió, es `memory_update`, no un
-  duplicado.
-- **No guardes**: detalles efímeros de la conversación actual, cosas que el
-  repo/código ya registra, ni secretos (contraseñas, API keys, tokens — la
-  API los rechaza; guardá una referencia `secret://entorno/nombre` si hace
-  falta).
-- Si guardaste algo, decíselo al usuario en una línea ("guardado en
-  `<contexto>`"). La memoria es del usuario, no tuya: nada de escrituras
-  silenciosas.
+- `context` and `type` are **required**. If you don't know the context, call
+  `memory_contexts` first and pick the one that fits best by its description.
+  Create a new one with `memory_create_context` only if none truly applies —
+  contexts exist to ISOLATE information that must not be mixed (the user's
+  personal finances are not a client's finance project), not to collect
+  redundant folders.
+- Write `content` in 1–3 self-contained sentences: someone without this
+  conversation must be able to understand them. Convert relative dates
+  ("yesterday", "last week") into absolute ones.
+- Before saving something that sounds already known, search first: if an
+  equivalent memory exists and the fact changed, it is `memory_update`, not a
+  duplicate.
+- **Do not save**: ephemeral details of the current conversation, things the
+  repo/code already records, or secrets (passwords, API keys, tokens — the API
+  rejects them; save a `secret://environment/name` reference if needed).
+- If you saved something, tell the user in one line ("saved in `<context>`").
+  The memory belongs to the user, not to you: no silent writes.
 
-## Actualizar, enlazar u olvidar: elegí bien
+## Updating, linking or forgetting: choose well
 
-- **El hecho cambió** (nueva tarifa, nueva versión, cambió el plan) →
-  `memory_update(memory_id, content)`. Crea la versión nueva y marca la vieja
-  como reemplazada, conservando historial. NUNCA crees una memoria suelta
-  que compita con la vieja en búsquedas.
-- **Dos memorias vigentes se relacionan** → `memory_link` con una de sus 5
-  relaciones: `caused_by` (decisión→su causa), `part_of`
-  (procedimiento→su proyecto), `follows` (episodio→su consecuencia),
-  `contradicts` (conflicto real sin supersedencia clara), `relates_to`
-  (asociación genérica, último recurso). Patrón de oro: al guardar una
-  `decision`, enlazala a la memoria de su causa si existe.
-- **Ya no debe aparecer** → `memory_forget(memory_id)`: archiva
-  (recuperable). `hard=True` borra de forma irreversible — usalo SOLO si el
-  usuario lo pide explícitamente (p.ej. se guardó algo sensible por error) y
-  confirmá antes con él.
+- **The fact changed** (new rate, new version, the plan changed) →
+  `memory_update(memory_id, content)`. It creates the new version and marks
+  the old one as superseded, keeping history. NEVER create a loose memory that
+  competes with the old one in searches.
+- **Two current memories are related** → `memory_link` with one of its 5
+  relations: `caused_by` (decision→its cause), `part_of` (procedure→its
+  project), `follows` (episode→its consequence), `contradicts` (real conflict
+  with no clear supersession), `relates_to` (generic association, last
+  resort). Golden pattern: when saving a `decision`, link it to its cause's
+  memory if one exists.
+- **It should no longer appear** → `memory_forget(memory_id)`: archives it
+  (recoverable). `hard=True` deletes irreversibly — use it ONLY if the user
+  explicitly asks (e.g. something sensitive was saved by mistake) and confirm
+  with them first.

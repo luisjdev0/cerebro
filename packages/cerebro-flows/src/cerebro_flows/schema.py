@@ -111,23 +111,23 @@ class Step(StrictModel):
     @model_validator(mode="after")
     def _shape_matches_type(self) -> "Step":
         if self.type == "delegate" and self.delegate is None:
-            raise ValueError(f"step '{self.id}': type='delegate' requiere el bloque 'delegate'")
+            raise ValueError(f"step '{self.id}': type='delegate' requires the 'delegate' block")
         if self.type != "delegate" and self.delegate is not None:
-            raise ValueError(f"step '{self.id}': 'delegate' solo aplica a type='delegate'")
+            raise ValueError(f"step '{self.id}': 'delegate' only applies to type='delegate'")
         if self.type == "decision" and self.branches is None:
-            raise ValueError(f"step '{self.id}': type='decision' requiere 'branches'")
+            raise ValueError(f"step '{self.id}': type='decision' requires 'branches'")
         if self.type != "decision" and self.branches is not None:
-            raise ValueError(f"step '{self.id}': 'branches' solo aplica a type='decision'")
+            raise ValueError(f"step '{self.id}': 'branches' only applies to type='decision'")
         if self.terminal:
             if self.next is not None or self.branches is not None:
-                raise ValueError(f"step '{self.id}': terminal=true no puede tener 'next' ni 'branches'")
+                raise ValueError(f"step '{self.id}': terminal=true cannot have 'next' or 'branches'")
         else:
             if self.type == "decision":
                 if not self.branches:
-                    raise ValueError(f"step '{self.id}': 'branches' no puede estar vacio")
+                    raise ValueError(f"step '{self.id}': 'branches' cannot be empty")
             elif self.next is None:
                 raise ValueError(
-                    f"step '{self.id}': falta 'next' (obligatorio salvo terminal=true o type='decision')"
+                    f"step '{self.id}': missing 'next' (required unless terminal=true or type='decision')"
                 )
         return self
 
@@ -159,16 +159,16 @@ class FlowDefinitionSchema(StrictModel):
         seen: set[str] = set()
         for step_id in step_ids:
             if step_id in seen:
-                raise ValueError(f"step id duplicado: '{step_id}'")
+                raise ValueError(f"duplicate step id: '{step_id}'")
             seen.add(step_id)
         step_by_id = {s.id: s for s in self.procedure}
 
         if self.entry not in step_by_id:
-            raise ValueError(f"'entry: {self.entry}' no existe en 'procedure'")
+            raise ValueError(f"'entry: {self.entry}' does not exist in 'procedure'")
 
         def _check_target(source_step: str, field: str, target: str) -> None:
             if target not in step_by_id:
-                raise ValueError(f"step '{source_step}': {field}='{target}' no existe en 'procedure'")
+                raise ValueError(f"step '{source_step}': {field}='{target}' does not exist in 'procedure'")
 
         parallel_groups: dict[str, set[str]] = {}
         for step in self.procedure:
@@ -185,16 +185,16 @@ class FlowDefinitionSchema(StrictModel):
         for group, next_targets in parallel_groups.items():
             if len(next_targets) > 1:
                 raise ValueError(
-                    f"parallel_group '{group}': todos sus steps deben compartir el mismo 'next' (encontrados: {sorted(next_targets)})"
+                    f"parallel_group '{group}': all its steps must share the same 'next' (found: {sorted(next_targets)})"
                 )
 
         for rule in self.rules:
             for step_id in rule.applies_to:
                 if step_id not in step_by_id:
-                    raise ValueError(f"rule '{rule.id}': applies_to referencia el step inexistente '{step_id}'")
+                    raise ValueError(f"rule '{rule.id}': applies_to references a step that does not exist: '{step_id}'")
 
         if not any(s.terminal for s in self.procedure):
-            raise ValueError("el flujo no tiene ningun step con terminal=true")
+            raise ValueError("the flow has no step with terminal=true")
 
         return self
 
@@ -212,10 +212,10 @@ def validate_flow_yaml(text: str) -> FlowDefinitionSchema:
     try:
         raw: Any = yaml.load(text, Loader=_FlowYamlLoader)
     except yaml.YAMLError as exc:
-        raise InvalidFlowSchemaError(f"YAML invalido: {exc}") from exc
+        raise InvalidFlowSchemaError(f"invalid YAML: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise InvalidFlowSchemaError("el YAML debe ser un mapeo de nivel superior (metadata, procedure, ...)")
+        raise InvalidFlowSchemaError("the YAML must be a top-level mapping (metadata, procedure, ...)")
 
     try:
         return FlowDefinitionSchema.model_validate(raw)

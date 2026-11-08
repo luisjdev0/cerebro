@@ -1,77 +1,84 @@
-# Reporte final de evaluación — KnowledgeOS v1.0
+# Final evaluation report — KnowledgeOS v1.0
 
-**Fecha:** 2026-08-07
-**Suite:** 40 memorias sintéticas / 6 contextos / 30 casos (12 directos, 12 ambiguos, 6 temporales), k=5, con `--include-superseded`.
+**Date:** 2026-08-07
+**Suite:** 40 synthetic memories / 6 contexts / 30 cases (12 direct, 12 ambiguous, 6 temporal), k=5, with `--include-superseded`.
 
-## La métrica firma: tasa de contaminación
+## The signature metric: contamination rate
 
-Fracción de casos donde al menos una "memoria trampa" (relevante semánticamente pero
-de contexto incorrecto) entra al top-5. Es la métrica que motivó el proyecto: el recall
-nunca fue el problema (100% en todos los sistemas medidos); el problema es *qué más*
-se cuela junto a la memoria correcta.
+Fraction of cases where at least one "trap memory" (semantically relevant but
+from the wrong context) makes it into the top-5. It is the metric that
+motivated the project: recall was never the problem (100% on every system
+measured); the problem is *what else* sneaks in next to the correct memory.
 
-## Evolución por fase
+## Evolution by phase
 
-| Sistema | Ambiguos | Directos | Temporales | Total |
+| System | Ambiguous | Direct | Temporal | Total |
 |---|---:|---:|---:|---:|
-| Baseline naive (keywords) | 50.0% | 0% | 83.3% | 36.7% |
-| Fase 1 — retrieval híbrido (`scope=all`) | 25.0% | 0% | 0%¹ | 10.0% |
-| Fase 2+ — Context Engine (`scope=auto`) | **0%** | **0%** | **0%** | **0%** |
+| Naive baseline (keywords) | 50.0% | 0% | 83.3% | 36.7% |
+| Phase 1 — hybrid retrieval (`scope=all`) | 25.0% | 0% | 0%¹ | 10.0% |
+| Phase 2+ — Context Engine (`scope=auto`) | **0%** | **0%** | **0%** | **0%** |
 
-Recall@5 = 100% en los tres sistemas y las tres categorías (nunca se degradó).
-Precision@5 ≈ 20% por diseño del corpus (1 memoria relevante / k=5); no es informativa aquí.
+Recall@5 = 100% on the three systems and the three categories (it never
+degraded). Precision@5 ≈ 20% by corpus design (1 relevant memory / k=5); it is
+not informative here.
 
-¹ La mejora en temporales combina dos cosas: el modelo de supersedencia real (las
-versiones obsoletas no se indexan como activas) y el retrieval híbrido. El 83.3% del
-baseline corresponde a indexar ambas versiones como activas sin relación entre sí.
+¹ The improvement on temporal cases combines two things: the real supersession
+model (obsolete versions are not indexed as active) and hybrid retrieval. The
+baseline's 83.3% corresponds to indexing both versions as active with no
+relationship between them.
 
-## Qué produjo cada salto
+## What produced each jump
 
-- **50% → 25%** (Fase 1): retrieval híbrido — embeddings multilingües + full-text
-  español fusionados con RRF discriminan mejor que overlap léxico, incluso sin saber
-  el contexto. Supersedencia real eliminó la contaminación temporal.
-- **25% → 0%** (Fase 2): Context Engine — scoring determinista de contextos
-  (agregado RRF por contexto + preferencias aprendidas + mención explícita) con
-  decisión por dominancia/margen. Cuando ningún contexto domina, el sistema **no
-  mezcla**: devuelve candidatos con evidencia y deja la elección al agente, y esa
-  elección se registra y alimenta el aprendizaje (`context_preferences`).
-- **Verificado sin regresión** en cada fase posterior (3, 4, 5 y productización):
-  el 0% se reprodujo en frío (truncando log de desambiguaciones y preferencias) en
-  cada corrida de control.
+- **50% → 25%** (Phase 1): hybrid retrieval — multilingual embeddings + Spanish
+  full-text fused with RRF discriminate better than lexical overlap, even
+  without knowing the context. Real supersession eliminated temporal
+  contamination.
+- **25% → 0%** (Phase 2): Context Engine — deterministic context scoring
+  (per-context RRF aggregate + learned preferences + explicit mention) with a
+  dominance/margin decision. When no context dominates, the system **does not
+  mix**: it returns candidates with evidence and leaves the choice to the
+  agent, and that choice is recorded and feeds learning
+  (`context_preferences`).
+- **Verified with no regression** in every later phase (3, 4, 5 and
+  productization): the 0% was reproduced cold (truncating the disambiguation
+  log and preferences) on every control run.
 
-## Calibración y advertencias honestas
+## Calibration and honest caveats
 
-- Los umbrales del engine (`CONTEXT_ENGINE_DOMINANCE_THRESHOLD=0.45`,
-  `MARGIN_THRESHOLD=0.25`, `PREFERENCE_BOOST_PER_WEIGHT=0.008`) se calibraron en 2
-  iteraciones **contra este corpus sintético de 30 casos**. El 0% es el techo de esta
-  suite, no una garantía universal: datos reales de uso diario pueden requerir
-  re-ajuste — para eso existen las preferencias aprendidas y `GET /stats`.
-- Hallazgos de la calibración que quedaron como diseño: el desempate del "agente
-  razonable" usa el score agregado del candidato (el score individual top empata casi
-  siempre por la discretización del RRF), y el boost por preferencias es
-  deliberadamente pequeño para que un término genérico aprendido ("mes") no pueda
-  tumbar la señal de retrieval con una sola resolución.
-- El benchmark contra alternativas externas (mem0/Graphiti/Letta) quedó diferido con
-  el esqueleto listo (`harness/adapters/TEMPLATE.py`); la decisión build se tomó con
-  evidencia documental (`../decisions/000-build-vs-adopt.md`).
+- The engine's thresholds (`CONTEXT_ENGINE_DOMINANCE_THRESHOLD=0.45`,
+  `MARGIN_THRESHOLD=0.25`, `PREFERENCE_BOOST_PER_WEIGHT=0.008`) were calibrated
+  in 2 iterations **against this synthetic 30-case corpus**. The 0% is the
+  ceiling of this suite, not a universal guarantee: real day-to-day usage data
+  may require re-tuning — that is what the learned preferences and `GET /stats`
+  are for.
+- Findings from the calibration that stayed as design: the tie-break of the
+  "reasonable agent" uses the candidate's aggregate score (the top individual
+  score almost always ties because of RRF's discretization), and the preference
+  boost is deliberately small so that a learned generic term ("mes") cannot
+  knock down the retrieval signal with a single resolution.
+- The benchmark against external alternatives (mem0/Graphiti/Letta) was
+  deferred with the skeleton ready (`harness/adapters/TEMPLATE.py`); the build
+  decision was made on documentary evidence
+  (`../decisions/000-build-vs-adopt.md`).
 
-## Cómo reproducir
+## How to reproduce
 
 ```bash
-# Postgres arriba y API corriendo, luego:
+# Postgres up and the API running, then:
 python evals/harness/run_eval.py --adapter naive --include-superseded
 KNOWLEDGEOS_SEARCH_SCOPE=all  python evals/harness/run_eval.py --adapter knowledgeos --include-superseded
 KNOWLEDGEOS_SEARCH_SCOPE=auto python evals/harness/run_eval.py --adapter knowledgeos --include-superseded
 ```
 
-Resultados detallados por caso en `results/*.json`.
+Detailed per-case results in `results/*.json`.
 
-## Próxima frontera de medición
+## Next measurement frontier
 
-El corpus sintético está saturado (0%). Las mejoras siguientes deben medirse con:
-1. **Casos reales del usuario** añadidos a `cases.yaml` (ver README de esta carpeta).
-2. **Dogfooding**: `knowledgeos stats` expone desambiguaciones auto vs. agente y
-   preferencias aprendidas — la tasa de auto-resolución creciendo en el tiempo es la
-   métrica de que el aprendizaje funciona en el mundo real.
-3. Cuando existan ~500 desambiguaciones reales (`knowledgeos export-disambiguations`),
-   evaluar el clasificador local (Fase 4) contra el flujo actual.
+The synthetic corpus is saturated (0%). Further improvements must be measured
+with:
+1. **Real user cases** added to `cases.yaml` (see this folder's README).
+2. **Dogfooding**: `knowledgeos stats` exposes auto vs. agent disambiguations
+   and learned preferences — the auto-resolution rate growing over time is the
+   metric that learning works in the real world.
+3. Once ~500 real disambiguations exist (`knowledgeos export-disambiguations`),
+   evaluate the local classifier (Phase 4) against the current flow.
