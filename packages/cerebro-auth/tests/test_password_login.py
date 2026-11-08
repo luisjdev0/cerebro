@@ -114,6 +114,13 @@ class TestUserCreation:
             "/users", json={"name": _unique("pw"), "password": "short"}, headers=root_headers
         )
         assert resp.status_code == 422
+        assert "short" not in resp.text.replace("too_short", "").replace("string_too_short", "")
+
+    def test_validation_errors_never_echo_the_password(self, client, root_headers):
+        secret = "tiny-pw"
+        resp = client.post("/users", json={"name": _unique("pw"), "password": secret}, headers=root_headers)
+        assert resp.status_code == 422
+        assert secret not in resp.text
 
 
 class TestPasswordLogin:

@@ -22,7 +22,9 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from cerebro_auth.auth import (
@@ -186,6 +188,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await pool.close()
 
     app = FastAPI(title="cerebro-auth", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's default 422 body echoes the rejected `input` back. On this service
+        # that can be a password, so the echo is dropped (`input`/`ctx`/`url`).
+        errors = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
     # ---------------------------------------------------------------- dependencies
 
