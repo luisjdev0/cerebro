@@ -10,10 +10,3 @@
   --color-brand-peri: #60a5fa;
   --color-brand-ghost: #f8fafc;
 }
-
-/* The "cerebro" wordmark is set in monospace (login title and sidebar name). */
-.brand-mono h1,
-.brand-mono-text {
-  font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  letter-spacing: -0.04em;
-}

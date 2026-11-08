@@ -4,11 +4,12 @@ import { Brain, FileText, Workflow } from 'lucide-react';
 import { Button, PageHeader, StatCard } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
 import { Heatmap } from '../components/Heatmap';
+import { SortableBlocks } from '../components/SortableBlocks';
 import { ModuleChart } from '../components/ModuleChart';
 import { monthlySeries, topSlices, type Slice } from '../lib/charts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { fetchActivity, totalsByDate, type ActivityByModule, type ModuleKey } from '../lib/activity';
+import { buildGrid, buildYearGrid, fetchActivity, totalsByDate, type ActivityByModule, type ModuleKey } from '../lib/activity';
 
 type Stats = {
   memories: number | null;
@@ -47,11 +48,14 @@ function CardLink({ to, children }: { to: string; children: ReactNode }) {
 
 export function Dashboard() {
   const { t } = useTranslation();
-  const { canSee } = useAuth();
+  const { canSee, session } = useAuth();
   const modules = useMemo(() => (['memory', 'docs', 'flows'] as ModuleKey[]).filter((m) => canSee(m)), [canSee]);
   const [stats, setStats] = useState<Stats>(EMPTY);
   const [breakdown, setBreakdown] = useState<Breakdown>({ memory: [], docs: [], flows: [] });
   const [activity, setActivity] = useState<ActivityByModule | null>(null);
+  const [years, setYears] = useState<number[]>([]);
+  const [year, setYear] = useState<number | null>(null); // null = rolling last 12 months
+  const [yearActivity, setYearActivity] = useState<ActivityByModule | null>(null);
   const [filter, setFilter] = useState<'all' | ModuleKey>('all');
 
   useEffect(() => {
@@ -79,64 +83,106 @@ export function Dashboard() {
         docs: toSlices(d?.documents_by_category),
         flows: toSlices(f?.flows_by_category),
       });
-      setActivity(act);
+      setActivity(act.byModule);
+      setYears(act.years);
     })();
     return () => {
       cancelled = true;
     };
   }, [modules]);
 
+  useEffect(() => {
+    if (year === null) {
+      setYearActivity(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchActivity(modules, { year }).then((res) => {
+      if (!cancelled) setYearActivity(res.byModule);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [year, modules]);
+
+  const heatSource = year === null ? activity : yearActivity;
+  const grid = useMemo(() => (year === null ? buildGrid(new Date(), 53) : buildYearGrid(year, new Date())), [year]);
   const shown = filter === 'all' ? modules : modules.filter((m) => m === filter);
-  const totals = useMemo(() => (activity ? totalsByDate(activity, shown) : new Map<string, number>()), [activity, shown]);
+  const totals = useMemo(() => (heatSource ? totalsByDate(heatSource, shown) : new Map<string, number>()), [heatSource, shown]);
   const val = (n: number | null) => (n === null ? '—' : n);
+
+  const statsBlock = (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {modules.includes('memory') && (
+        <CardLink to="/memories">
+          <StatCard icon={<Brain className="size-4" />} label={t('dashboard.activeMemories')} value={val(stats.memories)} description={stats.contexts === null ? undefined : t('dashboard.contexts', { count: stats.contexts })} />
+        </CardLink>
+      )}
+      {modules.includes('docs') && (
+        <CardLink to="/documents">
+          <StatCard icon={<FileText className="size-4" />} label={t('dashboard.documents')} value={val(stats.documents)} description={stats.categories === null ? undefined : t('dashboard.categories', { count: stats.categories })} />
+        </CardLink>
+      )}
+      {modules.includes('flows') && (
+        <CardLink to="/workflows">
+          <StatCard icon={<Workflow className="size-4" />} label={t('dashboard.flows')} value={val(stats.flows)} description={stats.runs === null ? undefined : t('dashboard.runs', { count: stats.runs })} />
+        </CardLink>
+      )}
+    </div>
+  );
+
+  const yearOptions: { value: number | null; label: string }[] = [{ value: null, label: t('dashboard.lastYear') }, ...years.map((y) => ({ value: y, label: String(y) }))];
+  const activityBlock = (
+    <section className="space-y-3 rounded-2xl border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">{t('dashboard.activity')}</h2>
+        <div className="flex flex-wrap gap-1">
+          {FILTERS.filter((f) => f.key === 'all' || modules.includes(f.key)).map((f) => (
+            <Button key={f.key} size="sm" variant={filter === f.key ? 'primary' : 'ghost'} onClick={() => setFilter(f.key)}>
+              {t(f.label)}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <div className="min-w-0 flex-1">
+          {heatSource ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
+        </div>
+        {yearOptions.length > 1 && (
+          <div role="group" aria-label={t('dashboard.years')} className="flex gap-1 overflow-x-auto lg:w-32 lg:shrink-0 lg:flex-col lg:overflow-visible">
+            {yearOptions.map((o) => (
+              <Button key={String(o.value)} size="sm" variant={year === o.value ? 'primary' : 'ghost'} aria-pressed={year === o.value} className="justify-start whitespace-nowrap" onClick={() => setYear(o.value)}>
+                {o.label}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  const chartsBlock = activity ? (
+    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      {modules.includes('memory') && (
+        <ModuleChart title={t('charts.memoryTitle')} updatedLabel={t('charts.memoryUpdated')} series={monthlySeries(activity.memory)} slices={breakdown.memory} pieCaption={t('charts.memoryPie')} />
+      )}
+      {modules.includes('docs') && (
+        <ModuleChart title={t('charts.docsTitle')} updatedLabel={t('charts.docsUpdated')} series={monthlySeries(activity.docs)} slices={breakdown.docs} pieCaption={t('charts.docsPie')} />
+      )}
+      {modules.includes('flows') && (
+        <ModuleChart title={t('charts.flowsTitle')} updatedLabel={t('charts.flowsUpdated')} series={monthlySeries(activity.flows)} slices={breakdown.flows} pieCaption={t('charts.flowsPie')} />
+      )}
+    </div>
+  ) : null;
 
   return (
     <>
       <PageHeader title={t('dashboard.title')} description={t('dashboard.description')} />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {modules.includes('memory') && (
-          <CardLink to="/memories">
-            <StatCard icon={<Brain className="size-4" />} label={t('dashboard.activeMemories')} value={val(stats.memories)} description={stats.contexts === null ? undefined : t('dashboard.contexts', { count: stats.contexts })} />
-          </CardLink>
-        )}
-        {modules.includes('docs') && (
-          <CardLink to="/documents">
-            <StatCard icon={<FileText className="size-4" />} label={t('dashboard.documents')} value={val(stats.documents)} description={stats.categories === null ? undefined : t('dashboard.categories', { count: stats.categories })} />
-          </CardLink>
-        )}
-        {modules.includes('flows') && (
-          <CardLink to="/workflows">
-            <StatCard icon={<Workflow className="size-4" />} label={t('dashboard.flows')} value={val(stats.flows)} description={stats.runs === null ? undefined : t('dashboard.runs', { count: stats.runs })} />
-          </CardLink>
-        )}
-      </div>
-
-      <section className="space-y-3 rounded-2xl border p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">{t('dashboard.activity')}</h2>
-          <div className="flex gap-1">
-            {FILTERS.filter((f) => f.key === 'all' || modules.includes(f.key)).map((f) => (
-              <Button key={f.key} size="sm" variant={filter === f.key ? 'primary' : 'ghost'} onClick={() => setFilter(f.key)}>
-                {t(f.label)}
-              </Button>
-            ))}
-          </div>
-        </div>
-        {activity ? <Heatmap totals={totals} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
-      </section>
-      {activity && (
-        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {modules.includes('memory') && (
-            <ModuleChart title={t('charts.memoryTitle')} updatedLabel={t('charts.memoryUpdated')} series={monthlySeries(activity.memory)} slices={breakdown.memory} pieCaption={t('charts.memoryPie')} />
-          )}
-          {modules.includes('docs') && (
-            <ModuleChart title={t('charts.docsTitle')} updatedLabel={t('charts.docsUpdated')} series={monthlySeries(activity.docs)} slices={breakdown.docs} pieCaption={t('charts.docsPie')} />
-          )}
-          {modules.includes('flows') && (
-            <ModuleChart title={t('charts.flowsTitle')} updatedLabel={t('charts.flowsUpdated')} series={monthlySeries(activity.flows)} slices={breakdown.flows} pieCaption={t('charts.flowsPie')} />
-          )}
-        </div>
-      )}
+      <SortableBlocks
+        storageKey={`cerebro.dashboard.order.${session?.name ?? ''}`}
+        defaults={['stats', 'activity', 'charts']}
+        blocks={{ stats: statsBlock, activity: activityBlock, ...(chartsBlock ? { charts: chartsBlock } : {}) }}
+      />
     </>
   );
 }

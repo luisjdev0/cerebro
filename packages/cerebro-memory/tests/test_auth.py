@@ -532,6 +532,18 @@ class TestActivity:
         full = client.get("/activity", params={"days": 7}, headers=root_headers)
         assert sum(d["created"] for d in full.json()["days"]) >= 2
 
+    def test_activity_years_and_year_filter(self, client, root_headers):
+        slug = _make_context(client, root_headers)
+        client.post("/memories", json={"content": "year probe", "context": slug, "type": "semantic"}, headers=root_headers)
+        resp = client.get("/activity", params={"days": 7}, headers=root_headers)
+        assert resp.status_code == 200, resp.text
+        year = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).year
+        assert year in resp.json()["years"]
+        # a calendar year overrides the rolling window; a year with no data is empty
+        assert client.get("/activity", params={"year": year}, headers=root_headers).json()["days"]
+        assert client.get("/activity", params={"year": 2001}, headers=root_headers).json()["days"] == []
+        assert client.get("/activity", params={"year": 1999}, headers=root_headers).status_code == 422
+
     def test_activity_rejects_out_of_range_days(self, client, root_headers):
         assert client.get("/activity", params={"days": 0}, headers=root_headers).status_code == 422
 

@@ -46,6 +46,10 @@ export const es = {
     runs_other: '{{count}} ejecuciones',
     activity: 'Actividad',
     loadingActivity: 'Cargando actividad…',
+    dragBlock: 'Arrastra para reordenar este bloque',
+    resetLayout: 'Restaurar disposición original',
+    lastYear: 'Últimos 12 meses',
+    years: 'Años',
     filterAll: 'Todo',
   },
   charts: {
@@ -67,6 +71,7 @@ export const es = {
   },
   heatmap: {
     summary: '{{total}} eventos en el último año',
+    summaryYear: '{{total}} eventos en {{year}}',
     cell_one: '{{count}} evento el {{date}}',
     cell_other: '{{count}} eventos el {{date}}',
     less: 'Menos',

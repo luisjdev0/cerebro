@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { ArrowRight, Brain, FileText, Lock, User, Workflow } from 'lucide-react';
 import { AuthLoadingState, Button, InputField, InputGroup, LoginBrandIntro, LoginScreenDivider } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
+import { Credits } from '../components/Credits';
 import { Terminal } from '../components/Terminal';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { useAuth } from '../lib/auth';
@@ -53,7 +54,6 @@ export function Login() {
                 <AuthLoadingState title={t('login.connecting')} description={t('login.checking')} />
               ) : (
                 <>
-                  <div className="brand-mono">
                   <LoginBrandIntro
                     logoSrc="/logo.svg"
                     logoAlt={t('appName')}
@@ -61,7 +61,6 @@ export function Login() {
                     title={t('appName')}
                     description={t('login.description')}
                   />
-                  </div>
                   <form onSubmit={(e) => void submit(e)} className="login-form space-y-4">
                     <InputGroup className="gap-4">
                       <InputField
@@ -138,22 +137,7 @@ export function Login() {
                 <Terminal origin={origin} />
               </div>
 
-              <footer className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-4 text-xs text-muted-foreground dark:border-white/10">
-                <span>
-                  {t('login.createdBy')}{' '}
-                  <a href="https://github.com/luisjdev0" target="_blank" rel="noreferrer" className="font-semibold text-foreground hover:underline dark:text-white">
-                    luisjdev
-                  </a>
-                </span>
-                <span aria-hidden>·</span>
-                <a href="https://github.com/luisjdev0/cerebro/blob/main/LICENSE" target="_blank" rel="noreferrer" className="hover:underline">
-                  {t('login.license')}
-                </a>
-                <span aria-hidden>·</span>
-                <a href="https://github.com/luisjdev0/cerebro" target="_blank" rel="noreferrer" className="hover:underline">
-                  GitHub
-                </a>
-              </footer>
+              <Credits variant="login" />
             </div>
           </div>
         </div>

@@ -10,7 +10,7 @@ management itself (create/list/revoke) no longer lives in this service.
 import logging
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -96,6 +96,7 @@ class ActivityDay(BaseModel):
 
 class ActivityResponse(BaseModel):
     days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
 
 
 class CategoryCount(BaseModel):
@@ -274,43 +275,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
         days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
     ):
         """Per-day counts of flow definitions created (`created`) and runs started
-        (`updated`), for the last `days` days (days without activity are omitted).
-        Honors the token's category scope and the ownership gate on definitions."""
-        params: list[Any] = [days]
-        filters: list[str] = []
-        if principal.allowed_categories is not None:
-            params.append(list(principal.allowed_categories))
-            filters.append(f"c.slug = ANY(${len(params)}::text[])")
-        if principal.owner_filter is not None:
-            if "user_id" in principal.owner_filter:
-                params.append(principal.owner_filter["user_id"])
-                filters.append(f"f.owner_user_id = ${len(params)}")
-            else:
-                params.append(principal.owner_filter["user_id_in"])
-                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
-        extra = "".join(f" AND {f}" for f in filters)
+        (`updated`), for the last `days` days or for the calendar `year` (days without
+        activity are omitted), plus the years that have any visible activity. Honors
+        the token's category scope and the ownership gate on definitions."""
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            filters: list[str] = []
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
+            if principal.owner_filter is not None:
+                if "user_id" in principal.owner_filter:
+                    params.append(principal.owner_filter["user_id"])
+                    filters.append(f"f.owner_user_id = ${len(params)}")
+                else:
+                    params.append(principal.owner_filter["user_id_in"])
+                    filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+            return "".join(f" AND {f}" for f in filters)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
         rows = await pool.fetch(
             f"""
             WITH ev AS (
                 SELECT (f.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
                 FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
-                WHERE f.created_at >= now() - make_interval(days => $1){extra}
+                WHERE f.created_at >= $1 AND f.created_at < $2{extra}
                 UNION ALL
                 SELECT (r.started_at AT TIME ZONE 'UTC')::date, 0, 1
                 FROM flow_runs r
                 JOIN flow_definitions f ON f.id = r.definition_id
                 JOIN flow_categories c ON c.id = f.category_id
-                WHERE r.started_at >= now() - make_interval(days => $1){extra}
+                WHERE r.started_at >= $1 AND r.started_at < $2{extra}
             )
             SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
             FROM ev GROUP BY day ORDER BY day
             """,
             *params,
         )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM f.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM r.started_at AT TIME ZONE 'UTC')::int
+                FROM flow_runs r
+                JOIN flow_definitions f ON f.id = r.definition_id
+                JOIN flow_categories c ON c.id = f.category_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
         return ActivityResponse(
-            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
         )
 
     # ---------------------------------------------------------------- categories

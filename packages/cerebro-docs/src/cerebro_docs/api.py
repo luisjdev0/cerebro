@@ -13,7 +13,7 @@ reused here.
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -149,6 +149,7 @@ class ActivityDay(BaseModel):
 
 class ActivityResponse(BaseModel):
     days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
 
 
 class CategoryCount(BaseModel):
@@ -308,27 +309,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
         days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
     ):
         """Per-day counts of documents created and of documents edited on a later
-        UTC day, for the last `days` days (days without activity are omitted).
+        UTC day, for the last `days` days or for the calendar `year` (days without
+        activity are omitted), plus the years that have any visible activity.
         Honors the token's category scope and the ownership gate."""
-        params: list[Any] = [days]
-        filters: list[str] = []
-        if principal.allowed_categories is not None:
-            params.append(list(principal.allowed_categories))
-            filters.append(f"c.slug = ANY(${len(params)}::text[])")
-        apply_owner_filter(filters, params, principal.owner_filter)
-        extra = "".join(f" AND {f}" for f in filters)
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            filters: list[str] = []
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
+            apply_owner_filter(filters, params, principal.owner_filter)
+            return "".join(f" AND {f}" for f in filters)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
         rows = await pool.fetch(
             f"""
             WITH ev AS (
                 SELECT (d.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
                 FROM documents d JOIN categories c ON c.id = d.category_id
-                WHERE d.created_at >= now() - make_interval(days => $1){extra}
+                WHERE d.created_at >= $1 AND d.created_at < $2{extra}
                 UNION ALL
                 SELECT (d.updated_at AT TIME ZONE 'UTC')::date, 0, 1
                 FROM documents d JOIN categories c ON c.id = d.category_id
-                WHERE d.updated_at >= now() - make_interval(days => $1){extra}
+                WHERE d.updated_at >= $1 AND d.updated_at < $2{extra}
                   AND (d.updated_at AT TIME ZONE 'UTC')::date <> (d.created_at AT TIME ZONE 'UTC')::date
             )
             SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
@@ -336,8 +349,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             """,
             *params,
         )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM d.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM documents d JOIN categories c ON c.id = d.category_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM d.updated_at AT TIME ZONE 'UTC')::int
+                FROM documents d JOIN categories c ON c.id = d.category_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
         return ActivityResponse(
-            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
         )
 
     # ---------------------------------------------------------------- categories

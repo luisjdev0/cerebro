@@ -46,6 +46,10 @@ export const en = {
     runs_other: '{{count}} runs',
     activity: 'Activity',
     loadingActivity: 'Loading activity…',
+    dragBlock: 'Drag to reorder this block',
+    resetLayout: 'Restore default layout',
+    lastYear: 'Last 12 months',
+    years: 'Years',
     filterAll: 'All',
   },
   charts: {
@@ -67,6 +71,7 @@ export const en = {
   },
   heatmap: {
     summary: '{{total}} events in the last year',
+    summaryYear: '{{total}} events in {{year}}',
     cell_one: '{{count}} event on {{date}}',
     cell_other: '{{count}} events on {{date}}',
     less: 'Less',

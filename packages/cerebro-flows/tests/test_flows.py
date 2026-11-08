@@ -326,6 +326,17 @@ class TestActivity:
         assert sum(d["created"] for d in days) >= 1  # definitions
         assert sum(d["updated"] for d in days) >= 1  # runs started
 
+    def test_activity_years_and_year_filter(self, client, auth_headers):
+        _make_flow(client, auth_headers, _make_category(client, auth_headers))
+        resp = client.get("/activity", params={"days": 7}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        year = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).year
+        assert year in resp.json()["years"]
+        # a calendar year overrides the rolling window; a year with no data is empty
+        assert client.get("/activity", params={"year": year}, headers=auth_headers).json()["days"]
+        assert client.get("/activity", params={"year": 2001}, headers=auth_headers).json()["days"] == []
+        assert client.get("/activity", params={"year": 1999}, headers=auth_headers).status_code == 422
+
     def test_activity_rejects_out_of_range_days(self, client, auth_headers):
         assert client.get("/activity", params={"days": 0}, headers=auth_headers).status_code == 422
 

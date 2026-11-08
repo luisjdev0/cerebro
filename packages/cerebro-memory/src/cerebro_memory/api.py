@@ -7,7 +7,7 @@ memory.source (default "unknown").
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -229,6 +229,7 @@ class ActivityDay(BaseModel):
 
 class ActivityResponse(BaseModel):
     days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -1155,35 +1156,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
         days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
     ):
         """Per-day counts of memories created and of memories edited on a later day
         (`updated_at` on a different UTC day than `created_at`), for the last `days`
-        days. Days with no activity are omitted. Honors the token's context scope and
-        the ownership gate, like `/timeline`."""
-        filters = ["m.created_at >= now() - make_interval(days => $1) OR m.updated_at >= now() - make_interval(days => $1)"]
-        params: list[Any] = [days]
-        extra: list[str] = []
-        if principal.allowed_contexts is not None:
-            params.append(list(principal.allowed_contexts))
-            extra.append(f"c.slug = ANY(${len(params)}::text[])")
-        if principal.owner_filter is not None:
-            if "user_id" in principal.owner_filter:
-                params.append(principal.owner_filter["user_id"])
-                extra.append(f"m.owner_user_id = ${len(params)}")
-            elif "user_id_in" in principal.owner_filter:
-                params.append(list(principal.owner_filter["user_id_in"]))
-                extra.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
-        where = "(" + filters[0] + ")" + "".join(f" AND {e}" for e in extra)
+        days or for the calendar `year`, plus the years that have any visible
+        activity. Days with no activity are omitted. Honors the token's context scope
+        and the ownership gate, like `/timeline`."""
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            extra: list[str] = []
+            if principal.allowed_contexts is not None:
+                params.append(list(principal.allowed_contexts))
+                extra.append(f"c.slug = ANY(${len(params)}::text[])")
+            if principal.owner_filter is not None:
+                if "user_id" in principal.owner_filter:
+                    params.append(principal.owner_filter["user_id"])
+                    extra.append(f"m.owner_user_id = ${len(params)}")
+                elif "user_id_in" in principal.owner_filter:
+                    params.append(list(principal.owner_filter["user_id_in"]))
+                    extra.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
+            return "".join(f" AND {e}" for e in extra)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
         rows = await pool.fetch(
             f"""
             WITH ev AS (
                 SELECT (m.created_at AT TIME ZONE 'UTC')::date AS d, 1 AS created, 0 AS updated
                 FROM memories m JOIN contexts c ON c.id = m.context_id
-                WHERE {where} AND m.created_at >= now() - make_interval(days => $1)
+                WHERE m.created_at >= $1 AND m.created_at < $2{extra}
                 UNION ALL
                 SELECT (m.updated_at AT TIME ZONE 'UTC')::date, 0, 1
                 FROM memories m JOIN contexts c ON c.id = m.context_id
-                WHERE {where} AND m.updated_at >= now() - make_interval(days => $1)
+                WHERE m.updated_at >= $1 AND m.updated_at < $2{extra}
                   AND (m.updated_at AT TIME ZONE 'UTC')::date <> (m.created_at AT TIME ZONE 'UTC')::date
             )
             SELECT d, sum(created)::int AS created, sum(updated)::int AS updated
@@ -1191,8 +1203,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             """,
             *params,
         )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM m.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM memories m JOIN contexts c ON c.id = m.context_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM m.updated_at AT TIME ZONE 'UTC')::int
+                FROM memories m JOIN contexts c ON c.id = m.context_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
         return ActivityResponse(
-            days=[ActivityDay(date=r["d"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+            days=[ActivityDay(date=r["d"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
         )
 
     return app
