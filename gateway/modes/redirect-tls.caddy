@@ -2,5 +2,5 @@
 # host actually publishes (CEREBRO_GATEWAY_HTTPS_PORT; 443 on a standard deployment).
 # An explicit http:// site also stops Caddy from adding its own (port-443) redirect.
 http://{$CEREBRO_DOMAIN} {
-	redir https://{http.request.host}:{$CEREBRO_GATEWAY_HTTPS_PORT} {http.request.uri} permanent
+	redir https://{http.request.host}:{$CEREBRO_GATEWAY_HTTPS_PORT}{http.request.uri} permanent
 }
