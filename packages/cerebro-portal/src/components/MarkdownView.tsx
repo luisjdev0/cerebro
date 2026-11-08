@@ -33,9 +33,9 @@ export function CopyButton({ text }: { text: string }) {
 const ICON_BTN = 'inline-flex size-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
 
 /** Icon button that saves the markdown as a `.md` file. */
-export function DownloadButton({ text, filename }: { text: string; filename: string }) {
+export function DownloadButton({ text, filename, label: customLabel, mime = 'text/markdown;charset=utf-8' }: { text: string; filename: string; label?: string; mime?: string }) {
   const { t } = useTranslation();
-  const label = t('docs.form.download');
+  const label = customLabel ?? t('docs.form.download');
   return (
     <button
       type="button"
@@ -43,7 +43,7 @@ export function DownloadButton({ text, filename }: { text: string; filename: str
       aria-label={label}
       className={ICON_BTN}
       onClick={() => {
-        const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+        const url = URL.createObjectURL(new Blob([text], { type: mime }));
         const a = document.createElement('a');
         a.href = url;
         a.download = filename;
@@ -59,11 +59,11 @@ export function DownloadButton({ text, filename }: { text: string; filename: str
 }
 
 /** Copy + download, side by side. */
-export function CopyDownload({ text, filename }: { text: string; filename: string }) {
+export function CopyDownload({ text, filename, downloadLabel, mime }: { text: string; filename: string; downloadLabel?: string; mime?: string }) {
   return (
     <div className="flex items-center gap-1.5">
       <CopyButton text={text} />
-      <DownloadButton text={text} filename={filename} />
+      <DownloadButton text={text} filename={filename} label={downloadLabel} mime={mime} />
     </div>
   );
 }

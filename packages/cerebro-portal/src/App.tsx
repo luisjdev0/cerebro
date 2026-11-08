@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { useAuth } from './lib/auth';
 import { ComingSoon } from './pages/ComingSoon';
+import { Workflows } from './pages/Workflows';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
 import { Documents } from './pages/Documents';
@@ -26,7 +27,7 @@ export function App() {
         <Route index element={<Dashboard />} />
         <Route path="memories" element={<Memories />} />
         <Route path="documents" element={<Documents />} />
-        <Route path="workflows/*" element={<ComingSoon title={t('nav.workflows')} />} />
+        <Route path="workflows" element={<Workflows />} />
         <Route path="admin/*" element={<RequireAuth admin><ComingSoon title={t('nav.admin')} /></RequireAuth>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

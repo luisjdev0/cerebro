@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Portal Flows screen with two tabs. **Flows**: searchable, sortable, paginated table of definitions; a side panel with the YAML (copy/download), version history, YAML editing with a Validate button, and delete; a "New flow" panel with a starter template and inline category creation. **Runs**: table filtered by status, category and "only awaiting approval", with a badge on the tab counting runs stopped at a checkpoint; a side panel with the current step, the run's timeline (audit trail) and the human actions approve / reject (with a required reason) / abort. New `cerebro-flows` endpoints `GET /flows/browse`, `GET /flows/{code}/versions`, `GET /runs` (adds each in-progress run's live position from Redis: current step, `awaiting_approval`, and `expired` when its pointer is gone) and `GET /runs/{run_id}/events`; portal-only, so deliberately no client/MCP/CLI mirror.
 - Portal Documents screen: table with category and status filters, sortable columns, full-text search, a persisted rows-per-page selector and a pagination bar that stays in place; a resizable side panel that renders the document's Markdown (GFM tables, code, links) with its version history, inline editing with a Write/Preview switch (including moving it to another category), archive/restore and delete; a "New document" panel; and a categories panel to create, rename, hide and delete categories. New `cerebro-docs` endpoint `GET /documents/browse` (paginated, sortable, `status` active|archived|all, full-text `q`, returns an excerpt and a `total`, same category/ownership gates as `GET /documents`); it is consumed by the portal only, so there is deliberately no client/MCP/CLI mirror.
 - Portal document viewer: Preview / raw Markdown switch and a copy-to-clipboard button and a download-as-`.md` button (also in the editor; works over plain http via an `execCommand` fallback); in-document `#anchor` links and footnote links now scroll to their heading inside the panel instead of opening a new tab (headings get GitHub-style ids).
 - Portal "New document" panel: drag-and-drop (or click) upload of `.md`/`.txt` files. One file fills the form so it can be reviewed first; several files open an import list (title from the first `# heading`, identifier from the file name, same rule as `cerebro docs import-markdown`) with a choice to skip or update documents whose identifier already exists, and a per-file result summary. Successive drops accumulate into the same selection, each entry can be removed, and going back to a single file returns to the regular form. Done client-side with the existing `POST/PATCH /documents` calls, since there is no bulk endpoint.
@@ -34,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   contexts, memories, documents and flows, backdated over ~6 months.
 - `CEREBRO_GATEWAY_BIND` in `compose.yaml` (default `127.0.0.1`) to expose the gateway
   on the LAN of a throwaway test server.
+
+### Fixed
+
+- `cerebro-flows`: run endpoints (`GET /runs/{id}`, `next`, `approve-checkpoint`, `reject-checkpoint`, `abort`) only enforced the category gate; they now also apply the ownership gate of the run's flow definition (a `user` can no longer act on, or see, another user's run; reported as 404).
 
 ## [2.8.2] - English everywhere
 
