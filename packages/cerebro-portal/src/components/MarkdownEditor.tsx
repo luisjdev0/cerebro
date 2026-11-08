@@ -2,18 +2,21 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { INPUT } from './formUi';
 import { Markdown } from './Markdown';
+import { CopyButton, ViewTabs } from './MarkdownView';
 
 /** Textarea with a Write / Preview switch so what gets saved can be checked as it will read. */
 export function MarkdownEditor({ value, onChange, rows = 16, autoFocus }: { value: string; onChange: (v: string) => void; rows?: number; autoFocus?: boolean }) {
   const { t } = useTranslation();
   const [preview, setPreview] = useState(false);
-  const tab = (on: boolean) =>
-    `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${on ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'}`;
   return (
     <div className="space-y-2">
-      <div className="inline-flex gap-1 rounded-lg border p-0.5">
-        <button type="button" className={tab(!preview)} onClick={() => setPreview(false)}>{t('docs.form.write')}</button>
-        <button type="button" className={tab(preview)} onClick={() => setPreview(true)}>{t('docs.form.preview')}</button>
+      <div className="flex items-center justify-between gap-2">
+        <ViewTabs
+          items={[{ id: 'write', label: t('docs.form.write') }, { id: 'preview', label: t('docs.form.preview') }]}
+          value={preview ? 'preview' : 'write'}
+          onChange={(id) => setPreview(id === 'preview')}
+        />
+        <CopyButton text={value} />
       </div>
       {preview ? (
         <div className="min-h-40 rounded-xl border bg-card p-4"><Markdown>{value || ' '}</Markdown></div>

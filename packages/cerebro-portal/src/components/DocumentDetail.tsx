@@ -14,8 +14,8 @@ import {
   type DocVersion,
 } from '../lib/documents';
 import { Field, INPUT, useErrorMessage } from './formUi';
-import { Markdown } from './Markdown';
 import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownView } from './MarkdownView';
 import { useDateTime } from './memoryUi';
 import { ResizableSheet } from './ResizableSheet';
 
@@ -165,7 +165,7 @@ export function DocumentDetail({ docRef, categories, onOpen, onClose, onChanged 
               <div className="flex justify-end">
                 {!archived && <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={startEdit}>{t('docs.actions.edit')}</Button>}
               </div>
-              <div className="rounded-xl border bg-card p-5"><Markdown>{doc.content}</Markdown></div>
+              <MarkdownView value={doc.content} />
               {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
             </section>
 
@@ -203,7 +203,7 @@ export function DocumentDetail({ docRef, categories, onOpen, onClose, onChanged 
                           {shown === v.version_number ? t('docs.detail.hideVersion') : t('docs.detail.showVersion')}
                         </Button>
                       </div>
-                      {shown === v.version_number && <div className="border-t bg-muted/20 p-4"><Markdown>{v.content}</Markdown></div>}
+                      {shown === v.version_number && <div className="border-t bg-muted/20 p-4"><MarkdownView value={v.content} /></div>}
                     </li>
                   ))}
                 </ul>
