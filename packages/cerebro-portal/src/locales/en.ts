@@ -181,6 +181,7 @@ export const en = {
       preview: 'Preview',
       raw: 'Markdown',
       copy: 'Copy markdown',
+      download: 'Download as .md',
       copied: 'Copied',
     },
     import: {

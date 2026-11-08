@@ -146,7 +146,7 @@ export function DocumentDetail({ docRef, categories, onOpen, onClose, onChanged 
               </select>
             </Field>
             <Field label={t('docs.form.content')}>
-              <MarkdownEditor value={dContent} onChange={setDContent} />
+              <MarkdownEditor value={dContent} onChange={setDContent} filename={`${doc.slug}.md`} />
             </Field>
             <p className="text-xs text-muted-foreground">{t('docs.form.editNote')}</p>
             {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
@@ -165,7 +165,7 @@ export function DocumentDetail({ docRef, categories, onOpen, onClose, onChanged 
               <div className="flex justify-end">
                 {!archived && <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={startEdit}>{t('docs.actions.edit')}</Button>}
               </div>
-              <MarkdownView value={doc.content} />
+              <MarkdownView value={doc.content} filename={`${doc.slug}.md`} />
               {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
             </section>
 
@@ -203,7 +203,7 @@ export function DocumentDetail({ docRef, categories, onOpen, onClose, onChanged 
                           {shown === v.version_number ? t('docs.detail.hideVersion') : t('docs.detail.showVersion')}
                         </Button>
                       </div>
-                      {shown === v.version_number && <div className="border-t bg-muted/20 p-4"><MarkdownView value={v.content} /></div>}
+                      {shown === v.version_number && <div className="border-t bg-muted/20 p-4"><MarkdownView value={v.content} filename={`${doc.slug}-v${v.version_number}.md`} /></div>}
                     </li>
                   ))}
                 </ul>

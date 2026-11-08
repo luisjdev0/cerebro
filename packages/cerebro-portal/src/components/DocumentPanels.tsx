@@ -208,7 +208,7 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
               <input autoFocus required className={INPUT} value={title} onChange={(e) => setTitle(e.target.value)} />
             </Field>
             <Field label={t('docs.form.content')}>
-              <MarkdownEditor value={content} onChange={setContent} />
+              <MarkdownEditor value={content} onChange={setContent} filename={`${slug.trim() || slugify(title) || 'documento'}.md`} />
             </Field>
           </>
         )}

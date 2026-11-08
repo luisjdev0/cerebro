@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { INPUT } from './formUi';
 import { Markdown } from './Markdown';
-import { CopyButton, ViewTabs } from './MarkdownView';
+import { CopyDownload, ViewTabs } from './MarkdownView';
 
 /** Textarea with a Write / Preview switch so what gets saved can be checked as it will read. */
-export function MarkdownEditor({ value, onChange, rows = 16, autoFocus }: { value: string; onChange: (v: string) => void; rows?: number; autoFocus?: boolean }) {
+export function MarkdownEditor({ value, onChange, rows = 16, autoFocus, filename = 'documento.md' }: { value: string; onChange: (v: string) => void; rows?: number; autoFocus?: boolean; filename?: string }) {
   const { t } = useTranslation();
   const [preview, setPreview] = useState(false);
   return (
@@ -16,7 +16,7 @@ export function MarkdownEditor({ value, onChange, rows = 16, autoFocus }: { valu
           value={preview ? 'preview' : 'write'}
           onChange={(id) => setPreview(id === 'preview')}
         />
-        <CopyButton text={value} />
+        <CopyDownload text={value} filename={filename} />
       </div>
       {preview ? (
         <div className="min-h-40 rounded-xl border bg-card p-4"><Markdown>{value || ' '}</Markdown></div>

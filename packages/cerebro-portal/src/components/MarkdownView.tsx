@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { copyText } from '../lib/clipboard';
 import { Markdown } from './Markdown';
@@ -23,10 +23,48 @@ export function CopyButton({ text }: { text: string }) {
           timer.current = window.setTimeout(() => setDone(false), 1800);
         }
       }}
-      className="inline-flex size-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      className={ICON_BTN}
     >
       {done ? <Check className="size-3.5 text-brand-soft" /> : <Copy className="size-3.5" />}
     </button>
+  );
+}
+
+const ICON_BTN = 'inline-flex size-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground';
+
+/** Icon button that saves the markdown as a `.md` file. */
+export function DownloadButton({ text, filename }: { text: string; filename: string }) {
+  const { t } = useTranslation();
+  const label = t('docs.form.download');
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      className={ICON_BTN}
+      onClick={() => {
+        const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}
+    >
+      <Download className="size-3.5" />
+    </button>
+  );
+}
+
+/** Copy + download, side by side. */
+export function CopyDownload({ text, filename }: { text: string; filename: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <CopyButton text={text} />
+      <DownloadButton text={text} filename={filename} />
+    </div>
   );
 }
 
@@ -49,7 +87,7 @@ export function ViewTabs({ items, value, onChange }: { items: { id: string; labe
 }
 
 /** Read-only document body: rendered preview or the raw markdown source, with a copy button. */
-export function MarkdownView({ value }: { value: string }) {
+export function MarkdownView({ value, filename = 'documento.md' }: { value: string; filename?: string }) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<'preview' | 'raw'>('preview');
   return (
@@ -60,7 +98,7 @@ export function MarkdownView({ value }: { value: string }) {
           value={mode}
           onChange={(id) => setMode(id as 'preview' | 'raw')}
         />
-        <CopyButton text={value} />
+        <CopyDownload text={value} filename={filename} />
       </div>
       <div className="rounded-xl border bg-card p-5">
         {mode === 'preview' ? (
