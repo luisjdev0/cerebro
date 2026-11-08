@@ -10,3 +10,28 @@
   --color-brand-peri: #60a5fa;
   --color-brand-ghost: #f8fafc;
 }
+
+/* Slim scrollbars in the theme colors (Ixchel hides them everywhere by default; the sidebar
+   keeps its own rule and stays hidden). Unlayered, so they win over Ixchel's base layer. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 28%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--foreground) 24%, transparent);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-brand-soft) 70%, transparent);
+  background-clip: content-box;
+}
