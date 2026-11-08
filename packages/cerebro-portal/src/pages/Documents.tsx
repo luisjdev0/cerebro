@@ -335,6 +335,10 @@ export function Documents() {
           refresh();
           setOpenRef({ category: d.category, slug: d.slug });
         }}
+        onImported={() => {
+          refresh();
+          void reloadCategories();
+        }}
         onNewCategory={() => {
           setNewDoc(false);
           setCreateCatFirst(true);

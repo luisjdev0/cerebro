@@ -12,6 +12,8 @@ import {
   type Doc,
 } from '../lib/documents';
 import { slugify } from '../lib/memories';
+import { importItems, readFiles, type ImportOutcome, type ReadResult } from '../lib/importDocs';
+import { FileDrop } from './FileDrop';
 import { Field, INPUT, useErrorMessage } from './formUi';
 import { MarkdownEditor } from './MarkdownEditor';
 import { ResizableSheet } from './ResizableSheet';
@@ -25,13 +27,14 @@ function PanelHeader({ title, description }: { title: string; description: strin
   );
 }
 
-/** Side panel with the form to create a document. */
-export function NewDocumentPanel({ open, categories, defaultCategory, onClose, onCreated, onNewCategory }: {
+/** Side panel to create a document: write it, or drop one or several .md/.txt files to import. */
+export function NewDocumentPanel({ open, categories, defaultCategory, onClose, onCreated, onImported, onNewCategory }: {
   open: boolean;
   categories: Category[];
   defaultCategory?: string;
   onClose: () => void;
   onCreated: (d: Doc) => void;
+  onImported: () => void;
   onNewCategory: () => void;
 }) {
   const { t } = useTranslation();
@@ -42,30 +45,84 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [batch, setBatch] = useState<ReadResult | null>(null);
+  const [ignored, setIgnored] = useState<string[]>([]);
+  const [existing, setExisting] = useState<'skip' | 'update'>('skip');
+  const [progress, setProgress] = useState<[number, number] | null>(null);
+  const [results, setResults] = useState<ImportOutcome[] | null>(null);
   const cat = category || defaultCategory || '';
+
+  const reset = () => {
+    setTitle('');
+    setSlug('');
+    setContent('');
+    setBatch(null);
+    setIgnored([]);
+    setResults(null);
+    setProgress(null);
+    setError(undefined);
+  };
+
+  useEffect(() => {
+    if (!open) reset(); // reopening starts clean, not on the last import's result
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onFiles = async (files: File[]) => {
+    setError(undefined);
+    setResults(null);
+    const r = await readFiles(files);
+    setIgnored(r.ignored);
+    if (r.items.length === 0) {
+      setBatch(null);
+      setError(t('docs.import.nothing'));
+    } else if (r.single) {
+      const [it] = r.items; // one file: fill the form so it can be reviewed before creating
+      setBatch(null);
+      setTitle(it.title);
+      setSlug(it.slug);
+      setContent(it.content);
+    } else {
+      setBatch(r);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(undefined);
     try {
-      const d = await createDocument({ title: title.trim(), content, category: cat, slug: slug.trim() || undefined });
-      setTitle('');
-      setSlug('');
-      setContent('');
-      onCreated(d);
-      onClose();
+      if (batch) {
+        setProgress([0, batch.items.length]);
+        const out = await importItems(batch.items, cat, existing, errMsg, (d, n) => setProgress([d, n]));
+        setResults(out);
+        setBatch(null);
+        if (out.some((o) => o.status === 'created' || o.status === 'updated')) onImported();
+      } else {
+        const d = await createDocument({ title: title.trim(), content, category: cat, slug: slug.trim() || undefined });
+        reset();
+        onCreated(d);
+        onClose();
+      }
     } catch (err) {
       setError(errMsg(err));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
+
+  const count = (st: ImportOutcome['status']) => results?.filter((o) => o.status === st).length ?? 0;
+  const failed = results?.filter((o) => o.status === 'failed') ?? [];
+  const canSubmit = batch ? batch.items.length > 0 : !!title.trim() && !!content.trim();
 
   return (
     <ResizableSheet open={open} onClose={() => !busy && onClose()}>
       <PanelHeader title={t('docs.form.newTitle')} description={t('docs.form.newDesc')} />
       <form id="new-doc-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-5 overflow-y-auto p-6">
+        <FileDrop onFiles={(f) => void onFiles(f)} disabled={busy} />
+        {ignored.length > 0 && (
+          <p className="text-xs text-muted-foreground">{t('docs.import.ignored', { count: ignored.length })}: {ignored.slice(0, 5).join(', ')}{ignored.length > 5 ? '…' : ''}</p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t('docs.form.category')}>
             <select required className={INPUT} value={cat} onChange={(e) => setCategory(e.target.value)}>
@@ -75,24 +132,71 @@ export function NewDocumentPanel({ open, categories, defaultCategory, onClose, o
               ))}
             </select>
           </Field>
-          <Field label={t('docs.form.slug')} hint={t('docs.form.slugHint')}>
-            <input className={`${INPUT} font-mono`} pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(e) => setSlug(e.target.value)} />
-          </Field>
+          {!batch && !results && (
+            <Field label={t('docs.form.slug')} hint={t('docs.form.slugHint')}>
+              <input className={`${INPUT} font-mono`} pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(e) => setSlug(e.target.value)} />
+            </Field>
+          )}
+          {batch && (
+            <Field label={t('docs.import.existing')}>
+              <select className={INPUT} value={existing} onChange={(e) => setExisting(e.target.value as 'skip' | 'update')}>
+                <option value="skip">{t('docs.import.skip')}</option>
+                <option value="update">{t('docs.import.update')}</option>
+              </select>
+            </Field>
+          )}
         </div>
         <button type="button" onClick={onNewCategory} className="-mt-3 text-xs text-brand-soft hover:underline">+ {t('docs.actions.newCategory')}</button>
-        <Field label={t('docs.form.title')}>
-          <input autoFocus required className={INPUT} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label={t('docs.form.content')}>
-          <MarkdownEditor value={content} onChange={setContent} />
-        </Field>
+
+        {batch ? (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('docs.import.toImport', { count: batch.items.length })}</h3>
+              <button type="button" disabled={busy} onClick={reset} className="text-xs text-brand-soft hover:underline">{t('docs.import.discard')}</button>
+            </div>
+            <ul className="max-h-72 divide-y overflow-y-auto rounded-xl border text-sm">
+              {batch.items.map((i) => (
+                <li key={i.slug} className="flex items-baseline justify-between gap-3 px-3 py-2">
+                  <span className="min-w-0 truncate font-medium">{i.title}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{i.slug}</span>
+                </li>
+              ))}
+            </ul>
+            {progress && <p className="text-xs text-muted-foreground">{t('docs.import.progress', { done: progress[0], total: progress[1] })}</p>}
+          </section>
+        ) : results ? (
+          <section className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm">
+            <p className="font-medium">{t('docs.import.done')}</p>
+            <p className="text-muted-foreground">
+              {t('docs.import.summary', { created: count('created'), updated: count('updated'), skipped: count('skipped'), failed: failed.length })}
+            </p>
+            {failed.length > 0 && (
+              <ul className="space-y-1 text-xs text-destructive-text">
+                {failed.map((o) => (
+                  <li key={o.item.slug}>{o.item.path}: {o.error}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : (
+          <>
+            <Field label={t('docs.form.title')}>
+              <input autoFocus required className={INPUT} value={title} onChange={(e) => setTitle(e.target.value)} />
+            </Field>
+            <Field label={t('docs.form.content')}>
+              <MarkdownEditor value={content} onChange={setContent} />
+            </Field>
+          </>
+        )}
         {error && <p role="alert" className="text-sm text-destructive-text">{error}</p>}
       </form>
       <div className="flex items-center justify-end gap-2 border-t p-3">
-        <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>{t('docs.actions.cancel')}</Button>
-        <Button type="submit" form="new-doc-form" variant="primary" arrow={false} disabled={busy || !cat || !title.trim() || !content.trim()}>
-          {busy ? t('docs.actions.creating') : t('docs.actions.create')}
-        </Button>
+        <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>{results ? t('docs.import.close') : t('docs.actions.cancel')}</Button>
+        {!results && (
+          <Button type="submit" form="new-doc-form" variant="primary" arrow={false} disabled={busy || !cat || !canSubmit}>
+            {busy ? t('docs.actions.creating') : batch ? t('docs.import.importN', { count: batch.items.length }) : t('docs.actions.create')}
+          </Button>
+        )}
       </div>
     </ResizableSheet>
   );
