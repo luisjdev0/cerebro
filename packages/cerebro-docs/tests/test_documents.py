@@ -741,3 +741,51 @@ class TestDocumentVersionsEndpoint:
         resp = client.get(f"/documents/{doc['id']}/versions", headers=auth_headers)
         assert resp.status_code == 200, resp.text
         assert resp.json() == []
+
+
+# --------------------------------------------------------------------------- portal browse
+
+
+class TestBrowse:
+    def test_paginates_sorts_and_reports_total(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        for title in ("Charlie", "alpha", "Bravo"):
+            _make_document(client, auth_headers, cat, title=title, content=f"# {title}\n\nbody of {title}")
+
+        resp = client.get("/documents/browse", params={"category": cat, "sort": "title", "order": "asc"}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 3
+        assert [d["title"] for d in body["items"]] == ["alpha", "Bravo", "Charlie"]  # case-insensitive
+        assert "content" not in body["items"][0]
+        assert body["items"][0]["excerpt"].startswith("# alpha")
+
+        page2 = client.get("/documents/browse", params={"category": cat, "sort": "title", "limit": 2, "offset": 2}, headers=auth_headers)
+        assert page2.json()["total"] == 3
+        assert len(page2.json()["items"]) == 1
+
+    def test_status_filter_and_search(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        active = _make_document(client, auth_headers, cat, title="Activo", content="zorroplateado unico")
+        archived = _make_document(client, auth_headers, cat, title="Archivado", content="zorroplateado tambien")
+        client.post(f"/documents/{archived['id']}/archive", headers=auth_headers)
+
+        def ids(**params):
+            r = client.get("/documents/browse", params={"category": cat, **params}, headers=auth_headers)
+            assert r.status_code == 200, r.text
+            return {d["id"] for d in r.json()["items"]}
+
+        assert ids() == {active["id"]}
+        assert ids(status="archived") == {archived["id"]}
+        assert ids(status="all") == {active["id"], archived["id"]}
+        assert ids(status="all", q="zorroplateado") == {active["id"], archived["id"]}
+
+    def test_rejects_bad_sort_and_hides_hidden_categories(self, client, auth_headers):
+        assert client.get("/documents/browse", params={"sort": "content; DROP TABLE documents"}, headers=auth_headers).status_code == 422
+        assert client.get("/documents/browse", params={"status": "bogus"}, headers=auth_headers).status_code == 422
+        hidden = _make_category(client, auth_headers, hidden=True)
+        doc = _make_document(client, auth_headers, hidden)
+        everything = client.get("/documents/browse", params={"limit": 100}, headers=auth_headers).json()["items"]
+        assert doc["id"] not in {d["id"] for d in everything}
+        explicit = client.get("/documents/browse", params={"category": hidden}, headers=auth_headers).json()["items"]
+        assert doc["id"] in {d["id"] for d in explicit}

@@ -4,6 +4,7 @@ import { useAuth } from './lib/auth';
 import { ComingSoon } from './pages/ComingSoon';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
+import { Documents } from './pages/Documents';
 import { Memories } from './pages/Memories';
 import { useTranslation } from 'react-i18next';
 
@@ -24,7 +25,7 @@ export function App() {
       <Route element={<RequireAuth><Shell /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="memories" element={<Memories />} />
-        <Route path="documents/*" element={<ComingSoon title={t('nav.documents')} />} />
+        <Route path="documents" element={<Documents />} />
         <Route path="workflows/*" element={<ComingSoon title={t('nav.workflows')} />} />
         <Route path="admin/*" element={<RequireAuth admin><ComingSoon title={t('nav.admin')} /></RequireAuth>} />
       </Route>
