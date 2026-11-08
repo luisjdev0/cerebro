@@ -133,32 +133,33 @@ export function Dashboard() {
 
   const yearOptions: { value: number | null; label: string }[] = [{ value: null, label: t('dashboard.lastYear') }, ...years.map((y) => ({ value: y, label: String(y) }))];
   const activityBlock = (
-    <section className="space-y-3 rounded-2xl border p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{t('dashboard.activity')}</h2>
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.filter((f) => f.key === 'all' || modules.includes(f.key)).map((f) => (
-            <Button key={f.key} size="sm" variant={filter === f.key ? 'primary' : 'ghost'} onClick={() => setFilter(f.key)}>
-              {t(f.label)}
-            </Button>
-          ))}
+    <div className="flex flex-col gap-4 lg:flex-row">
+      <section className="min-w-0 flex-1 space-y-3 rounded-2xl border p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold">{t('dashboard.activity')}</h2>
+          <div className="flex flex-wrap gap-1">
+            {FILTERS.filter((f) => f.key === 'all' || modules.includes(f.key)).map((f) => (
+              <Button key={f.key} size="sm" variant={filter === f.key ? 'primary' : 'ghost'} onClick={() => setFilter(f.key)}>
+                {t(f.label)}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className="min-w-0 flex-1">
-          {heatSource ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
-        </div>
-        {yearOptions.length > 1 && (
-          <div role="group" aria-label={t('dashboard.years')} className="flex gap-1 overflow-x-auto lg:w-32 lg:shrink-0 lg:flex-col lg:overflow-visible">
+        {heatSource ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
+      </section>
+      {yearOptions.length > 1 && (
+        <section className="space-y-3 rounded-2xl border p-4 lg:w-44 lg:shrink-0">
+          <h2 className="text-sm font-semibold">{t('dashboard.years')}</h2>
+          <div role="group" aria-label={t('dashboard.years')} className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
             {yearOptions.map((o) => (
               <Button key={String(o.value)} size="sm" variant={year === o.value ? 'primary' : 'ghost'} aria-pressed={year === o.value} className="justify-start whitespace-nowrap" onClick={() => setYear(o.value)}>
                 {o.label}
               </Button>
             ))}
           </div>
-        )}
-      </div>
-    </section>
+        </section>
+      )}
+    </div>
   );
 
   const chartsBlock = activity ? (

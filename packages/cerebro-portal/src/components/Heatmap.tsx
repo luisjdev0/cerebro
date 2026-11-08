@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { levelFor } from '../lib/activity';
 import { useLocale } from '../lib/i18n';
 
+const CELL = 15; // max square size in px
 const LEVEL_CLASS = ['bg-muted', 'bg-brand-soft/25', 'bg-brand-soft/50', 'bg-brand-soft/75', 'bg-brand-soft'];
 
 type Props = {
@@ -31,9 +32,11 @@ export function Heatmap({ grid, totals, year }: Props) {
   const summary = year ? t('heatmap.summaryYear', { total: total.toLocaleString(lang), year }) : t('heatmap.summary', { total: total.toLocaleString(lang) });
 
   return (
-    <div className="space-y-2">
+    <div className="mx-auto space-y-2" style={{ maxWidth: 34 + grid.length * (CELL + 3) }}>
       <div
         className="grid gap-[3px]"
+        // Columns share the card width but the squares stop growing at CELL px, so the
+        // grid stays compact (and centered) on wide screens instead of getting taller.
         style={{ gridTemplateColumns: `auto repeat(${grid.length}, minmax(0, 1fr))` }}
         role="img"
         aria-label={summary}
@@ -58,7 +61,7 @@ export function Heatmap({ grid, totals, year }: Props) {
                 key={d.date}
                 style={style}
                 title={t('heatmap.cell', { count, date: formatDate(d.date) })}
-                className={`h-3.5 rounded-[3px] ${LEVEL_CLASS[levelFor(count, max)]}`}
+                className={`aspect-square rounded-[3px] ${LEVEL_CLASS[levelFor(count, max)]}`}
               />
             );
           }),
