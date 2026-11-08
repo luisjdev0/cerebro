@@ -541,6 +541,37 @@ class TestStats:
         assert data == {"categories": 1, "documents": 1, "versions": 0}
 
 
+class TestActivity:
+    """GET /activity: per-day created/updated counts (feeds the portal's heatmap)."""
+
+    def test_activity_counts_todays_documents(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        _make_document(client, auth_headers, cat, title="Uno", slug="uno")
+        _make_document(client, auth_headers, cat, title="Dos", slug="dos")
+
+        resp = client.get("/activity", params={"days": 7}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        days = resp.json()["days"]
+        assert days, "expected at least today's activity"
+        assert sum(d["created"] for d in days) >= 2
+        assert all(set(d) == {"date", "created", "updated"} for d in days)
+
+    def test_activity_filters_by_allowed_categories(self, client, auth_headers):
+        allowed = _make_category(client, auth_headers)
+        other = _make_category(client, auth_headers)
+        _make_document(client, auth_headers, allowed, title="Visible", slug="visible")
+        _make_document(client, auth_headers, other, title="Hidden", slug="hidden")
+
+        token = _make_read_only_token_scoped_to_categories(get_settings().database_url, [allowed])
+        resp = client.get("/activity", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        assert sum(d["created"] for d in resp.json()["days"]) == 1
+
+    def test_activity_rejects_out_of_range_days(self, client, auth_headers):
+        assert client.get("/activity", params={"days": 0}, headers=auth_headers).status_code == 422
+        assert client.get("/activity", params={"days": 5000}, headers=auth_headers).status_code == 422
+
+
 # --------------------------------------------------------------------------- archiving
 
 

@@ -88,6 +88,16 @@ class FlowOut(BaseModel):
     updated_at: datetime
 
 
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int  # flow definitions created
+    updated: int  # flow runs started
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+
+
 class StatsOut(BaseModel):
     categories: int
     flows: int
@@ -220,6 +230,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allowed,
             )
         return StatsOut(categories=categories, flows=flows, runs=runs)
+
+    # ---------------------------------------------------------------- activity
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+    ):
+        """Per-day counts of flow definitions created (`created`) and runs started
+        (`updated`), for the last `days` days (days without activity are omitted).
+        Honors the token's category scope and the ownership gate on definitions."""
+        params: list[Any] = [days]
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"f.owner_user_id = ${len(params)}")
+            else:
+                params.append(principal.owner_filter["user_id_in"])
+                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+        extra = "".join(f" AND {f}" for f in filters)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (f.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
+                FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+                WHERE f.created_at >= now() - make_interval(days => $1){extra}
+                UNION ALL
+                SELECT (r.started_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM flow_runs r
+                JOIN flow_definitions f ON f.id = r.definition_id
+                JOIN flow_categories c ON c.id = f.category_id
+                WHERE r.started_at >= now() - make_interval(days => $1){extra}
+            )
+            SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY day ORDER BY day
+            """,
+            *params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+        )
 
     # ---------------------------------------------------------------- categories
 

@@ -311,6 +311,22 @@ class TestStats:
         assert after["runs"] == before["runs"] + 1
 
 
+class TestActivity:
+    def test_activity_counts_definitions_and_runs(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        flow = _make_flow(client, auth_headers, cat)
+        client.post(f"/flows/{flow['code']}/start", headers=auth_headers)
+
+        resp = client.get("/activity", params={"days": 7}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        days = resp.json()["days"]
+        assert sum(d["created"] for d in days) >= 1  # definitions
+        assert sum(d["updated"] for d in days) >= 1  # runs started
+
+    def test_activity_rejects_out_of_range_days(self, client, auth_headers):
+        assert client.get("/activity", params={"days": 0}, headers=auth_headers).status_code == 422
+
+
 # --------------------------------------------------------------------------- ownership filter
 
 

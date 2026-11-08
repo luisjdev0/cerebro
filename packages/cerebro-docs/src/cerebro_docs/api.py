@@ -141,6 +141,16 @@ class SectionPatchIn(StrictIn):
     new_heading_level: int = Field(default=2, ge=1, le=6)
 
 
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int
+    updated: int
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+
+
 class StatsOut(BaseModel):
     """Minimal mirror of cerebro-memory's GET /stats (ecosistema-cerebro.md SS11):
     cerebro-docs has no disambiguations or learned preferences, so only these
@@ -261,6 +271,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 allowed,
             )
         return StatsOut(categories=categories, documents=documents, versions=versions)
+
+    # ---------------------------------------------------------------- activity
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+    ):
+        """Per-day counts of documents created and of documents edited on a later
+        UTC day, for the last `days` days (days without activity are omitted).
+        Honors the token's category scope and the ownership gate."""
+        params: list[Any] = [days]
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        apply_owner_filter(filters, params, principal.owner_filter)
+        extra = "".join(f" AND {f}" for f in filters)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (d.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
+                FROM documents d JOIN categories c ON c.id = d.category_id
+                WHERE d.created_at >= now() - make_interval(days => $1){extra}
+                UNION ALL
+                SELECT (d.updated_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM documents d JOIN categories c ON c.id = d.category_id
+                WHERE d.updated_at >= now() - make_interval(days => $1){extra}
+                  AND (d.updated_at AT TIME ZONE 'UTC')::date <> (d.created_at AT TIME ZONE 'UTC')::date
+            )
+            SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY day ORDER BY day
+            """,
+            *params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+        )
 
     # ---------------------------------------------------------------- categories
 

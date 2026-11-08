@@ -221,6 +221,16 @@ class TimelineResponse(BaseModel):
     items: list[TimelineItem]
 
 
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int
+    updated: int
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+
+
 # --------------------------------------------------------------------------- app wiring
 
 
@@ -1139,6 +1149,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
 
         return TimelineResponse(items=[row_to_memory_out(r) for r in rows])
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+    ):
+        """Per-day counts of memories created and of memories edited on a later day
+        (`updated_at` on a different UTC day than `created_at`), for the last `days`
+        days. Days with no activity are omitted. Honors the token's context scope and
+        the ownership gate, like `/timeline`."""
+        filters = ["m.created_at >= now() - make_interval(days => $1) OR m.updated_at >= now() - make_interval(days => $1)"]
+        params: list[Any] = [days]
+        extra: list[str] = []
+        if principal.allowed_contexts is not None:
+            params.append(list(principal.allowed_contexts))
+            extra.append(f"c.slug = ANY(${len(params)}::text[])")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                extra.append(f"m.owner_user_id = ${len(params)}")
+            elif "user_id_in" in principal.owner_filter:
+                params.append(list(principal.owner_filter["user_id_in"]))
+                extra.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
+        where = "(" + filters[0] + ")" + "".join(f" AND {e}" for e in extra)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (m.created_at AT TIME ZONE 'UTC')::date AS d, 1 AS created, 0 AS updated
+                FROM memories m JOIN contexts c ON c.id = m.context_id
+                WHERE {where} AND m.created_at >= now() - make_interval(days => $1)
+                UNION ALL
+                SELECT (m.updated_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM memories m JOIN contexts c ON c.id = m.context_id
+                WHERE {where} AND m.updated_at >= now() - make_interval(days => $1)
+                  AND (m.updated_at AT TIME ZONE 'UTC')::date <> (m.created_at AT TIME ZONE 'UTC')::date
+            )
+            SELECT d, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY d ORDER BY d
+            """,
+            *params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["d"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows]
+        )
 
     return app
 

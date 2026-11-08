@@ -513,6 +513,29 @@ class TestAllowedContextsEnforcement:
         assert other_slug not in contexts_seen
 
 
+class TestActivity:
+    def test_activity_counts_only_allowed_contexts(self, client, root_headers):
+        allowed_slug = _make_context(client, root_headers)
+        other_slug = _make_context(client, root_headers)
+        for slug in (allowed_slug, other_slug):
+            client.post(
+                "/memories",
+                json={"content": f"activity probe in {slug}", "context": slug, "type": "semantic"},
+                headers=root_headers,
+            )
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
+
+        scoped = client.get("/activity", params={"days": 7}, headers={"Authorization": f"Bearer {token}"})
+        assert scoped.status_code == 200, scoped.text
+        assert sum(d["created"] for d in scoped.json()["days"]) == 1
+
+        full = client.get("/activity", params={"days": 7}, headers=root_headers)
+        assert sum(d["created"] for d in full.json()["days"]) >= 2
+
+    def test_activity_rejects_out_of_range_days(self, client, root_headers):
+        assert client.get("/activity", params={"days": 0}, headers=root_headers).status_code == 422
+
+
 class TestDeleteContext:
     def test_delete_empty_context_succeeds_without_force(self, client, root_headers):
         slug = _make_context(client, root_headers)
