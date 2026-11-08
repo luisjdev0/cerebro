@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Portal login: split layout with a side panel (tagline, copy-ready CLI install and login commands built from the URL the portal is served on, and the creator/MIT license credit).
 - Portal overview: three charts (memories, documents, flows) under the activity heatmap, each switchable between a line (created/updated per month over the last year) and a pie (memories per context, documents per category, flows per category; the 5 biggest slices plus "Other"). `GET /stats` of `cerebro-docs` and `cerebro-flows` gained `documents_by_category` / `flows_by_category` (honoring category scope and the ownership gate); existing fields are unchanged.
 - Portal i18n (English/Spanish) with `i18next`: language switcher in the top-right corner of every screen, including the login; the choice is persisted in `localStorage` (`cerebro.lang`) and defaults to the browser language. The login is a custom form because Ixchel's `LoginScreen` ships fixed Spanish copy.
 - `cerebro-portal`: a React + Vite + TypeScript + Tailwind web portal (Ixchel
