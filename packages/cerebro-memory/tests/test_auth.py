@@ -513,6 +513,51 @@ class TestAllowedContextsEnforcement:
         assert other_slug not in contexts_seen
 
 
+class TestListAndGetMemory:
+    """GET /memories (paginated browse) and GET /memories/{id}: feed the portal's Memory screen."""
+
+    def _remember(self, client, headers, ctx, text, type_="semantic"):
+        resp = client.post("/memories", json={"content": text, "context": ctx, "type": type_}, headers=headers)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_list_paginates_and_filters(self, client, root_headers):
+        ctx = _make_context(client, root_headers)
+        for i in range(3):
+            self._remember(client, root_headers, ctx, f"list probe {i} in {ctx}")
+        self._remember(client, root_headers, ctx, f"episode in {ctx}", type_="episodic")
+
+        resp = client.get("/memories", params={"context": ctx, "limit": 2}, headers=root_headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total"] == 4 and len(data["items"]) == 2
+        page2 = client.get("/memories", params={"context": ctx, "limit": 2, "offset": 2}, headers=root_headers).json()
+        assert len(page2["items"]) == 2
+        assert {m["id"] for m in data["items"]}.isdisjoint({m["id"] for m in page2["items"]})
+
+        only_episodic = client.get("/memories", params={"context": ctx, "type": "episodic"}, headers=root_headers).json()
+        assert only_episodic["total"] == 1 and only_episodic["items"][0]["type"] == "episodic"
+        assert client.get("/memories", params={"limit": 0}, headers=root_headers).status_code == 422
+        assert client.get("/memories", params={"status": "bogus"}, headers=root_headers).status_code == 422
+
+    def test_list_and_get_respect_context_scope(self, client, root_headers):
+        allowed, other = _make_context(client, root_headers), _make_context(client, root_headers)
+        mine = self._remember(client, root_headers, allowed, f"visible in {allowed}")
+        theirs = self._remember(client, root_headers, other, f"hidden in {other}")
+        token = _create_service_token(scopes=["read"], contexts=[allowed])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        listed = client.get("/memories", headers=headers).json()
+        assert {m["context"] for m in listed["items"]} == {allowed}
+        assert client.get("/memories", params={"context": other}, headers=headers).status_code == 403
+        assert client.get(f"/memories/{mine['id']}", headers=headers).status_code == 200
+        assert client.get(f"/memories/{theirs['id']}", headers=headers).status_code == 403
+
+    def test_get_memory_404(self, client, root_headers):
+        missing = "00000000-0000-0000-0000-000000000000"
+        assert client.get(f"/memories/{missing}", headers=root_headers).status_code == 404
+
+
 class TestActivity:
     def test_activity_counts_only_allowed_contexts(self, client, root_headers):
         allowed_slug = _make_context(client, root_headers)

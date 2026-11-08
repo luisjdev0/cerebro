@@ -103,6 +103,11 @@ class MemoryOut(BaseModel):
     updated_at: datetime
 
 
+class MemoryListResponse(BaseModel):
+    items: list[MemoryOut]
+    total: int  # rows matching the filters (ignoring limit/offset)
+
+
 class MemorySearchResult(MemoryOut):
     score: float
 
@@ -748,6 +753,94 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail={"disambiguation_id": disambiguation_id, "chosen_context": body.context},
         )
         return DisambiguationResolveOut(**result)
+
+    @app.get("/memories", response_model=MemoryListResponse)
+    async def list_memories(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        context: str | None = None,
+        type: str | None = None,  # noqa: A002
+        status_: Annotated[Literal["active", "superseded", "archived", "all"], Query(alias="status")] = "active",
+        sort: Literal["created_at", "updated_at", "importance"] = "created_at",
+        order: Literal["asc", "desc"] = "desc",
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Paginated browse of memories (no semantic ranking -- that is `/memories/search`),
+        newest first by default. Filters: `context` (slug), `type`, `status` (default
+        `active`; `all` for every status). Honors the token's context scope (a restricted
+        token asking for an out-of-scope `context` gets 403) and the ownership gate."""
+        if context is not None and not principal.context_allowed(context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to see context '{context}'",
+            )
+        params: list[Any] = []
+        filters: list[str] = []
+        if context is not None:
+            params.append(context)
+            filters.append(f"c.slug = ${len(params)}")
+        elif principal.allowed_contexts is not None:
+            params.append(list(principal.allowed_contexts))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if type is not None:
+            params.append(type)
+            filters.append(f"m.type = ${len(params)}")
+        if status_ != "all":
+            params.append(status_)
+            filters.append(f"m.status = ${len(params)}")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"m.owner_user_id = ${len(params)}")
+            elif "user_id_in" in principal.owner_filter:
+                params.append(list(principal.owner_filter["user_id_in"]))
+                filters.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        total = await pool.fetchval(
+            f"SELECT count(*) FROM memories m JOIN contexts c ON c.id = m.context_id {where}", *params
+        )
+        # `sort`/`order` are Literal-validated above, never user text
+        rows = await pool.fetch(
+            f"""
+            SELECT m.id, c.slug AS context, m.type, m.title, m.content, m.importance, m.confidence,
+                   m.source, m.status, m.superseded_by, m.occurred_at, m.created_at, m.updated_at
+            FROM memories m JOIN contexts c ON c.id = m.context_id
+            {where}
+            ORDER BY m.{sort} {order.upper()}, m.id
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,
+            *params,
+            limit,
+            offset,
+        )
+        return MemoryListResponse(items=[row_to_memory_out(r) for r in rows], total=total)
+
+    @app.get("/memories/{memory_id}", response_model=MemoryOut)
+    async def get_memory(
+        memory_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """One memory by id, with the same context-scope and ownership checks as
+        `/memories/{id}/related`."""
+        if principal.allowed_contexts is not None:
+            require_context_allowed(principal, await context_slug_of_memory(pool, memory_id), memory_id=memory_id)
+        if principal.owner_filter is not None:
+            owner_user_id = await owner_user_id_of_memory(pool, memory_id)
+            if owner_user_id is not False:
+                require_owner_allowed(principal, owner_user_id, memory_id=memory_id)
+        row = await pool.fetchrow(
+            """
+            SELECT m.id, c.slug AS context, m.type, m.title, m.content, m.importance, m.confidence,
+                   m.source, m.status, m.superseded_by, m.occurred_at, m.created_at, m.updated_at
+            FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1
+            """,
+            memory_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"memory '{memory_id}' not found")
+        return row_to_memory_out(row)
 
     @app.get("/stats", response_model=StatsOut)
     async def get_stats(
