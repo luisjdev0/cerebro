@@ -38,7 +38,7 @@ class CerebroConnectionError(RuntimeError):
     def __init__(self, base_url: str, exc: httpx.RequestError):
         self.base_url = base_url
         self.original = exc
-        super().__init__(f"no se pudo conectar con {base_url}: {exc}")
+        super().__init__(f"could not connect to {base_url}: {exc}")
 
 
 class BaseClient:

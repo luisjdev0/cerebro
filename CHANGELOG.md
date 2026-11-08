@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.8.1] - Installer and client messages in English
+
+### Changed
+- `install.sh` / `install.ps1` print English messages, and their next-step hint is now
+  just `cerebro login` (interactive; username/password or token) instead of a
+  token-only command.
+- `CerebroConnectionError` message of `cerebro-clients` is English.
+
 ## [2.8.0] - Phase 1B: English-only CLI
 
 ### Changed
