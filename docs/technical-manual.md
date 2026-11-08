@@ -997,6 +997,21 @@ optional layer. Any new module added to the ecosystem must add its own
 `handle_path` block here, rather than forcing whoever deploys it to touch
 their own external reverse proxy config (see §8).
 
+**Built-in HTTPS (optional).** The site address in `gateway/Caddyfile` is
+`{$CEREBRO_DOMAIN::80}` and `compose.yaml` passes `CEREBRO_DOMAIN`, defaulting it to
+`:80`, so nothing changes unless it is set. With a domain name Caddy obtains and renews a
+Let's Encrypt certificate (needs ports 80/443 reachable: `CEREBRO_GATEWAY_HOST_PORT=80`,
+`CEREBRO_GATEWAY_HTTPS_PORT=443`, `CEREBRO_GATEWAY_BIND=0.0.0.0`) and redirects http to
+https; with an IP address it issues from its own local CA (`tls internal` behaviour),
+whose root certificate (`/data/caddy/pki/authorities/local/root.crt` in the container) must be
+trusted by each browser. Certificates live in the `cerebro-gateway-data` volume so recreating the
+container does not request them again. Two details that matter: a global `default_sni` is set to
+`CEREBRO_DOMAIN`, because a client connecting to an IP sends no SNI and, behind Docker's port
+mapping, Caddy cannot infer the name from the local address (TLS handshake fails otherwise); and the
+container healthcheck queries Caddy's admin endpoint (`127.0.0.1:2019`), since port 80 stops serving
+`/health` once a domain turns on the http-to-https redirect. The http-to-https redirect always points
+at port 443, so with a non-standard `CEREBRO_GATEWAY_HTTPS_PORT` open the `https://` address directly.
+
 ---
 
 ## 7. Testing conventions

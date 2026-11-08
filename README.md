@@ -123,6 +123,11 @@ direct access within the compose network); it's an additional, optional layer. W
 build the final URL by concatenating `base_url` + relative path. See "HTTPS with Caddy" in
 `DEPLOY.md` for the full example with a real domain.
 
+Without an external proxy, the gateway can also serve **HTTPS itself**: set
+`CEREBRO_DOMAIN` in `.env` to a domain (automatic Let's Encrypt certificate) or to an IP
+(certificate from Caddy's local CA, for a LAN/test server). Empty (the default) keeps
+plain HTTP. Details in "Built-in HTTPS" in `DEPLOY.md`.
+
 ### C. I just want to connect Claude/an agent via MCP or CLI (I already have the APIs running elsewhere)
 
 You don't need to clone the backend - just the client layer:

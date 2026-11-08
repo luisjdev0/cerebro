@@ -133,6 +133,36 @@ sudo systemctl reload caddy
 In that case there's no need to run the `gateway` container at all.
 </details>
 
+### Built-in HTTPS (no external Caddy)
+
+If you would rather not run a Caddy on the host, the gateway container can serve HTTPS by
+itself. In `.env`:
+
+```bash
+CEREBRO_DOMAIN=cerebro.example.com   # your domain; its DNS must already point at this server
+CEREBRO_GATEWAY_HOST_PORT=80
+CEREBRO_GATEWAY_HTTPS_PORT=443
+CEREBRO_GATEWAY_BIND=0.0.0.0
+```
+
+then `docker compose --profile full up -d gateway`. Caddy gets a Let's Encrypt certificate
+on its own, renews it, and redirects http to https. Ports 80 and 443 must be free on the
+host (do not also run a host Caddy on them) and reachable from the internet. Certificates are
+kept in the `cerebro-gateway-data` volume.
+
+**LAN / test server (no domain):** set `CEREBRO_DOMAIN` to the server's IP address instead
+(and keep non-privileged ports if you like, e.g. `CEREBRO_GATEWAY_HTTPS_PORT=8443`, then browse
+to `https://<ip>:8443` directly — the automatic http redirect always targets port 443). Caddy
+issues the certificate from its own local CA, so browsers show a warning until they trust it:
+
+```bash
+docker cp cerebro-gateway:/data/caddy/pki/authorities/local/root.crt ./cerebro-local-ca.crt
+# import cerebro-local-ca.crt into the OS/browser trust store of each machine
+```
+
+Leave `CEREBRO_DOMAIN` empty to keep plain HTTP behind an external reverse proxy (the
+default, and what the section above describes).
+
 > **No domain?** Private alternative: install [Tailscale](https://tailscale.com) on
 > the VPS and on your machines; the gateway becomes accessible only within your
 > tailnet via `http://<ip-tailscale>:8080` without exposing anything to the internet
