@@ -76,6 +76,16 @@ export const startFlow = (code: string) => api<RunState>(`/flows/flows/${encodeU
 export const browseRuns = (p: RunListParams) => api<{ items: RunSummary[]; total: number }>(`/flows/runs?${qs({ ...p })}`);
 export const getRun = (id: string) => api<RunState>(`/flows/runs/${id}`);
 export const getRunEvents = (id: string) => api<RunEvent[]>(`/flows/runs/${id}/events`);
-export const approveRun = (id: string) => api<RunState>(`/flows/runs/${id}/approve-checkpoint`, { method: 'POST' });
-export const rejectRun = (id: string, reason: string) => api<RunState>(`/flows/runs/${id}/reject-checkpoint`, { method: 'POST', json: { reason } });
-export const abortRun = (id: string, reason?: string) => api<RunState>(`/flows/runs/${id}/abort`, { method: 'POST', json: reason ? { reason } : {} });
+
+export type FlowReference = { ref: string; kind: 'metadata' | 'prompt'; step_id: string | null };
+export const getFlowDiagram = (code: string, version?: number) =>
+  api<{ code: string; version: number; format: string; diagram: string }>(
+    `/flows/flows/${encodeURIComponent(code)}/diagram?format=mermaid${version ? `&version=${version}` : ''}`,
+  );
+export const getFlowReferences = (code: string) => api<FlowReference[]>(`/flows/flows/${encodeURIComponent(code)}/references`);
+
+/** `cerebro-docs://category/slug` -> its parts; anything else is not a document link. */
+export function parseDocRef(ref: string): { category: string; slug: string } | null {
+  const m = /^cerebro-docs:\/\/([^/\s]+)\/(\S+)$/.exec(ref.trim());
+  return m ? { category: m[1], slug: m[2] } : null;
+}

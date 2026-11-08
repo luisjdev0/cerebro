@@ -1409,6 +1409,34 @@ def flow_get(code: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def flow_diagram(code: str, version: int | None = None) -> dict[str, Any]:
+    """Draws a flow as a Mermaid flowchart (tasks, decisions with their branches, delegates,
+    approval checkpoints and rejection paths), generated from its complete definition.
+
+    For showing or reviewing a flow to a person. Do NOT use it to EXECUTE a flow
+    (that's flow_start/flow_next, which reveal one step at a time).
+
+    Args:
+        code: sequential id of the flow, e.g. "INC-22".
+        version: a saved version number (default: the current one).
+
+    Returns:
+        dict with `diagram` (Mermaid source), `code`, `version` and `format`, or `error`.
+    """
+    try:
+        return _flows.get_flow_diagram(code, version=version)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            what = f"flow '{code}'" if version is None else f"version {version} of flow '{code}'"
+            return {"error": f"No {what} exists."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
+
+
+@mcp.tool()
 def flow_list(category: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """Lists flow definitions, most recent first.
 

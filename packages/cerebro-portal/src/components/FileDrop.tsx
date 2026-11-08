@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ACCEPT } from '../lib/importDocs';
 
 /** Drag-and-drop area (also clickable) that hands the chosen files to `onFiles`. */
-export function FileDrop({ onFiles, disabled }: { onFiles: (files: File[]) => void; disabled?: boolean }) {
+export function FileDrop({ onFiles, disabled, multiple = true, accept = ACCEPT, title, hint }: { onFiles: (files: File[]) => void; disabled?: boolean; multiple?: boolean; accept?: string; title?: string; hint?: string }) {
   const { t } = useTranslation();
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -34,13 +34,13 @@ export function FileDrop({ onFiles, disabled }: { onFiles: (files: File[]) => vo
       className={`flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border-2 border-dashed p-5 text-center transition-colors ${over ? 'border-brand-soft bg-brand-soft/10' : 'hover:bg-muted/50'} ${disabled ? 'pointer-events-none opacity-60' : ''}`}
     >
       <UploadCloud className="size-6 text-muted-foreground" />
-      <p className="text-sm font-medium">{t('docs.import.drop')}</p>
-      <p className="text-xs text-muted-foreground">{t('docs.import.dropHint')}</p>
+      <p className="text-sm font-medium">{title ?? t('docs.import.drop')}</p>
+      <p className="text-xs text-muted-foreground">{hint ?? t('docs.import.dropHint')}</p>
       <input
         ref={input}
         type="file"
-        multiple
-        accept={ACCEPT}
+        multiple={multiple}
+        accept={accept}
         className="hidden"
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);

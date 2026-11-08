@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
-import { Check, OctagonX, X } from 'lucide-react';
+import { Badge, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
-import { abortRun, approveRun, getRun, getRunEvents, rejectRun, type RunEvent, type RunStep, type RunSummary } from '../lib/flows';
-import { Field, INPUT, useErrorMessage } from './formUi';
+import { getRun, getRunEvents, type RunEvent, type RunStep, type RunSummary } from '../lib/flows';
 import { RunStatusBadge } from './flowUi';
 import { useDateTime } from './memoryUi';
 import { ResizableSheet } from './ResizableSheet';
@@ -38,17 +36,13 @@ function StepCard({ step }: { step: RunStep }) {
 }
 
 /** Right-hand panel: where one run is, its audit trail, and the human actions (approve / reject / abort). */
-export function RunDetail({ run, onClose, onChanged }: { run: RunSummary | null; onClose: () => void; onChanged: () => void }) {
+/** Read-only view of a run. Approving, rejecting or aborting is the agent's job (MCP/CLI), not the portal's. */
+export function RunDetail({ run, onClose }: { run: RunSummary | null; onClose: () => void }) {
   const { t } = useTranslation();
   const fmt = useDateTime();
-  const errMsg = useErrorMessage();
   const [step, setStep] = useState<RunStep | RunStep[] | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string>();
-  const [mode, setMode] = useState<'reject' | 'abort' | null>(null);
-  const [reason, setReason] = useState('');
 
   const id = run?.run_id ?? null;
   const position = `${run?.status}|${run?.current_step_id}|${run?.awaiting_approval}|${run?.expired}`;
@@ -66,27 +60,6 @@ export function RunDetail({ run, onClose, onChanged }: { run: RunSummary | null;
     if (!id || !run) return undefined;
     return load(id, run.status === 'in_progress' && !run.expired);
   }, [id, position]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    setMode(null);
-    setReason('');
-    setActionError(undefined);
-  }, [id]);
-
-  const act = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setActionError(undefined);
-    try {
-      await fn();
-      setMode(null);
-      setReason('');
-      onChanged();
-    } catch (e) {
-      setActionError(errMsg(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const live = run?.status === 'in_progress' && !run.expired;
   const steps = Array.isArray(step) ? step : step ? [step] : [];
 
@@ -121,29 +94,12 @@ export function RunDetail({ run, onClose, onChanged }: { run: RunSummary | null;
             )}
 
             {live && run.awaiting_approval && !Array.isArray(step) && step?.checkpoint && (
-              <section className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+              <section className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
                 <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('flows.run.approval')}</h3>
                 <p className="text-sm font-medium">{step.checkpoint.prompt}</p>
-                {mode === 'reject' ? (
-                  <div className="space-y-3">
-                    <Field label={t('flows.run.reasonRequired')} hint={t('flows.run.rejectHint', { step: step.checkpoint.on_reject })}>
-                      <textarea autoFocus rows={3} className={INPUT} value={reason} onChange={(e) => setReason(e.target.value)} />
-                    </Field>
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMode(null)}>{t('docs.actions.cancel')}</Button>
-                      <Button size="sm" variant="primary" arrow={false} disabled={busy || !reason.trim()} onClick={() => void act(() => rejectRun(run.run_id, reason.trim()))}>{t('flows.run.reject')}</Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="primary" arrow={false} leadingIcon={Check} disabled={busy} onClick={() => void act(() => approveRun(run.run_id))}>{t('flows.run.approve')}</Button>
-                    <Button size="sm" variant="tertiary" leadingIcon={X} disabled={busy} onClick={() => setMode('reject')}>{t('flows.run.reject')}</Button>
-                  </div>
-                )}
+                <p className="text-xs text-muted-foreground">{t('flows.run.approvalNote', { step: step.checkpoint.on_reject })}</p>
               </section>
             )}
-
-            {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
 
             <section className="space-y-3">
               <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('flows.run.timeline')}</h3>
@@ -174,23 +130,6 @@ export function RunDetail({ run, onClose, onChanged }: { run: RunSummary | null;
         )}
       </div>
 
-      {run && run.status === 'in_progress' && (
-        <div className="border-t p-3">
-          {mode === 'abort' ? (
-            <div className="space-y-3">
-              <Field label={t('flows.run.abortReason')} hint={t('flows.run.abortHint')}>
-                <textarea autoFocus rows={2} className={INPUT} value={reason} onChange={(e) => setReason(e.target.value)} />
-              </Field>
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMode(null)}>{t('docs.actions.cancel')}</Button>
-                <Button size="sm" variant="primary" arrow={false} disabled={busy} onClick={() => void act(() => abortRun(run.run_id, reason.trim() || undefined))}>{t('flows.run.abort')}</Button>
-              </div>
-            </div>
-          ) : (
-            <Button size="sm" variant="ghost" className="text-destructive-text" leadingIcon={OctagonX} onClick={() => { setMode('abort'); setReason(''); }}>{t('flows.run.abort')}</Button>
-          )}
-        </div>
-      )}
     </ResizableSheet>
   );
 }

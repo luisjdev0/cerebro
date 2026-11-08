@@ -88,6 +88,14 @@ def test_get_prints_yaml_content(capsys):
     assert "metadata: {}" in capsys.readouterr().out
 
 
+def test_diagram_prints_mermaid(capsys):
+    client = MagicMock()
+    client.get_flow_diagram.return_value = {"diagram": "flowchart TD\n"}
+    flow_commands.cmd_diagram(argparse.Namespace(code="INC-1", version=3), client=client)
+    client.get_flow_diagram.assert_called_once_with("INC-1", version=3)
+    assert capsys.readouterr().out.startswith("flowchart TD")
+
+
 def test_list_routes_to_client(capsys):
     client = MagicMock()
     client.list_flows.return_value = []

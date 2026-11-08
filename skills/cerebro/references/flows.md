@@ -71,7 +71,7 @@ to define a new process:
    auto-generated if you omit it. To modify an existing flow use
    `flow_update(code, yaml_content)` (replaces the whole YAML, versioned: a run
    already in progress keeps following the version it started with).
-5. `flow_get(code)`/`flow_list(category?)` to inspect what already exists
+5. `flow_get(code)`/`flow_list(category?)` to inspect what already exists; `flow_diagram(code)` to show a flow to the person as a Mermaid flowchart
    before creating something redundant — same criterion as with memory and
    documents: search before duplicating.
 6. `flow_delete(code)` is irreversible (it also deletes the run history) —

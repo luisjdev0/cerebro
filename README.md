@@ -633,6 +633,7 @@ Postgres at every step, never fully cached.
 | `POST` | `/flows/validate` | write | validates a YAML WITHOUT saving it -- a precise error (which step, which field) for iterative authoring |
 | `POST` | `/flows` | write | creates a definition (`category`, `yaml_content`, `code?`); `code` auto-generated if omitted |
 | `GET` | `/flows/{code}` | read | full definition (YAML of the current version) |
+| `GET` | `/flows/{code}/diagram` | read | Mermaid flowchart of the complete definition (`format=mermaid`, `version?`) -- for people; execution still reveals one step at a time |
 | `GET` | `/flows` | read | lists definitions (`category?`) |
 | `PATCH` | `/flows/{code}` | write | replaces the YAML (new version, snapshots the previous one) -- a run in progress keeps following the version it started with |
 | `DELETE` | `/flows/{code}` | write | deletes (cascading to versions and runs) |
@@ -720,7 +721,7 @@ so `cerebro-cli` shares exactly the same path.
   `docs_update`, `docs_patch_section`, `docs_delete`, `docs_archive`,
   `docs_unarchive`, `docs_list_archived`, `docs_history`.
 - **`flow_*`** (13, talk to `cerebro-flows`): `flow_create_category`,
-  `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_list`,
+  `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_diagram`, `flow_list`,
   `flow_update`, `flow_delete` (authoring/CRUD) + `flow_start`, `flow_next`,
   `flow_approve_checkpoint`, `flow_reject_checkpoint`, `flow_abort` (execution
   engine -- see "`cerebro-flows`" above for the step-by-step protocol).

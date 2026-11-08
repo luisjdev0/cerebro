@@ -259,7 +259,7 @@ function FlowsTab({ categories, reloadCategories, onChanged, changeKey }: { cate
   );
 }
 
-function RunsTab({ categories, onChanged, changeKey }: { categories: FlowCategory[]; onChanged: () => void; changeKey: number }) {
+function RunsTab({ categories, changeKey }: { categories: FlowCategory[]; changeKey: number }) {
   const { t } = useTranslation();
   const dt = useDateTime();
   const [status, setStatus] = useState<RunStatus | 'all'>('all');
@@ -269,7 +269,6 @@ function RunsTab({ categories, onChanged, changeKey }: { categories: FlowCategor
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(() => loadPageSize('cerebro.runs.pageSize'));
-  const [reloadKey, setReloadKey] = useState(0);
   const [items, setItems] = useState<RunSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -299,7 +298,7 @@ function RunsTab({ categories, onChanged, changeKey }: { categories: FlowCategor
     return () => {
       cancelled = true;
     };
-  }, [status, awaiting, category, sort, order, page, pageSize, reloadKey, changeKey]);
+  }, [status, awaiting, category, sort, order, page, pageSize, changeKey]);
 
   // The open panel follows its row when the list reloads (after approving, say); it keeps the last known state otherwise.
   const open = openId ? items.find((r) => r.run_id === openId) ?? (opened?.run_id === openId ? opened : null) : null;
@@ -330,10 +329,6 @@ function RunsTab({ categories, onChanged, changeKey }: { categories: FlowCategor
   const filtered = status !== 'all' || awaiting || category !== '';
   // "Awaiting approval" is a view of in-progress runs sorted by age: the column sort does not apply to it.
   const sortProps = { sort, order, onSort: toggleSort, disabled: awaiting };
-  const refresh = () => {
-    setReloadKey((k) => k + 1);
-    onChanged();
-  };
 
   return (
     <>
@@ -403,7 +398,7 @@ function RunsTab({ categories, onChanged, changeKey }: { categories: FlowCategor
       </div>
       <Pager barRef={barRef} loading={loading} error={error} total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} holdBar={holdBar} />
 
-      <RunDetail run={open} onClose={() => setOpenId(null)} onChanged={refresh} />
+      <RunDetail run={open} onClose={() => setOpenId(null)} />
     </>
   );
 }
@@ -465,7 +460,7 @@ export function Workflows() {
       {tab === 'flows' ? (
         <FlowsTab categories={categories} reloadCategories={reloadCategories} onChanged={bump} changeKey={changeKey} />
       ) : (
-        <RunsTab categories={categories} onChanged={bump} changeKey={changeKey} />
+        <RunsTab categories={categories} changeKey={changeKey} />
       )}
     </>
   );

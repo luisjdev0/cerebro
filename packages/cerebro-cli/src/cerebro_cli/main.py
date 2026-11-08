@@ -254,6 +254,11 @@ def _add_flows_subparser(sub: argparse._SubParsersAction) -> None:
     p_get.add_argument("code")
     p_get.set_defaults(func=flow_commands.cmd_get)
 
+    p_diagram = flow_sub.add_parser("diagram", help="Print a flow as a Mermaid flowchart")
+    p_diagram.add_argument("code")
+    p_diagram.add_argument("--version", type=int, default=None, help="saved version number (default: current)")
+    p_diagram.set_defaults(func=flow_commands.cmd_diagram)
+
     p_list = flow_sub.add_parser("list", help="List flow definitions")
     p_list.add_argument("--category", default=None)
     p_list.add_argument("--limit", type=int, default=20)

@@ -6,20 +6,27 @@ import {
   createFlow,
   deleteFlow,
   getFlow,
+  getFlowReferences,
   getFlowVersions,
+  parseDocRef,
   updateFlow,
   validateFlow,
   type Flow,
   type FlowCategory,
+  type FlowReference,
   type FlowVersion,
 } from '../lib/flows';
 import { api } from '../lib/api';
+import { getDocument, listCategories as listDocCategories, type Category as DocCategory } from '../lib/documents';
 import { slugify } from '../lib/memories';
 import { Field, INPUT, useErrorMessage } from './formUi';
 import { useDateTime } from './memoryUi';
 import { ResizableSheet } from './ResizableSheet';
-import { YamlView } from './YamlView';
+import { FlowDefinitionView } from './FlowDefinitionView';
+import { YamlFileDrop } from './YamlFileDrop';
+import { DocumentDetail, type DocRef } from './DocumentDetail';
 
+const NEW_CATEGORY = '__new__';
 const YAML_AREA = `${INPUT} font-mono text-[13px] leading-relaxed`;
 
 const template = (category: string) => `metadata:
@@ -169,21 +176,24 @@ export function NewFlowPanel({ open, categories, defaultCategory, onClose, onCre
               </Field>
               <div className="flex justify-end gap-2">
                 {!noCategories && <Button type="button" size="sm" variant="ghost" onClick={() => setNewCat(false)}>{t('docs.actions.cancel')}</Button>}
-                <Button type="button" size="sm" variant="primary" arrow={false} disabled={busy || !catName.trim() || !catCode.trim()} onClick={() => void createCat()}>{t('docs.actions.create')}</Button>
+                <Button type="button" size="sm" variant="primary" arrow={false} disabled={busy || !catName.trim() || !catCode.trim()} onClick={() => void createCat()}>{t('flows.cat.create')}</Button>
               </div>
             </div>
           ) : (
             <Field label={t('docs.form.category')}>
-              <div className="flex gap-2">
-                <select className={INPUT} value={category} onChange={(e) => setCategory(e.target.value)}>
-                  {categories.map((c) => (
-                    <option key={c.slug} value={c.slug}>{c.name} ({c.code})</option>
-                  ))}
-                </select>
-                <Button type="button" size="sm" variant="ghost" leadingIcon={Plus} onClick={() => setNewCat(true)}>{t('flows.cat.new')}</Button>
-              </div>
+              <select
+                className={INPUT}
+                value={category}
+                onChange={(e) => (e.target.value === NEW_CATEGORY ? setNewCat(true) : setCategory(e.target.value))}
+              >
+                {categories.map((c) => (
+                  <option key={c.slug} value={c.slug}>{c.name} ({c.code})</option>
+                ))}
+                <option value={NEW_CATEGORY}>＋ {t('flows.cat.new')}…</option>
+              </select>
             </Field>
           )}
+          <YamlFileDrop disabled={busy} onText={(text) => setYaml(text)} />
           <Field label={t('flows.form.yaml')} hint={t('flows.form.yamlHint')}>
             <textarea required rows={20} spellCheck={false} className={YAML_AREA} value={yaml} onChange={(e) => setYaml(e.target.value)} />
           </Field>
@@ -201,6 +211,71 @@ export function NewFlowPanel({ open, categories, defaultCategory, onClose, onCre
   );
 }
 
+
+type ResolvedRef = FlowReference & { doc: DocRef | null; title: string | null; found: boolean };
+
+/** Cerebro documents the flow points at (metadata references and delegate prompts), resolved to their titles. */
+function RelatedDocuments({ code, onOpen }: { code: string; onOpen: (r: DocRef) => void }) {
+  const { t } = useTranslation();
+  const [items, setItems] = useState<ResolvedRef[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setItems(null);
+    getFlowReferences(code)
+      .then((refs) =>
+        Promise.all(
+          refs.map(async (r): Promise<ResolvedRef> => {
+            const doc = parseDocRef(r.ref);
+            if (!doc) return { ...r, doc: null, title: null, found: false };
+            try {
+              const d = await getDocument(doc.category, doc.slug);
+              return { ...r, doc: { category: d.category, slug: d.slug }, title: d.title, found: true };
+            } catch {
+              return { ...r, doc, title: null, found: false };
+            }
+          }),
+        ),
+      )
+      .then((r) => !cancelled && setItems(r), () => !cancelled && setItems([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('flows.detail.related')}</h3>
+      {items === null ? (
+        <div className="h-10 animate-pulse rounded bg-muted" />
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t('flows.detail.noRelated')}</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((r, i) => (
+            <li key={`${r.ref}-${i}`}>
+              <button
+                type="button"
+                disabled={!r.found}
+                onClick={() => r.doc && onOpen(r.doc)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors enabled:hover:bg-muted disabled:cursor-default"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{r.title ?? r.ref}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted-foreground">{r.doc ? `${r.doc.category}/${r.doc.slug}` : r.ref}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <Badge variant="outline">{r.kind === 'prompt' ? t('flows.detail.refPrompt', { step: r.step_id }) : t('flows.detail.refMeta')}</Badge>
+                  {!r.found && <Badge variant="warning">{t('flows.detail.refMissing')}</Badge>}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** Right-hand panel: one flow definition, its YAML, version history, editing and deleting. */
 export function FlowDetail({ code, onClose, onChanged }: { code: string | null; onClose: () => void; onChanged: () => void }) {
   const { t } = useTranslation();
@@ -215,6 +290,12 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [docRef, setDocRef] = useState<DocRef | null>(null);
+  const [docCategories, setDocCategories] = useState<DocCategory[]>([]);
+  useEffect(() => {
+    if (docRef && docCategories.length === 0) listDocCategories().then(setDocCategories, () => undefined);
+  }, [docRef]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setDocRef(null), [code]);
 
   const load = useCallback((c: string) => {
     let cancelled = false;
@@ -272,6 +353,7 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
   };
 
   return (
+    <>
     <ResizableSheet open={code !== null} onClose={onClose}>
       <SheetHeader className="space-y-2 border-b bg-muted/30 p-6 pr-12">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -290,6 +372,7 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
       <div className="flex-1 space-y-7 overflow-y-auto p-6">
         {flow && editing && (
           <div className="space-y-4">
+            <YamlFileDrop disabled={busy} onText={(text) => setDraft(text)} />
             <Field label={t('flows.form.yaml')} hint={t('flows.form.editNote')}>
               <textarea autoFocus rows={22} spellCheck={false} className={YAML_AREA} value={draft} onChange={(e) => setDraft(e.target.value)} />
             </Field>
@@ -311,9 +394,11 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
                 <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('flows.detail.definition')}</h3>
                 <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={() => { setDraft(flow.yaml_content); setEditing(true); setActionError(undefined); }}>{t('docs.actions.edit')}</Button>
               </div>
-              <YamlView value={flow.yaml_content} filename={`${flow.code}.yaml`} />
+              <FlowDefinitionView code={flow.code} yaml={flow.yaml_content} filename={`${flow.code}.yaml`} />
               {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
             </section>
+
+            <RelatedDocuments code={flow.code} onOpen={setDocRef} />
 
             <section className="space-y-3">
               <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('docs.detail.details')}</h3>
@@ -351,7 +436,7 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
                         </Button>
                       </div>
                       {shown === v.version_number && (
-                        <div className="border-t bg-muted/20 p-4"><YamlView value={v.yaml_content} filename={`${flow.code}-v${v.version_number}.yaml`} /></div>
+                        <div className="border-t bg-muted/20 p-4"><FlowDefinitionView code={flow.code} version={v.version_number} yaml={v.yaml_content} filename={`${flow.code}-v${v.version_number}.yaml`} /></div>
                       )}
                     </li>
                   ))}
@@ -379,5 +464,7 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
         onConfirm={() => void remove()}
       />
     </ResizableSheet>
+    <DocumentDetail docRef={docRef} categories={docCategories} onOpen={setDocRef} onClose={() => setDocRef(null)} onChanged={() => undefined} />
+    </>
   );
 }

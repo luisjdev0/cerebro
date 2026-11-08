@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from pydantic import BaseModel, ConfigDict, Field
 
 from cerebro_flows import engine
+from cerebro_flows.diagram import flow_references, flow_to_mermaid
 from cerebro_flows.auth import (
     Principal,
     get_principal,
@@ -136,6 +137,19 @@ class FlowVersionOut(BaseModel):
     version_number: int
     yaml_content: str
     created_at: datetime
+
+
+class FlowDiagramOut(BaseModel):
+    code: str
+    version: int
+    format: str
+    diagram: str
+
+
+class FlowReferenceOut(BaseModel):
+    ref: str
+    kind: Literal["metadata", "prompt"]
+    step_id: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -700,6 +714,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_category_allowed(principal, row["category"])
         require_owner_allowed(principal, row["owner_user_id"])
         return dict(row)
+
+    async def _flow_yaml(
+        pool: asyncpg.Pool, principal: Principal, code: str, version: int | None
+    ) -> tuple[int, str]:
+        """(version, yaml) of a flow the caller may read; the current version when `version` is None."""
+        row = await _flow_category_and_owner(pool, code)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
+        require_category_allowed(principal, row["slug"])
+        require_owner_allowed(principal, row["owner_user_id"])
+        found = await pool.fetchrow(
+            """
+            SELECT v.version_number, v.yaml_content
+            FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.definition_id
+            WHERE f.code = $1 AND v.version_number = coalesce($2::int, f.current_version)
+            """,
+            code,
+            version,
+        )
+        if found is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"version {version} not found")
+        return found["version_number"], found["yaml_content"]
+
+    @app.get("/flows/{code}/diagram", response_model=FlowDiagramOut)
+    async def flow_diagram(
+        code: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        format: Literal["mermaid"] = "mermaid",
+        version: Annotated[int | None, Query(ge=1)] = None,
+    ):
+        """Mermaid flowchart of the COMPLETE definition (for people; execution still reveals one step at a time)."""
+        number, text = await _flow_yaml(pool, principal, code, version)
+        return {"code": code, "version": number, "format": format, "diagram": flow_to_mermaid(validate_flow_yaml(text))}
+
+    @app.get("/flows/{code}/references", response_model=list[FlowReferenceOut])
+    async def flow_refs(
+        code: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """cerebro-docs URIs the current definition points at (metadata references and delegate prompts)."""
+        _, text = await _flow_yaml(pool, principal, code, None)
+        return flow_references(validate_flow_yaml(text))
 
     @app.get("/flows/{code}/versions", response_model=list[FlowVersionOut])
     async def flow_versions(

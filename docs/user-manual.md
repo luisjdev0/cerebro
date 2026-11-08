@@ -343,6 +343,7 @@ often edited directly as files.
 | `cerebro flow validate --yaml-file FILE` | Validates a flow YAML definition without saving it. |
 | `cerebro flow save <category> --yaml-file FILE [--code CODE]` | Saves a new flow definition. |
 | `cerebro flow get <code>` | Reads a flow's full YAML by its code. |
+| `cerebro flow diagram <code> [--version N]` | Prints the flow as a Mermaid flowchart (paste it into any Mermaid renderer; the portal draws it for you). |
 | `cerebro flow list [--category SLUG] [--limit N] [--offset N]` | Lists flow definitions. |
 | `cerebro flow update <code> --yaml-file FILE` | Replaces a flow's YAML (new version; runs already in progress keep the version they started with). |
 | `cerebro flow delete <code> [--yes]` | Permanently deletes a flow definition and its run history. |

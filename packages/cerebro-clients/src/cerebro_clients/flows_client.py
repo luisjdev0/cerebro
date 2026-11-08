@@ -63,6 +63,13 @@ class FlowsClient(BaseClient):
     def get_flow(self, code: str) -> dict[str, Any]:
         return self._request("GET", f"/flows/{code}").json()
 
+    def get_flow_diagram(self, code: str, *, version: int | None = None) -> dict[str, Any]:
+        """Mermaid flowchart of the flow's complete definition (current version unless `version` is given)."""
+        params: dict[str, Any] = {"format": "mermaid"}
+        if version is not None:
+            params["version"] = version
+        return self._request("GET", f"/flows/{code}/diagram", params=params).json()
+
     def list_flows(self, *, category: str | None = None, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if category is not None:

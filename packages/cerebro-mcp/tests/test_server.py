@@ -470,6 +470,17 @@ def test_flow_get_routes_to_client(fake_clients):
     assert "error" in out
 
 
+def test_flow_diagram_routes_to_client(fake_clients):
+    _, _, fake_flows, _ = fake_clients
+    fake_flows.get_flow_diagram.return_value = {"code": "INC-1", "version": 1, "format": "mermaid", "diagram": "flowchart TD\n"}
+    out = server.flow_diagram("INC-1", version=1)
+    fake_flows.get_flow_diagram.assert_called_once_with("INC-1", version=1)
+    assert out["diagram"].startswith("flowchart")
+
+    fake_flows.get_flow_diagram.side_effect = _api_error(404)
+    assert "error" in server.flow_diagram("missing")
+
+
 def test_flow_list_routes_to_client(fake_clients):
     _, _, fake_flows, _ = fake_clients
     fake_flows.list_flows.return_value = [{"code": "INC-1"}]

@@ -5,12 +5,12 @@ import { copyText } from '../lib/clipboard';
 import { Markdown } from './Markdown';
 
 /** Small "copy markdown" icon button that confirms with a check for a moment. */
-export function CopyButton({ text }: { text: string }) {
+export function CopyButton({ text, label: customLabel }: { text: string; label?: string }) {
   const { t } = useTranslation();
   const [done, setDone] = useState(false);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  const label = done ? t('docs.form.copied') : t('docs.form.copy');
+  const label = done ? t('docs.form.copied') : (customLabel ?? t('docs.form.copy'));
   return (
     <button
       type="button"
