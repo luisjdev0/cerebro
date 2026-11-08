@@ -138,6 +138,10 @@ services before being caught in live testing.
 
 ## Conventions
 
+- **Everything in the repo is in English**: commit messages, PR titles and bodies,
+  code, comments, docs, CHANGELOG and every user-facing string of the CLI (the CLI
+  is English-only; there is no i18n layer). Check `git log` and follow the existing
+  style before writing a commit.
 - **Config**: `pydantic-settings`, one `config.py` per package, sensible
   defaults + environment variable overrides. Never hardcode URLs/ports/tokens.
 - **Errors in MCP tools**: always `{"error": "<message>"}`, never let a raw

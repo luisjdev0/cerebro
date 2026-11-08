@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.8.0] - Phase 1B: English-only CLI
+
+### Changed
+- Every user-facing string of the CLI (`--help`, menus, prompts, messages and errors)
+  is now in English, matching the rest of the repository. The CLI is English-only by
+  decision: no i18n layer and no language selection.
+- Tests assert the English messages, and a new guard test
+  (`test_english_only.py`) fails if accented characters or obvious Spanish words
+  reappear in user-facing strings.
+
 ### Changed
 - The CLI release is now automatic: merging to `main` a change whose newest
   CHANGELOG heading (`## [X.Y.Z]`) has no release yet builds the binaries and

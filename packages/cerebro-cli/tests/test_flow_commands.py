@@ -40,7 +40,7 @@ class TestValidate:
         args = argparse.Namespace(yaml_file=str(yaml_file))
         flow_commands.cmd_validate(args, client=client)
         client.validate_flow.assert_called_once_with("metadata: {}")
-        assert "Valido" in capsys.readouterr().out
+        assert "Valid" in capsys.readouterr().out
 
     def test_invalid_exits_with_detail(self, tmp_path):
         yaml_file = tmp_path / "flow.yaml"

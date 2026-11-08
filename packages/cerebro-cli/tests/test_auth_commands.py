@@ -102,7 +102,7 @@ class TestUserList:
         client = MagicMock()
         client.list_users.return_value = []
         auth_commands.cmd_user_list(argparse.Namespace(), client=client)
-        assert "sin usuarios" in capsys.readouterr().out
+        assert "no users yet" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- group

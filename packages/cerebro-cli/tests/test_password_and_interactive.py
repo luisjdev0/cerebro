@@ -72,7 +72,7 @@ class TestPasswordLogin:
             auth_commands.cmd_login(_login_args(user="ana"), client=MagicMock())
 
     def test_bad_credentials_and_lockout_write_nothing(self, isolated, capsys):
-        for status, text in ((401, "credenciales"), (429, "bloqueada")):
+        for status, text in ((401, "invalid credentials"), (429, "locked")):
             client = MagicMock()
             client.login_password.side_effect = _api_error(status)
             with pytest.raises(SystemExit):
@@ -112,7 +112,7 @@ class TestLogout:
 
     def test_nothing_saved(self, capsys):
         auth_commands.cmd_logout(argparse.Namespace(), client=MagicMock())
-        assert "No hay" in capsys.readouterr().out
+        assert "no saved session" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- users
@@ -137,7 +137,7 @@ class TestUserPasswords:
         auth_commands.cmd_user_set_password(args, client=client)
         client.set_password.assert_called_once_with("ana", "new-long-password", current_password="old-long-password")
 
-    @pytest.mark.parametrize("status,text", [(403, "No autorizado"), (429, "bloqueada")])
+    @pytest.mark.parametrize("status,text", [(403, "Not authorized"), (429, "locked")])
     def test_set_password_errors(self, status, text, capsys):
         client = MagicMock()
         client.set_password.side_effect = _api_error(status)
@@ -179,7 +179,7 @@ class TestSessionState:
         tokens.save_login_config("t", None, kind="session", expires_at=past)
         with pytest.raises(SystemExit):
             cli_main.main(["docs", "list", "--no-interactive"])
-        assert "caducado" in capsys.readouterr().err
+        assert "expired" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------- interactive layer
