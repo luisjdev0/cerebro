@@ -284,6 +284,7 @@ export const es = {
       refPrompt: 'Prompt de «{{step}}»',
       refMissing: 'No encontrado',
     },
+    refDoc: { title: 'Subir el documento referenciado', desc: 'El flujo apunta a este documento. Estas categorías están ocultas en la pantalla Documentos, así que se sube desde aquí.', upload: 'Subir', drop: 'Suelta un archivo .md o .txt aquí o haz clic para elegirlo', dropHint: 'Un solo archivo; rellena el título y el contenido de abajo', one: 'Elige un archivo a la vez.' },
     diagram: { error: 'No se pudo dibujar el diagrama.', copySource: 'Copiar código Mermaid', zoomIn: 'Acercar', zoomOut: 'Alejar', fit: 'Ver el diagrama completo', actualSize: 'Tamaño real', fullscreen: 'Pantalla completa', exitFullscreen: 'Salir de pantalla completa', hint: 'Arrastra para mover · rueda para zoom · doble clic para ajustar', export: 'Exportar', exporting: 'Exportando…', exportError: 'No se pudo exportar.', as_png: 'Imagen PNG', as_svg: 'SVG (vectorial)', as_pdf: 'Documento PDF' },
     upload: { drop: 'Suelta un archivo .yaml aquí o haz clic para elegirlo', hint: 'Un solo archivo; reemplaza el texto de abajo', one: 'Elige un archivo a la vez.', type: 'Solo archivos .yaml o .yml.', size: 'El archivo pesa más de 1 MB.', empty: 'El archivo está vacío.' },
     deleteTitle: '¿Eliminar este flujo?',

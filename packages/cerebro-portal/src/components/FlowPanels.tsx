@@ -25,6 +25,7 @@ import { ResizableSheet } from './ResizableSheet';
 import { FlowDefinitionView } from './FlowDefinitionView';
 import { YamlFileDrop } from './YamlFileDrop';
 import { DocumentDetail, type DocRef } from './DocumentDetail';
+import { RefDocPanel, type MissingRef } from './RefDocPanel';
 
 const NEW_CATEGORY = '__new__';
 const YAML_AREA = `${INPUT} font-mono text-[13px] leading-relaxed`;
@@ -215,7 +216,7 @@ export function NewFlowPanel({ open, categories, defaultCategory, onClose, onCre
 type ResolvedRef = FlowReference & { doc: DocRef | null; title: string | null; found: boolean };
 
 /** Cerebro documents the flow points at (metadata references and delegate prompts), resolved to their titles. */
-function RelatedDocuments({ code, onOpen }: { code: string; onOpen: (r: DocRef) => void }) {
+function RelatedDocuments({ code, reloadKey, onOpen, onUpload }: { code: string; reloadKey: number; onOpen: (r: DocRef) => void; onUpload: (r: MissingRef) => void }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ResolvedRef[] | null>(null);
   useEffect(() => {
@@ -240,7 +241,7 @@ function RelatedDocuments({ code, onOpen }: { code: string; onOpen: (r: DocRef) 
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, reloadKey]);
 
   return (
     <section className="space-y-3">
@@ -252,12 +253,12 @@ function RelatedDocuments({ code, onOpen }: { code: string; onOpen: (r: DocRef) 
       ) : (
         <ul className="space-y-2">
           {items.map((r, i) => (
-            <li key={`${r.ref}-${i}`}>
+            <li key={`${r.ref}-${i}`} className="flex items-stretch gap-2">
               <button
                 type="button"
                 disabled={!r.found}
                 onClick={() => r.doc && onOpen(r.doc)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors enabled:hover:bg-muted disabled:cursor-default"
+                className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors enabled:hover:bg-muted disabled:cursor-default"
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">{r.title ?? r.ref}</span>
@@ -268,6 +269,9 @@ function RelatedDocuments({ code, onOpen }: { code: string; onOpen: (r: DocRef) 
                   {!r.found && <Badge variant="warning">{t('flows.detail.refMissing')}</Badge>}
                 </span>
               </button>
+              {!r.found && r.doc && (
+                <Button size="sm" variant="tertiary" leadingIcon={Plus} className="shrink-0 self-center" onClick={() => r.doc && onUpload(r.doc)}>{t('flows.refDoc.upload')}</Button>
+              )}
             </li>
           ))}
         </ul>
@@ -291,11 +295,16 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
   const [actionError, setActionError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [docRef, setDocRef] = useState<DocRef | null>(null);
+  const [uploadRef, setUploadRef] = useState<MissingRef | null>(null);
+  const [refsKey, setRefsKey] = useState(0);
   const [docCategories, setDocCategories] = useState<DocCategory[]>([]);
   useEffect(() => {
     if (docRef && docCategories.length === 0) listDocCategories().then(setDocCategories, () => undefined);
   }, [docRef]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => setDocRef(null), [code]);
+  useEffect(() => {
+    setDocRef(null);
+    setUploadRef(null);
+  }, [code]);
 
   const load = useCallback((c: string) => {
     let cancelled = false;
@@ -398,7 +407,7 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
               {actionError && <p role="alert" className="text-sm text-destructive-text">{actionError}</p>}
             </section>
 
-            <RelatedDocuments code={flow.code} onOpen={setDocRef} />
+            <RelatedDocuments code={flow.code} reloadKey={refsKey} onOpen={setDocRef} onUpload={setUploadRef} />
 
             <section className="space-y-3">
               <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('docs.detail.details')}</h3>
@@ -464,6 +473,15 @@ export function FlowDetail({ code, onClose, onChanged }: { code: string | null; 
         onConfirm={() => void remove()}
       />
     </ResizableSheet>
+    <RefDocPanel
+      target={uploadRef}
+      onClose={() => setUploadRef(null)}
+      onCreated={(d) => {
+        setUploadRef(null);
+        setRefsKey((k) => k + 1);
+        setDocRef({ category: d.category, slug: d.slug });
+      }}
+    />
     <DocumentDetail docRef={docRef} categories={docCategories} onOpen={setDocRef} onClose={() => setDocRef(null)} onChanged={() => undefined} />
     </>
   );
