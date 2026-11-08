@@ -19,7 +19,7 @@ type Stats = {
   runs: number | null;
 };
 type Breakdown = { memory: Slice[]; docs: Slice[]; flows: Slice[] };
-type CategoryCount = { slug: string; name: string; count: number };
+type CategoryCount = { slug: string; name: string; count: number; code?: string };
 
 const EMPTY: Stats = { memories: null, contexts: null, documents: null, categories: null, flows: null, runs: null };
 const FILTERS: { key: 'all' | ModuleKey; label: string }[] = [
@@ -73,7 +73,7 @@ export function Dashboard() {
         flows: f?.flows ?? null,
         runs: f?.runs ?? null,
       });
-      const toSlices = (rows: CategoryCount[] | undefined) => topSlices((rows ?? []).map((r) => ({ key: r.slug, name: r.name, value: r.count })), 5, { key: '__other', name: '' });
+      const toSlices = (rows: CategoryCount[] | undefined) => topSlices((rows ?? []).map((r) => ({ key: r.slug, name: r.code ? `${r.name} (${r.code})` : r.name, value: r.count })), 5, { key: '__other', name: '' });
       setBreakdown({
         memory: topSlices(active.map((r) => ({ key: r.context, name: r.context, value: r.count })), 5, { key: '__other', name: '' }),
         docs: toSlices(d?.documents_by_category),

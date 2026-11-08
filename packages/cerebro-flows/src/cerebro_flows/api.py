@@ -101,6 +101,7 @@ class ActivityResponse(BaseModel):
 class CategoryCount(BaseModel):
     slug: str
     name: str
+    code: str  # the category's flow-code prefix, e.g. "OPS" in OPS-1
     count: int
 
 
@@ -253,9 +254,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         rows = await pool.fetch(
             f"""
-            SELECT c.slug, c.name, count(*)::int AS count
+            SELECT c.slug, c.name, c.code, count(*)::int AS count
             FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
-            {where} GROUP BY c.slug, c.name ORDER BY count(*) DESC, c.name
+            {where} GROUP BY c.slug, c.name, c.code ORDER BY count(*) DESC, c.name
             """,
             *params,
         )
