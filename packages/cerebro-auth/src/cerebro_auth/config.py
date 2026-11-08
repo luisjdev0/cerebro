@@ -21,6 +21,11 @@ class Settings(BaseSettings):
 
     migrations_dir: str = "db/migrations"
 
+    # Password login (Phase 1A)
+    session_ttl_hours: int = 12
+    max_failed_attempts: int = 5
+    lockout_minutes: int = 15
+
 
 @lru_cache
 def get_settings() -> Settings:

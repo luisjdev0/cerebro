@@ -76,7 +76,7 @@ class TestUserCreate:
 
         auth_commands.cmd_user_create(args, client=client)
 
-        client.create_user.assert_called_once_with("jose", email="jose@example.com", access_level="user")
+        client.create_user.assert_called_once_with("jose", email="jose@example.com", access_level="user", password=None)
         out = capsys.readouterr().out
         assert "jose" in out and "u1" in out
 

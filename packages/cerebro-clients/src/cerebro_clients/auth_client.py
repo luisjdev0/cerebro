@@ -41,11 +41,29 @@ class AuthClient(BaseClient):
 
     # --------------------------------------------------------------------- users
 
-    def create_user(self, name: str, email: str | None = None, access_level: str = "user") -> dict[str, Any]:
+    def create_user(
+        self,
+        name: str,
+        email: str | None = None,
+        access_level: str = "user",
+        password: str | None = None,
+    ) -> dict[str, Any]:
         body: dict[str, Any] = {"name": name, "access_level": access_level}
         if email is not None:
             body["email"] = email
+        if password is not None:
+            body["password"] = password
         return self._request("POST", "/users", json=body).json()
+
+    def set_password(self, name: str, password: str, current_password: str | None = None) -> None:
+        """`POST /users/{name}/password`. An admin may set anyone's; a regular user
+        may only change their own and must pass `current_password`. Every session of
+        that user is closed by the server. Deliberately has no MCP counterpart: a
+        password must not travel through a model's context."""
+        body: dict[str, Any] = {"password": password}
+        if current_password is not None:
+            body["current_password"] = current_password
+        self._request("POST", f"/users/{name}/password", json=body)
 
     def list_users(self) -> list[dict[str, Any]]:
         return self._request("GET", "/users").json()
@@ -116,3 +134,14 @@ class AuthClient(BaseClient):
         # yet (that's the point of logging in), and even when they do, this endpoint
         # checks the *given* token, not the caller's.
         return self._request("POST", "/login", json={"token": token}, authenticated=False).json()
+
+    def login_password(self, name: str, password: str) -> dict[str, Any]:
+        """Username + password login (`POST /login/password`). Returns the session
+        `token` and its `expires_at`. Like `login()`, sends no Authorization header."""
+        return self._request(
+            "POST", "/login/password", json={"name": name, "password": password}, authenticated=False
+        ).json()
+
+    def logout(self) -> dict[str, Any]:
+        """Revoke THIS client's own session token (`POST /logout`)."""
+        return self._request("POST", "/logout").json()

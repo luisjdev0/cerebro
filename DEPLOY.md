@@ -233,8 +233,8 @@ as legacy variables, for cerebro-memory only, if some old script still uses them
 ## 8. Connect your agents (local MCP → remote APIs)
 
 The MCP server runs on YOUR machine (stdio) and talks to the VPS. It's a single
-binary (`cerebro-mcp`, package `cerebro-mcp`) that exposes the 36 tools from the three
-services (`memory_*`, `docs_*`, `flow_*`). In `claude_desktop_config.json`:
+binary (`cerebro-mcp`, package `cerebro-mcp`) that exposes the 44 tools from the
+services (`memory_*`, `docs_*`, `flow_*`, `auth_*`). In `claude_desktop_config.json`:
 
 ```json
 "cerebro": {

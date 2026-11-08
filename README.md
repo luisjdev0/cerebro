@@ -10,7 +10,7 @@ for AI agents (Claude, GPT, Gemini, custom agents). It started as a single packa
 | [`cerebro-docs`](packages/cerebro-docs) | Sibling API service: repository of full, categorizable, versioned Markdown documents, with partial per-section patches, archiving, hidden categories, slug redirects, and full-text search | *(none — pure API service)* |
 | [`cerebro-flows`](packages/cerebro-flows) | Sibling API service: "traffic light" engine that reveals a process defined in YAML step by step to a model (never the full definition) — decisions, approval checkpoints, parallel delegation. Postgres for what's immutable + Redis only for the mutable pointer of a run | *(none — pure API service)* |
 | [`cerebro-clients`](packages/cerebro-clients) | Shared thin `httpx` SDK (`MemoryClient`, `DocsClient`, `FlowsClient`) that talks to all three APIs | *(library, not executable)* |
-| [`cerebro-mcp`](packages/cerebro-mcp) | Single stdio MCP server exposing the three services as tools (`memory_*` + `docs_*` + `flow_*`) | `cerebro-mcp` |
+| [`cerebro-mcp`](packages/cerebro-mcp) | Single stdio MCP server exposing the services as tools (`memory_*` + `docs_*` + `flow_*` + `auth_*`) | `cerebro-mcp` |
 | [`cerebro-cli`](packages/cerebro-cli) | Single CLI (`cerebro memory ...`, `cerebro docs ...`, `cerebro flow ...`, plus cross-cutting commands) | `cerebro` |
 
 `cerebro-memory`, `cerebro-docs`, and `cerebro-flows` have no business logic
@@ -709,7 +709,7 @@ each tool calls the corresponding HTTP API via `cerebro_clients` (`MemoryClient`
 `DocsClient` / `FlowsClient`), with no business logic of its own -- all of it lives in the APIs,
 so `cerebro-cli` shares exactly the same path.
 
-36 tools available:
+44 tools available:
 
 - **`memory_*`** (10, talk to `cerebro-memory`): `memory_search`,
   `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,

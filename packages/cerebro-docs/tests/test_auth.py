@@ -310,6 +310,20 @@ def _revoke_token(dsn: str, plaintext: str) -> None:
     asyncio.run(_do())
 
 
+def _expire_token(dsn: str, plaintext: str) -> None:
+    async def _do() -> None:
+        conn = await _connect(dsn)
+        try:
+            await conn.execute(
+                "UPDATE cerebro_auth.api_tokens SET expires_at = now() - interval '1 minute' WHERE token_hash = $1",
+                hash_token(plaintext),
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_do())
+
+
 # --------------------------------------------------------------------------- integration: root token
 
 
@@ -361,6 +375,14 @@ class TestSharedSchemaResolution:
         _revoke_token(settings.database_url, token)
         resp = client.get("/categories", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 401, resp.text
+
+    def test_expired_shared_token_is_401(self, client):
+        settings = get_settings()
+        token, _ = _make_user_token(settings.database_url, access_level="admin", scopes=["read"], allowed_modules=None)
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/categories", headers=headers).status_code == 200
+        _expire_token(settings.database_url, token)
+        assert client.get("/categories", headers=headers).status_code == 401
 
     def test_token_without_docs_module_is_forbidden(self, client):
         settings = get_settings()

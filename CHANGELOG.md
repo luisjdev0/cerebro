@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.7.0] - Phase 1A: interactive CLI and user/password login
+
+### Added
+- **Interactive CLI**: `cerebro` alone opens a menu; `cerebro <module>` (or any
+  group of subcommands) opens its submenu; missing required arguments are asked.
+  Built on `rich` + `questionary`, walking the existing argparse tree (no second
+  command definition). Never prompts without a TTY; `--no-interactive` /
+  `CEREBRO_NO_INTERACTIVE` forbid it. Without a session only login is offered.
+- **User/password login**: `cerebro login --user` (prompt, `--password-stdin`,
+  `CEREBRO_PASSWORD`, or the discouraged inline `--password=`), `cerebro logout`,
+  `cerebro user create --password`, `cerebro user set-password`.
+- **cerebro-auth**: argon2id passwords, `POST /login/password`, `POST /logout`,
+  `POST /users/{name}/password`, `has_password` on users, expiring session tokens
+  (`api_tokens.expires_at`), per-user lockout (migration `002`). New settings
+  `SESSION_TTL_HOURS`, `MAX_FAILED_ATTEMPTS`, `LOCKOUT_MINUTES`.
+- `cerebro-clients`: `AuthClient.login_password`, `logout`, `set_password`.
+- GitHub Actions workflow `tests.yml` running every package's suite against
+  Postgres 17 + pgvector and Redis.
+
+### Changed
+- memory/docs/flows treat an expired token like a revoked one.
+- `~/.cerebro/config.json` now also stores `kind`, `user` and `expires_at`.
+- Docs: 44 MCP tools (was 36 in README/DEPLOY/manual), `cerebro-auth` documented as
+  implemented.
+
+### Security
+- Passwords never reach the MCP layer (no tool by design); generic `401` for all
+  bad-credential cases with timing equalisation; password changes close sessions.
+
 ## [2.6.1] - 2026-09-27
 
 ### Fixed

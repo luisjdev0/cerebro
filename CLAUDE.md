@@ -20,7 +20,7 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-auth` | Owns the shared `cerebro_auth` schema (users, groups, tokens); memory/docs/flows validate every request against it directly | 8000 |
 | `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
 | `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
-| `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients` | — |
+| `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients`; interactive layer (`rich` + `questionary`) that walks the argparse tree | — |
 
 Each internal API runs on port 8000 inside its container; `compose.yaml` maps
 each one to a different host port via `.env` (`CEREBRO_MEMORY_HOST_PORT`, etc. —
@@ -38,7 +38,7 @@ Every new feature in a module follows the same path, in this order:
    the shared `cerebro_auth` schema directly (cross-schema query, same Postgres,
    no network hop) — see "Auth model" below. `cerebro-auth` itself is the one
    service that owns token/user/group management (`POST /tokens`, `/users`,
-   `/groups`, `/login`).
+   `/groups`, `/login`, `/login/password`, `/logout`).
 3. **Client in `cerebro-clients`** — one method per HTTP endpoint, zero business
    logic, just payload translation.
 4. **MCP tools in `cerebro-mcp/server.py`** (and mirrored commands in
@@ -69,11 +69,15 @@ pytest
 
 ## Expected workflow (important, not just a suggestion)
 
-- **All new development goes on a branch**, never straight to `main`.
-- **Integration tests run on the remote test server**
-  (`192.168.0.101`, SSH alias `root@192.168.0.101` or via user `luisjdev`), not
-  on the local machine or through a tunnel — there's a persistent checkout of the
-  repo there with Postgres and Redis already running. That server is **shared**
+- **All new development goes on a branch** (one per phase, versioned), never
+  straight to `main`, and reaches `main` through a PR that only the owner approves.
+- **Every change updates the docs and `CHANGELOG.md`** (README, DEPLOY,
+  `docs/technical-manual.md`, `docs/user-manual.md`, this file when conventions change).
+- **The green criterion is GitHub Actions** (`.github/workflows/tests.yml`: Postgres
+  17 + pgvector and Redis, every package's suite). A PR is not ready until it is green.
+- **Integration tests can also run on the optional LAN test server**
+  (`192.168.0.101`, SSH alias `root@192.168.0.101` or via user `luisjdev`) — a
+  persistent checkout with Postgres and Redis already running. That server is **shared**
   with other projects (WordPress, RabbitMQ, an unrelated Postgres on 5432/`pgdb`)
   — check occupied ports (`ss -tln`) before starting anything new there, never
   assume a default port is free.
@@ -115,8 +119,17 @@ The root token (`.env`'s `API_TOKEN`) still bypasses both gates with no DB row, 
 as before unification. Token/user/group management (`cerebro token create`,
 `cerebro user create`, `cerebro group ...`, MCP `auth_*` tools) lives exclusively in
 `cerebro-auth` — memory/docs/flows only read the schema, they don't write to it.
-`cerebro login --token <token>` persists credentials to `~/.cerebro/config.json`,
-which `cerebro-clients` reads as a fallback below environment variables.
+`cerebro login` (`--token`, or `--user` + password) persists credentials to
+`~/.cerebro/config.json`, which `cerebro-clients` reads as a fallback below
+environment variables.
+
+**Password login** (`users.password_hash`, argon2id): `POST /login/password` mints
+a *session token* — a normal `api_tokens` row named `session:<user>:<hex>` with
+`expires_at` (default 12 h). Every service's token lookup must keep the
+`expires_at IS NULL OR expires_at > now()` check (a new service that reads
+`cerebro_auth.api_tokens` has to add it). Per-user lockout (5 failures → 15 min,
+`429`), generic `401` for every bad-credential case, no MCP tool handles
+passwords (a secret must not pass through a model).
 
 **asyncpg does not auto-decode `jsonb` columns** — always `json.loads()` a
 `module_scopes`/similar column read if it comes back as `str` (no codec is
@@ -159,8 +172,7 @@ up-to-date state of everything pending. Summary of the most relevant items as of
 this writing:
 
 - **Auth unification + user system — DONE**, merged to `main`. See "Auth model"
-  above. Not yet implemented: password-based login (`users.password_hash` exists,
-  nullable, no endpoint/flow yet — token-only login for now).
+  above. Password login shipped in 1.A (v2.7.0): see "Auth model".
 - **Remote backups — DONE**. `POST /backup` on `cerebro-auth` (admin-only) streams
   a full `pg_dump` of the whole shared Postgres instance straight to the client
   (`StreamingResponse`, no buffering, no JSON envelope — same as a browser

@@ -17,18 +17,23 @@ don't need `CEREBRO_TOKEN`/`CEREBRO_*_URL` set in the environment --
 admin-only in practice -- the API enforces that, these commands just call it and
 surface whatever error comes back.
 
-Password-based login is explicitly out of scope here (future iteration) -- only the
-`--token` flow.
+`cerebro login` supports two modes: `--token` (a token created by an admin) and
+`--user` (+ a password from a prompt, `--password-stdin`, CEREBRO_PASSWORD or the
+discouraged inline `--password=VALUE`). A user/password login stores a session token
+with an expiry; `cerebro logout` revokes it. There is no MCP tool for passwords on
+purpose: a secret must not pass through a model's context.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
+import os
 import sys
 
 from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
-from cerebro_cli.tokens import save_login_config
+from cerebro_cli.tokens import clear_login_config, load_login_config, save_login_config
 
 
 def _client(url: str | None = None) -> AuthClient:
@@ -41,6 +46,51 @@ def _split_csv(value: str | None) -> list[str] | None:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
+# --------------------------------------------------------------------------- secrets
+
+# Sentinel for `--password` given WITHOUT a value (`cerebro login --password`): ask for it.
+ASK = "__ask__"
+ENV_PASSWORD = "CEREBRO_PASSWORD"
+
+
+def _fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def _read_password(prompt: str = "Contrasena: ", *, confirm: bool = False) -> str:
+    """Interactive, no-echo password prompt (stderr, so stdout stays clean)."""
+    if not sys.stdin.isatty():
+        _fail("No hay terminal interactiva: usa --password-stdin, CEREBRO_PASSWORD o --password=VALOR.")
+    value = getpass.getpass(prompt, stream=sys.stderr)
+    if confirm and getpass.getpass("Repite la contrasena: ", stream=sys.stderr) != value:
+        _fail("Las contrasenas no coinciden.")
+    if not value:
+        _fail("La contrasena no puede estar vacia.")
+    return value
+
+
+def resolve_password(
+    args: argparse.Namespace, *, attr: str = "password", prompt: str = "Contrasena: ", confirm: bool = False
+) -> str:
+    """Where a password comes from, in order: `--password=VALUE` (inline: it shows up in
+    shell history and `ps`, so the help marks it as insecure -- it is here because it is
+    sometimes the only option), `--password-stdin`, the CEREBRO_PASSWORD variable, and
+    finally a no-echo prompt."""
+    value = getattr(args, attr, None)
+    if value and value != ASK:
+        return value
+    if getattr(args, "password_stdin", False) and attr == "password":
+        line = sys.stdin.readline().rstrip("\r\n")
+        if not line:
+            _fail("No se recibio ninguna contrasena por stdin.")
+        return line
+    env_value = os.environ.get(ENV_PASSWORD)
+    if env_value and attr == "password" and value != ASK:
+        return env_value
+    return _read_password(prompt, confirm=confirm)
+
+
 # --------------------------------------------------------------------------- login
 
 
@@ -51,30 +101,62 @@ def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> 
     # that prefix. The unsuffixed gateway URL is what gets saved to
     # ~/.cerebro/config.json, so cerebro_clients.config's read-fallback can derive
     # each service's own URL (.../memory, .../docs, .../flows, .../auth) from it.
+    user = getattr(args, "user", None)
+    token = getattr(args, "token", None)
+    if bool(user) == bool(token):
+        _fail("Indica --user (con contrasena) o --token, pero no ambos ni ninguno.")
+
     auth_url = f"{args.url.rstrip('/')}/auth" if args.url else None
     client = client or _client(auth_url)
     try:
-        result = client.login(args.token)
+        if token:
+            result = client.login(token)
+            session_token, kind, expires_at = token, "token", None
+        else:
+            password = resolve_password(args, prompt=f"Contrasena de {user}: ")
+            result = client.login_password(user, password)
+            session_token = result["token"]
+            kind, expires_at = "session", result.get("expires_at")
     except CerebroConnectionError as exc:
-        print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
-        sys.exit(1)
+        _fail(f"No se pudo conectar con cerebro-auth: {exc}")
     except CerebroAPIError as exc:
         if exc.status_code == 401:
-            print("Error: token invalido.", file=sys.stderr)
+            _fail("Error: credenciales invalidas." if user else "Error: token invalido.")
+        elif exc.status_code == 429:
+            _fail("Cuenta bloqueada temporalmente por demasiados intentos fallidos. Prueba mas tarde.")
         else:
-            print(f"La API devolvio {exc.status_code}: {exc.detail}", file=sys.stderr)
-        sys.exit(1)
+            _fail(f"La API devolvio {exc.status_code}: {exc.detail}")
 
     # Only persist once login actually succeeded - never write a token that was
     # never validated.
-    save_login_config(args.token, args.url)
+    save_login_config(
+        session_token, args.url, kind=kind, user=result.get("name"), expires_at=expires_at
+    )
 
     modules = result.get("allowed_modules") or []
     print(
         f"Sesion iniciada como '{result.get('name')}' "
         f"(access_level: {result.get('access_level')}; modulos: {', '.join(modules) or 'todos'})."
     )
+    if expires_at:
+        print(f"La sesion caduca el {expires_at}.")
     print("Credenciales guardadas en ~/.cerebro/config.json.")
+
+
+def cmd_logout(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
+    cfg = load_login_config()
+    if not cfg or not cfg.get("token"):
+        print("No hay ninguna sesion guardada.")
+        return
+    if cfg.get("kind") == "session":
+        # Close it server-side too (best effort: an expired/unreachable server must not
+        # stop the user from forgetting the credentials locally).
+        try:
+            (client or _client()).logout()
+        except (CerebroConnectionError, CerebroAPIError):
+            print("Aviso: no se pudo cerrar la sesion en el servidor; se olvida solo localmente.", file=sys.stderr)
+    clear_login_config()
+    print("Sesion cerrada y credenciales locales eliminadas.")
 
 
 # --------------------------------------------------------------------------- user
@@ -82,8 +164,13 @@ def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> 
 
 def cmd_user_create(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
     client = client or _client()
+    password = None
+    if getattr(args, "password", None):
+        password = resolve_password(args, prompt=f"Contrasena para {args.name}: ", confirm=True)
     try:
-        user = client.create_user(args.name, email=args.email, access_level=args.access_level)
+        user = client.create_user(
+            args.name, email=args.email, access_level=args.access_level, password=password
+        )
     except CerebroConnectionError as exc:
         print(f"No se pudo conectar con cerebro-auth: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -93,8 +180,30 @@ def cmd_user_create(args: argparse.Namespace, *, client: AuthClient | None = Non
 
     print(
         f"Usuario '{user.get('name', args.name)}' creado "
-        f"(id: {user.get('id')}; access_level: {user.get('access_level')})."
+        f"(id: {user.get('id')}; access_level: {user.get('access_level')}; "
+        f"contrasena: {'si' if password else 'no, solo token'})."
     )
+
+
+def cmd_user_set_password(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
+    client = client or _client()
+    new_password = resolve_password(args, prompt=f"Nueva contrasena para {args.name}: ", confirm=True)
+    current = getattr(args, "current_password", None)
+    if current == ASK:
+        current = _read_password("Contrasena actual: ")
+    try:
+        client.set_password(args.name, new_password, current_password=current)
+    except CerebroConnectionError as exc:
+        _fail(f"No se pudo conectar con cerebro-auth: {exc}")
+    except CerebroAPIError as exc:
+        if exc.status_code == 422 and "current_password" in str(exc.detail):
+            _fail("Para cambiar tu propia contrasena indica la actual con --current-password.")
+        if exc.status_code == 403:
+            _fail("No autorizado: contrasena actual incorrecta o no eres administrador.")
+        if exc.status_code == 429:
+            _fail("Cuenta bloqueada temporalmente por demasiados intentos fallidos. Prueba mas tarde.")
+        _fail(f"La API devolvio {exc.status_code}: {exc.detail}")
+    print(f"Contrasena de '{args.name}' actualizada; sus sesiones abiertas se han cerrado.")
 
 
 def cmd_user_list(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:

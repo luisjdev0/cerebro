@@ -375,6 +375,28 @@ class TestModuleGate:
         assert resp.status_code == 401, resp.text
 
 
+    def test_expired_token_is_401(self, client):
+        async def _do(conn):
+            plaintext = generate_token()
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at)
+                VALUES ($1, $2, $3, NULL, $4, 'user', $5, '{}', now() - interval '1 minute')
+                """,
+                uuid.uuid4(),
+                hash_token(plaintext),
+                f"test-token-expired-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["memory"],
+            )
+            return plaintext
+
+        token = _run_sql(_do)
+        resp = client.get("/contexts", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 401, resp.text
+
+
 class TestScopeEnforcement:
     def test_read_only_token_cannot_write(self, client, root_headers):
         slug = _make_context(client, root_headers)

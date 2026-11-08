@@ -21,15 +21,19 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from cerebro_auth.auth import (
     DuplicateTokenNameError,
     InvalidScopesError,
     TokenNotFoundError,
+    Principal,
     create_api_token,
+    get_principal,
     list_api_tokens,
     require_admin,
     resolve_login,
@@ -37,6 +41,18 @@ from cerebro_auth.auth import (
 )
 from cerebro_auth.config import Settings, get_settings
 from cerebro_auth.db import apply_migrations, check_health, create_pool
+from cerebro_auth.passwords import (
+    MAX_PASSWORD_LENGTH,
+    MIN_PASSWORD_LENGTH,
+    AccountLockedError,
+    InvalidCredentialsError,
+    UserNotFoundError,
+    check_user_password,
+    hash_password,
+    password_login,
+    revoke_session,
+    set_user_password,
+)
 
 logger = logging.getLogger("cerebro_auth.api")
 
@@ -57,6 +73,8 @@ class UserCreate(StrictIn):
     name: str = Field(min_length=1, max_length=100)
     email: str | None = None
     access_level: Literal["user", "owner", "admin"] = "user"
+    # Optional: when given, the user can log in with username + password.
+    password: SecretStr | None = Field(default=None, min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
 
 
 class UserOut(BaseModel):
@@ -66,6 +84,7 @@ class UserOut(BaseModel):
     access_level: str
     created_at: datetime
     revoked_at: datetime | None
+    has_password: bool = False
 
 
 class GroupCreate(StrictIn):
@@ -115,6 +134,7 @@ class TokenOut(BaseModel):
     module_scopes: dict[str, Any]
     created_at: datetime
     revoked_at: datetime | None
+    expires_at: datetime | None = None
 
 
 class TokenCreateOut(TokenOut):
@@ -129,6 +149,22 @@ class LoginOut(BaseModel):
     name: str
     access_level: str
     allowed_modules: list[str] | None
+
+
+class PasswordLoginIn(StrictIn):
+    name: str = Field(min_length=1, max_length=100)
+    password: SecretStr = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+
+
+class PasswordLoginOut(LoginOut):
+    token: str
+    expires_at: datetime
+
+
+class PasswordSetIn(StrictIn):
+    password: SecretStr = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
+    # Required when a non-admin user changes their own password.
+    current_password: SecretStr | None = Field(default=None, max_length=MAX_PASSWORD_LENGTH)
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -152,6 +188,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await pool.close()
 
     app = FastAPI(title="cerebro-auth", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI's default 422 body echoes the rejected `input` back. On this service
+        # that can be a password, so the echo is dropped (`input`/`ctx`/`url`).
+        errors = [{k: v for k, v in e.items() if k not in ("input", "ctx", "url")} for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
 
     # ---------------------------------------------------------------- dependencies
 
@@ -180,6 +223,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allowed_modules=sorted(resolved.allowed_modules) if resolved.allowed_modules is not None else None,
         )
 
+    @app.post("/login/password", response_model=PasswordLoginOut)
+    async def login_password(body: PasswordLoginIn, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Username + password login. Returns a session token that expires after
+        `session_ttl_hours`. Any failure (unknown user, wrong password, revoked
+        user, user with no password) answers the same 401; a locked account
+        answers 429 with `Retry-After`."""
+        try:
+            result = await password_login(pool, settings, body.name, body.password.get_secret_value())
+        except AccountLockedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"too many failed attempts, try again in {exc.retry_after} seconds",
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
+        except InvalidCredentialsError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password"
+            ) from exc
+        return PasswordLoginOut(**result)
+
+    @app.post("/logout")
+    async def logout(
+        principal: Annotated[Principal, Depends(get_principal)],
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        """Revoke the session token used for this request. Only session tokens
+        (minted by a password login) can be logged out; any other token is
+        revoked by name with `DELETE /tokens/{name}`."""
+        token = (authorization or "")[len("Bearer ") :]
+        if principal.is_root or not await revoke_session(pool, token):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="this token is not a session token; revoke it by name with DELETE /tokens/{name}",
+            )
+        return {"status": "logged_out"}
+
     # ---------------------------------------------------------------- users
 
     @app.post(
@@ -192,13 +272,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             row = await pool.fetchrow(
                 """
-                INSERT INTO users (name, email, access_level)
-                VALUES ($1, $2, $3)
-                RETURNING id, name, email, access_level, created_at, revoked_at
+                INSERT INTO users (name, email, access_level, password_hash)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id, name, email, access_level, created_at, revoked_at,
+                          (password_hash IS NOT NULL) AS has_password
                 """,
                 body.name,
                 body.email,
                 body.access_level,
+                hash_password(body.password.get_secret_value()) if body.password is not None else None,
             )
         except asyncpg.UniqueViolationError as exc:
             raise HTTPException(
@@ -210,9 +292,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/users", response_model=list[UserOut], dependencies=[Depends(require_admin)])
     async def list_users(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         rows = await pool.fetch(
-            "SELECT id, name, email, access_level, created_at, revoked_at FROM users ORDER BY created_at"
+            "SELECT id, name, email, access_level, created_at, revoked_at, "
+            "(password_hash IS NOT NULL) AS has_password FROM users ORDER BY created_at"
         )
         return [dict(r) for r in rows]
+
+    @app.post("/users/{name}/password", status_code=status.HTTP_204_NO_CONTENT)
+    async def set_password(
+        name: str,
+        body: PasswordSetIn,
+        principal: Annotated[Principal, Depends(get_principal)],
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+    ):
+        """Set a user's password. An admin may set anyone's. A non-admin may only
+        change their own, and must prove the current one (which counts toward the
+        same lockout as a login). Every session of the user is closed."""
+        if not principal.is_admin:
+            if principal.name != name:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="only an admin can set another user's password"
+                )
+            if body.current_password is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="current_password is required to change your own password",
+                )
+            try:
+                await check_user_password(pool, settings, name, body.current_password.get_secret_value())
+            except AccountLockedError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"too many failed attempts, try again in {exc.retry_after} seconds",
+                    headers={"Retry-After": str(exc.retry_after)},
+                ) from exc
+            except InvalidCredentialsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="current password is incorrect"
+                ) from exc
+        try:
+            await set_user_password(pool, name, body.password.get_secret_value())
+        except UserNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no user named '{name}'") from exc
 
     # ---------------------------------------------------------------- groups
 

@@ -42,6 +42,23 @@ class TestUsers:
             "email": "jose@example.com",
         }
 
+    def test_create_user_with_password(self):
+        transport = RecordingTransport()
+        make_client(transport).create_user("Jose", password="a-long-password")
+        assert transport.last["json"]["password"] == "a-long-password"
+
+    def test_set_password_as_admin(self):
+        transport = RecordingTransport()
+        make_client(transport).set_password("jose", "a-long-password")
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/users/jose/password"
+        assert transport.last["json"] == {"password": "a-long-password"}
+
+    def test_set_password_with_current_password(self):
+        transport = RecordingTransport()
+        make_client(transport).set_password("jose", "new-long-password", current_password="old-long-password")
+        assert transport.last["json"] == {"password": "new-long-password", "current_password": "old-long-password"}
+
     def test_list_users(self):
         transport = RecordingTransport(response_json=[])
         make_client(transport).list_users()
@@ -201,3 +218,27 @@ class TestErrorPropagation:
         client = make_client(RaisingTransport())
         with pytest.raises(CerebroConnectionError):
             client.login("some-token")
+
+
+class TestPasswordLogin:
+    def test_login_password_posts_credentials_without_own_auth_header(self):
+        transport = RecordingTransport(response_json={"token": "cbra_x", "expires_at": "2026-01-01T00:00:00Z"})
+        result = make_client(transport).login_password("jose", "a-long-password")
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/login/password"
+        assert transport.last["json"] == {"name": "jose", "password": "a-long-password"}
+        assert "authorization" not in transport.last["headers"]
+        assert result["token"] == "cbra_x"
+
+    def test_login_password_failure_raises_api_error(self):
+        transport = RecordingTransport(response_json={"detail": "invalid username or password"}, status_code=401)
+        with pytest.raises(CerebroAPIError) as exc_info:
+            make_client(transport).login_password("jose", "wrong-password")
+        assert exc_info.value.status_code == 401
+
+    def test_logout_uses_own_bearer_token(self):
+        transport = RecordingTransport(response_json={"status": "logged_out"})
+        make_client(transport).logout()
+        assert transport.last["method"] == "POST"
+        assert transport.last["path"] == "/logout"
+        assert transport.last["headers"]["authorization"] == "Bearer tok-abc"

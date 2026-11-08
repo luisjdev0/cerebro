@@ -17,8 +17,17 @@ dispatching any subcommand -- see `dotenv.py`.
 from __future__ import annotations
 
 import argparse
+import sys
 
-from cerebro_cli import auth_commands, docs_commands, flow_commands, memory_commands, shared_commands
+from cerebro_cli import (
+    auth_commands,
+    docs_commands,
+    flow_commands,
+    interactive,
+    memory_commands,
+    shared_commands,
+    tokens,
+)
 from cerebro_cli.dotenv import load_repo_dotenv
 
 
@@ -270,11 +279,26 @@ def _add_shared_subparsers(sub: argparse._SubParsersAction) -> None:
 
 def _add_auth_subparsers(sub: argparse._SubParsersAction) -> None:
     p_login = sub.add_parser(
-        "login", help="Inicia sesion con un token de cerebro-auth y guarda las credenciales localmente"
+        "login", help="Inicia sesion (usuario y contrasena, o token) y guarda las credenciales localmente"
     )
-    p_login.add_argument("--token", required=True, help="token de cerebro-auth")
-    p_login.add_argument("--url", default=None, help="URL de cerebro-auth (default: la resuelta por entorno)")
+    p_login.add_argument("--user", default=None, help="nombre de usuario (pide la contrasena)")
+    p_login.add_argument(
+        "--password",
+        nargs="?",
+        const=auth_commands.ASK,
+        default=None,
+        help="contrasena. Sin valor la pide con prompt (recomendado). "
+        "--password=VALOR es INSEGURO: queda en el historial de la shell y en `ps`",
+    )
+    p_login.add_argument(
+        "--password-stdin", action="store_true", help="lee la contrasena de la entrada estandar"
+    )
+    p_login.add_argument("--token", default=None, help="token de cerebro-auth (alternativa a --user)")
+    p_login.add_argument("--url", default=None, help="URL del gateway (default: la resuelta por entorno)")
     p_login.set_defaults(func=auth_commands.cmd_login)
+
+    p_logout = sub.add_parser("logout", help="Cierra la sesion y borra las credenciales locales")
+    p_logout.set_defaults(func=auth_commands.cmd_logout)
 
     p_user = sub.add_parser("user", help="Gestion de usuarios (cerebro-auth, requiere access_level admin)")
     user_sub = p_user.add_subparsers(dest="user_command", required=True)
@@ -283,7 +307,38 @@ def _add_auth_subparsers(sub: argparse._SubParsersAction) -> None:
     p_user_create.add_argument("name")
     p_user_create.add_argument("--email", default=None)
     p_user_create.add_argument("--access-level", choices=["user", "owner", "admin"], default="user")
+    p_user_create.add_argument(
+        "--password",
+        nargs="?",
+        const=auth_commands.ASK,
+        default=None,
+        help="asigna contrasena (login usuario/contrasena). Sin valor la pide con prompt; "
+        "--password=VALOR es INSEGURO (historial de la shell, `ps`)",
+    )
+    p_user_create.add_argument("--password-stdin", action="store_true", help="lee la contrasena de stdin")
     p_user_create.set_defaults(func=auth_commands.cmd_user_create)
+
+    p_user_pw = user_sub.add_parser(
+        "set-password",
+        help="Cambia la contrasena de un usuario (admin: cualquiera; usuario: la suya, con la actual)",
+    )
+    p_user_pw.add_argument("name")
+    p_user_pw.add_argument(
+        "--password",
+        nargs="?",
+        const=auth_commands.ASK,
+        default=None,
+        help="nueva contrasena. Sin valor la pide con prompt; --password=VALOR es INSEGURO",
+    )
+    p_user_pw.add_argument("--password-stdin", action="store_true", help="lee la nueva contrasena de stdin")
+    p_user_pw.add_argument(
+        "--current-password",
+        nargs="?",
+        const=auth_commands.ASK,
+        default=None,
+        help="contrasena actual (obligatoria al cambiar la propia). Sin valor la pide con prompt",
+    )
+    p_user_pw.set_defaults(func=auth_commands.cmd_user_set_password)
 
     p_user_list = user_sub.add_parser("list", help="Lista usuarios")
     p_user_list.set_defaults(func=auth_commands.cmd_user_list)
@@ -312,6 +367,11 @@ def _add_auth_subparsers(sub: argparse._SubParsersAction) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cerebro", description="CLI unico del ecosistema cerebro")
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="nunca hacer preguntas (para scripts); equivale a CEREBRO_NO_INTERACTIVE=1",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     _add_memory_subparser(sub)
@@ -323,6 +383,47 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _needs_session_notice(command: str | None) -> None:
+    """A saved session that already expired is reported up front instead of as an
+    opaque 401 from whichever module the command happens to call."""
+    if command in interactive.SESSION_FREE or tokens.session_state() != "expired":
+        return
+    print("La sesion ha caducado. Inicia sesion de nuevo con `cerebro login`.", file=sys.stderr)
+    sys.exit(1)
+
+
+def _login_incomplete(path: list[str], rest: list[str]) -> bool:
+    return path == ["login"] and not any(t in ("--user", "--token") or t.startswith(("--user=", "--token=")) for t in rest)
+
+
+def _interactive_argv(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
+    """Turn an incomplete command line into a complete one by asking the user."""
+    leaf, path, rest = interactive.descend(parser, argv)
+
+    # Without a valid session the only thing on offer is logging in; afterwards the
+    # original request (or the full menu) carries on.
+    state = tokens.session_state()
+    if state != "valid" and not (path and path[0] in interactive.SESSION_FREE):
+        interactive.banner(state)
+        login = parser.parse_args(interactive.login_argv())
+        login.func(login)
+        if tokens.session_state() != "valid":
+            sys.exit(1)
+
+    if _login_incomplete(path, rest):
+        return interactive.login_argv()
+
+    if interactive._subparsers_action(leaf) is not None:
+        chosen = interactive.menu(leaf, path, has_session=True, root=not path)
+        if chosen is None:
+            sys.exit(0)
+        leaf, path, _ = interactive.descend(parser, chosen)
+        rest = []
+        if path == ["login"]:
+            return interactive.login_argv()
+    return path + interactive.complete(leaf, path, rest)
+
+
 def main(argv: list[str] | None = None) -> None:
     # BEFORE building any client (subcommands create them via
     # cerebro_clients, which reads os.environ on every call): load .env.production/.env
@@ -330,9 +431,41 @@ def main(argv: list[str] | None = None) -> None:
     # why (replaces the old .venv\Scripts\cerebro.cmd wrapper that did this by
     # hand and that the entry point installed by pip now shadows on the PATH).
     load_repo_dotenv()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    interactive_ok = interactive.is_interactive(argv)
+    argv = [a for a in argv if a != interactive.NO_FLAG]  # accepted anywhere on the line
     parser = build_parser()
+
+    if interactive_ok and "-h" not in argv and "--help" not in argv:
+        leaf, path, rest = interactive.descend(parser, argv)
+        needs_menu = not path or interactive._subparsers_action(leaf) is not None
+        needs_login = tokens.session_state() != "valid" and not (path and path[0] in interactive.SESSION_FREE)
+        if needs_menu or needs_login or _login_incomplete(path, rest) or _missing(leaf, rest):
+            try:
+                argv = _interactive_argv(parser, argv)
+            except KeyboardInterrupt:
+                print()
+                sys.exit(130)
+
     args = parser.parse_args(argv)
+    _needs_session_notice(args.command)
     args.func(args)
+
+
+def _missing(leaf: argparse.ArgumentParser, rest: list[str]) -> bool:
+    """True when `rest` leaves a required argument of `leaf` unset."""
+    if interactive._subparsers_action(leaf) is not None:
+        return False
+    with interactive._relaxed(leaf):
+        try:
+            ns, _ = leaf.parse_known_args(rest)
+        except SystemExit:
+            return False
+    for a in leaf._actions:
+        required = a.required or (not a.option_strings and a.nargs is None)
+        if required and not isinstance(a, argparse._HelpAction) and getattr(ns, a.dest, None) in (None, []):
+            return True
+    return False
 
 
 if __name__ == "__main__":

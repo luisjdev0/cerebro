@@ -1,0 +1,87 @@
+name: tests
+
+# Green criterion for every PR: the full suite of every package against a real
+# Postgres (with pgvector) and Redis. Suites run one after another because they share
+# the ephemeral `cerebro_test` database name (see each tests/conftest.py).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: knowledgeos
+          POSTGRES_PASSWORD: knowledgeos
+          POSTGRES_DB: knowledgeos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U knowledgeos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://knowledgeos:knowledgeos@localhost:5432/knowledgeos
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/fastembed
+          key: fastembed-${{ runner.os }}-v1
+      - name: Install pg_dump 17 (the backup endpoint shells out to it and needs client = server major)
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+      - name: Install every package (editable, with test extras)
+        run: |
+          pip install \
+            -e "./packages/cerebro-auth[dev]" \
+            -e "./packages/cerebro-clients[dev]" \
+            -e "./packages/cerebro-memory[dev]" \
+            -e "./packages/cerebro-docs[dev]" \
+            -e "./packages/cerebro-flows[dev]" \
+            -e "./packages/cerebro-cli[dev]" \
+            -e "./packages/cerebro-mcp[dev]"
+      - name: cerebro-auth
+        working-directory: packages/cerebro-auth
+        run: python -m pytest -q
+      - name: cerebro-clients
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-clients
+        run: python -m pytest -q
+      - name: cerebro-memory
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-memory
+        run: python -m pytest -q
+      - name: cerebro-docs
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-docs
+        run: python -m pytest -q
+      - name: cerebro-flows
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-flows
+        run: python -m pytest -q
+      - name: cerebro-cli
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-cli
+        run: python -m pytest -q
+      - name: cerebro-mcp
+        if: ${{ !cancelled() }}
+        working-directory: packages/cerebro-mcp
+        run: python -m pytest -q
