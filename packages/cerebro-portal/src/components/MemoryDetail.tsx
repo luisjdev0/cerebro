@@ -2,13 +2,15 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointer
 import { Badge, Button, ConfirmDialog, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@alquimias/ixchel';
 import { Calendar, GitBranch, Gauge, Pencil, ShieldCheck, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { forgetMemory, getMemory, getRelated, updateMemory, type Memory, type Related } from '../lib/memories';
-import { INPUT, useErrorMessage } from './formUi';
+import { forgetMemory, getMemory, getRelated, MEMORY_TYPES, updateMemory, type Memory, type MemoryPatch, type MemoryType, type Related } from '../lib/memories';
+import { Field, INPUT, useErrorMessage } from './formUi';
 import { statusVariant, typeVariant, useDateTime } from './memoryUi';
 
 const WIDTH_KEY = 'cerebro.memory.panelWidth';
 const MIN_W = 380;
 const DEFAULT_W = 560;
+
+const occurredDay = (m: Memory) => (m.occurred_at ? m.occurred_at.slice(0, 10) : '');
 
 const maxWidth = () => Math.min(1100, Math.floor(window.innerWidth * 0.9));
 const clamp = (w: number) => Math.max(MIN_W, Math.min(maxWidth(), w));
@@ -94,6 +96,10 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
   const [error, setError] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [dTitle, setDTitle] = useState('');
+  const [dType, setDType] = useState<MemoryType>('semantic');
+  const [dImportance, setDImportance] = useState(0.5);
+  const [dOccurred, setDOccurred] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string>();
   const [confirmForget, setConfirmForget] = useState(false);
@@ -128,8 +134,18 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
     setBusy(true);
     setActionError(undefined);
     try {
-      const next = await updateMemory(memory.id, draft.trim());
+      const patch: MemoryPatch = {};
+      if (draft.trim() !== memory.content) patch.content = draft.trim();
+      if (dTitle.trim() !== memory.title) patch.title = dTitle.trim();
+      if (dType !== memory.type) patch.type = dType;
+      if (dImportance !== memory.importance) patch.importance = dImportance;
+      if (dOccurred !== occurredDay(memory)) patch.occurred_at = dOccurred ? new Date(dOccurred).toISOString() : null;
+      const next = await updateMemory(memory.id, patch);
       onChanged();
+      if (next.id === memory.id) {
+        setMemory(next); // metadata-only edits happen in place: same id, refresh what we show
+        setEditing(false);
+      }
       onOpen(next.id); // the edit is a new version: follow it
     } catch (e) {
       setActionError(errMsg(e));
@@ -192,18 +208,48 @@ export function MemoryDetail({ id, onOpen, onClose, onChanged }: {
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('memory.detail.content')}</h3>
                   {editable && !editing && (
-                    <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={() => { setDraft(memory.content); setEditing(true); setActionError(undefined); }}>
+                    <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={() => {
+                      setDraft(memory.content);
+                      setDTitle(memory.title);
+                      setDType(memory.type as MemoryType);
+                      setDImportance(memory.importance);
+                      setDOccurred(occurredDay(memory));
+                      setEditing(true);
+                      setActionError(undefined);
+                    }}>
                       {t('memory.actions.edit')}
                     </Button>
                   )}
                 </div>
                 {editing ? (
                   <div className="space-y-2">
-                    <textarea autoFocus rows={10} className={`${INPUT} leading-relaxed`} value={draft} onChange={(e) => setDraft(e.target.value)} />
+                    <textarea autoFocus rows={8} className={`${INPUT} leading-relaxed`} value={draft} onChange={(e) => setDraft(e.target.value)} />
                     <p className="text-xs text-muted-foreground">{t('memory.editNote')}</p>
+                    <div className="grid gap-3 pt-1 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <Field label={t('memory.form.title')}>
+                          <input className={INPUT} value={dTitle} onChange={(e) => setDTitle(e.target.value)} />
+                        </Field>
+                      </div>
+                      <Field label={t('memory.type')}>
+                        <select className={INPUT} value={dType} onChange={(e) => setDType(e.target.value as MemoryType)}>
+                          {MEMORY_TYPES.map((x) => (
+                            <option key={x} value={x}>{t(`memory.types.${x}`)}</option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label={`${t('memory.form.importance')}: ${dImportance.toFixed(2)}`}>
+                        <input type="range" min={0} max={1} step={0.05} value={dImportance} onChange={(e) => setDImportance(Number(e.target.value))} className="mt-2 w-full accent-[var(--color-brand-soft)]" />
+                      </Field>
+                      {(dType === 'episodic' || dType === 'decision') && (
+                        <Field label={t('memory.form.occurredAt')}>
+                          <input type="date" className={INPUT} value={dOccurred} onChange={(e) => setDOccurred(e.target.value)} />
+                        </Field>
+                      )}
+                    </div>
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>{t('memory.actions.cancel')}</Button>
-                      <Button size="sm" variant="primary" disabled={busy || !draft.trim() || draft.trim() === memory.content} onClick={() => void save()}>
+                      <Button size="sm" variant="primary" disabled={busy || !draft.trim() || !dTitle.trim() || (draft.trim() === memory.content && dTitle.trim() === memory.title && dType === memory.type && dImportance === memory.importance && dOccurred === occurredDay(memory))} onClick={() => void save()}>
                         {busy ? t('memory.actions.saving') : t('memory.actions.save')}
                       </Button>
                     </div>

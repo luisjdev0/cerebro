@@ -709,11 +709,11 @@ each tool calls the corresponding HTTP API via `cerebro_clients` (`MemoryClient`
 `DocsClient` / `FlowsClient`), with no business logic of its own -- all of it lives in the APIs,
 so `cerebro-cli` shares exactly the same path.
 
-44 tools available:
+46 tools available:
 
-- **`memory_*`** (10, talk to `cerebro-memory`): `memory_search`,
+- **`memory_*`** (12, talk to `cerebro-memory`): `memory_search`,
   `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
-  `memory_create_context`, `memory_stats`, `memory_link`, `memory_related`,
+  `memory_create_context`, `memory_update_context`, `memory_delete_context`, `memory_stats`, `memory_link`, `memory_related`,
   `memory_timeline`.
 - **`docs_*`** (13, talk to `cerebro-docs`): `docs_create_category`,
   `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`,

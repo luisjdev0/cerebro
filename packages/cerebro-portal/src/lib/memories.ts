@@ -60,10 +60,18 @@ export const CONTEXT_KINDS = ['project', 'domain', 'person', 'org'] as const;
 export type NewMemory = { content: string; context: string; type: MemoryType; title?: string; importance?: number; occurred_at?: string };
 export const createMemory = (m: NewMemory) => api<Memory>('/memory/memories', { method: 'POST', json: m });
 /** Editing never rewrites in place: the API stores a new version and marks the old one superseded. */
-export const updateMemory = (id: string, content: string) => api<Memory>(`/memory/memories/${id}`, { method: 'PATCH', json: { content } });
+export type MemoryPatch = { content?: string; title?: string; type?: MemoryType; importance?: number; occurred_at?: string | null };
+export const updateMemory = (id: string, patch: MemoryPatch) => api<Memory>(`/memory/memories/${id}`, { method: 'PATCH', json: patch });
 export const forgetMemory = (id: string) => api<unknown>(`/memory/memories/${id}`, { method: 'DELETE' });
 export const createContext = (c: { slug: string; name: string; kind: string; description?: string }) =>
   api<Context>('/memory/contexts', { method: 'POST', json: c });
+
+export const updateContext = (slug: string, patch: { name?: string; kind?: string; description?: string }) =>
+  api<Context>(`/memory/contexts/${slug}`, { method: 'PATCH', json: patch });
+export const deleteContext = (slug: string, force: boolean) =>
+  api<{ slug: string; status: string; memories_deleted: number }>(`/memory/contexts/${slug}?force=${force}`, { method: 'DELETE' });
+export const countContextMemories = (slug: string) =>
+  listMemories({ context: slug, status: 'all', sort: 'created_at', order: 'desc', limit: 1, offset: 0 }).then((r) => r.total);
 
 export const slugify = (s: string) =>
   s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100);

@@ -84,7 +84,24 @@ class MemoryCreate(BaseModel):
 
 
 class MemoryUpdate(BaseModel):
-    content: str = Field(min_length=1)
+    """Every field is optional, but at least one must be given. A new `content`
+    stores a new version (the old row becomes superseded); changes limited to
+    metadata (title, type, importance, confidence, occurred_at) are made in place."""
+
+    content: str | None = Field(default=None, min_length=1)
+    title: str | None = Field(default=None, min_length=1)
+    type: MemoryType | None = None
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    occurred_at: datetime | None = None
+
+
+class ContextUpdate(BaseModel):
+    """The slug is immutable: token scopes and group scopes reference it."""
+
+    name: str | None = Field(default=None, min_length=1)
+    kind: str | None = Field(default=None, min_length=1)
+    description: str | None = None
 
 
 class MemoryOut(BaseModel):
@@ -401,6 +418,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"context slug '{body.slug}' already exists",
             ) from exc
+        return dict(row)
+
+    @app.patch("/contexts/{slug}", response_model=ContextOut)
+    async def update_context(
+        slug: str,
+        body: ContextUpdate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        changes = body.model_dump(exclude_unset=True)
+        if not changes or ("name" in changes and changes["name"] is None) or ("kind" in changes and changes["kind"] is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="provide at least one of name, kind, description",
+            )
+        if not principal.context_allowed(slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to modify context '{slug}'",
+            )
+        # Column names come from the model's own fields, never from the request.
+        sets = ", ".join(f"{col} = ${i}" for i, col in enumerate(changes, start=2))
+        row = await pool.fetchrow(
+            f"UPDATE contexts SET {sets} WHERE slug = $1 RETURNING id, slug, name, kind, description, created_at",
+            slug,
+            *changes.values(),
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"context '{slug}' not found")
         return dict(row)
 
     @app.get("/contexts", response_model=list[ContextOut])
@@ -935,12 +981,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent: Annotated[str, Depends(agent_name)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        leak = find_credential_leak(body.content)
-        if leak is not None:
+        changes = body.model_dump(exclude_unset=True)
+        if not changes or any(
+            changes.get(k) is None for k in ("content", "title", "type", "importance", "confidence") if k in changes
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=credential_rejection_message(leak),
+                detail="provide at least one of content, title, type, importance, confidence, occurred_at",
             )
+        for text in (body.content, body.title):
+            leak = find_credential_leak(text) if text else None
+            if leak is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=credential_rejection_message(leak),
+                )
 
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -961,6 +1016,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         )
                 require_owner_allowed(principal, old["owner_user_id"], memory_id=memory_id)
 
+                if body.content is None or body.content == old["content"]:
+                    # Metadata-only edit: same knowledge, so no new version (an importance
+                    # tweak must not fill the history with superseded rows).
+                    meta = {k: v for k, v in changes.items() if k != "content"}
+                    if not meta:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="nothing to change: content is identical",
+                        )
+                    # Column names come from the model's own fields, never from the request.
+                    sets = ", ".join(f"{col} = ${i}" for i, col in enumerate(meta, start=2))
+                    updated = await conn.fetchrow(
+                        f"""
+                        WITH upd AS (
+                            UPDATE memories SET {sets}, updated_at = now() WHERE id = $1
+                            RETURNING id, context_id, type, title, content, importance, confidence, source,
+                                      status, superseded_by, occurred_at, created_at, updated_at
+                        )
+                        SELECT upd.*, c.slug AS context FROM upd JOIN contexts c ON c.id = upd.context_id
+                        """,
+                        memory_id,
+                        *meta.values(),
+                    )
+                    await log_audit(
+                        pool,
+                        agent=agent,
+                        action="update",
+                        memory_id=memory_id,
+                        detail={"fields": sorted(meta)},
+                    )
+                    return row_to_memory_out(updated)
+
                 embedding = await provider.embed_passage(body.content)
 
                 # owner_user_id carries over to the superseding row - an update() is
@@ -976,13 +1063,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     SELECT ins.*, c.slug AS context FROM ins JOIN contexts c ON c.id = ins.context_id
                     """,
                     old["context_id"],
-                    old["type"],
-                    old["title"],
+                    changes.get("type", old["type"]),
+                    changes.get("title", old["title"]),
                     body.content,
-                    old["importance"],
-                    old["confidence"],
+                    changes.get("importance", old["importance"]),
+                    changes.get("confidence", old["confidence"]),
                     old["source"],
-                    old["occurred_at"],
+                    changes["occurred_at"] if "occurred_at" in changes else old["occurred_at"],
                     _vector_literal(embedding),
                     old["owner_user_id"],
                 )

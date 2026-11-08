@@ -95,6 +95,20 @@ def test_update_memory():
     assert transport.last["json"] == {"content": "nuevo contenido"}
 
 
+def test_update_memory_metadata_only_sends_given_fields():
+    transport = RecordingTransport()
+    make_client(transport).update_memory("mem-1", importance=0.9, title="T")
+    assert transport.last["json"] == {"title": "T", "importance": 0.9}
+
+
+def test_update_context():
+    transport = RecordingTransport()
+    make_client(transport).update_context("slug", name="N", description="D")
+    assert transport.last["method"] == "PATCH"
+    assert transport.last["path"] == "/contexts/slug"
+    assert transport.last["json"] == {"name": "N", "description": "D"}
+
+
 def test_delete_memory():
     transport = RecordingTransport()
     make_client(transport).delete_memory("mem-1", hard=True)

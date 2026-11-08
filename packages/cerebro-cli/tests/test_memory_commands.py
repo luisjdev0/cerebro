@@ -123,3 +123,35 @@ class TestImportMarkdown:
         )
         with pytest.raises(SystemExit):
             memory_commands.cmd_import_markdown(args, client=client)
+
+
+class TestUpdateAndContexts:
+    def test_update_routes_fields_to_client(self, capsys):
+        client = MagicMock()
+        client.update_memory.return_value = {"id": "m1", "context": "c", "type": "semantic", "importance": 0.9}
+        args = argparse.Namespace(
+            memory_id="m1", content=None, title=None, type_="semantic", importance=0.9, confidence=None, occurred_at=None
+        )
+        memory_commands.cmd_update(args, client=client)
+        client.update_memory.assert_called_once_with(
+            "m1", None, title=None, type="semantic", importance=0.9, confidence=None, occurred_at=None
+        )
+        assert "m1" in capsys.readouterr().out
+
+    def test_context_update_and_delete(self, capsys):
+        client = MagicMock()
+        client.update_context.return_value = {"slug": "c"}
+        memory_commands.cmd_context_update(
+            argparse.Namespace(slug="c", name="N", kind=None, description=None), client=client
+        )
+        client.update_context.assert_called_once_with("c", name="N", kind=None, description=None)
+        client.delete_context.return_value = {"memories_deleted": 3}
+        memory_commands.cmd_context_delete(argparse.Namespace(slug="c", force=True), client=client)
+        client.delete_context.assert_called_once_with("c", force=True)
+        assert "3" in capsys.readouterr().out
+
+    def test_context_delete_api_error_exits(self):
+        client = MagicMock()
+        client.delete_context.side_effect = _api_error(409, "has memories")
+        with pytest.raises(SystemExit):
+            memory_commands.cmd_context_delete(argparse.Namespace(slug="c", force=False), client=client)

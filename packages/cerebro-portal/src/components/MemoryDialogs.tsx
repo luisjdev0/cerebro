@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@alquimias/ixchel';
+import { Button, ConfirmDialog, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@alquimias/ixchel';
+import { Pencil, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { CONTEXT_KINDS, createContext, createMemory, MEMORY_TYPES, slugify, type Context, type Memory, type MemoryType } from '../lib/memories';
+import { CONTEXT_KINDS, countContextMemories, createContext, createMemory, deleteContext, updateContext, MEMORY_TYPES, slugify, type Context, type Memory, type MemoryType } from '../lib/memories';
 import { Field, INPUT, useErrorMessage } from './formUi';
 
 export function NewContextDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (c: Context) => void }) {
@@ -185,5 +186,136 @@ export function NewMemoryDialog({ open, contexts, defaultContext, onClose, onCre
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Lists the contexts the user can see; edits name/kind/description and deletes (admin-only on the API). */
+export function ManageContextsDialog({ open, contexts, onClose, onChanged }: {
+  open: boolean;
+  contexts: Context[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const errMsg = useErrorMessage();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState('project');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [toDelete, setToDelete] = useState<{ context: Context; count: number } | null>(null);
+
+  const startEdit = (c: Context) => {
+    setEditing(c.slug);
+    setName(c.name);
+    setKind(c.kind);
+    setDescription(c.description ?? '');
+    setError(undefined);
+  };
+  const save = async (c: Context) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await updateContext(c.slug, { name: name.trim(), kind, description: description.trim() });
+      setEditing(null);
+      onChanged();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const askDelete = async (c: Context) => {
+    setError(undefined);
+    try {
+      setToDelete({ context: c, count: await countContextMemories(c.slug) });
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  };
+  const doDelete = async () => {
+    if (!toDelete) return;
+    setBusy(true);
+    try {
+      await deleteContext(toDelete.context.slug, toDelete.count > 0);
+      setToDelete(null);
+      onChanged();
+    } catch (e) {
+      setToDelete(null);
+      setError(errMsg(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('memory.ctxManage.manageTitle')}</DialogTitle>
+            <DialogDescription>{t('memory.ctxManage.manageDesc')}</DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+            {contexts.length === 0 && <li className="py-6 text-center text-sm text-muted-foreground">{t('memory.ctxManage.none')}</li>}
+            {contexts.map((c) => (
+              <li key={c.slug} className="rounded-xl border p-3">
+                {editing === c.slug ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+                      <Field label={t('memory.form.name')}>
+                        <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)} />
+                      </Field>
+                      <Field label={t('memory.form.kind')}>
+                        <select className={INPUT} value={kind} onChange={(e) => setKind(e.target.value)}>
+                          {[...new Set([...CONTEXT_KINDS, kind])].map((k) => (
+                            <option key={k} value={k}>{t(`memory.form.kinds.${k}`, { defaultValue: k })}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                    <Field label={t('memory.form.description')}>
+                      <textarea rows={2} className={INPUT} value={description} onChange={(e) => setDescription(e.target.value)} />
+                    </Field>
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(null)}>{t('memory.actions.cancel')}</Button>
+                      <Button size="sm" variant="primary" arrow={false} disabled={busy || !name.trim()} onClick={() => void save(c)}>
+                        {busy ? t('memory.actions.saving') : t('memory.actions.save')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{c.name} <span className="font-mono text-xs font-normal text-muted-foreground">{c.slug}</span></p>
+                      <p className="text-xs text-muted-foreground">{t(`memory.form.kinds.${c.kind}`, { defaultValue: c.kind })}{c.description ? ` · ${c.description}` : ''}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button size="sm" variant="ghost" leadingIcon={Pencil} onClick={() => startEdit(c)}>{t('memory.actions.edit')}</Button>
+                      <Button size="sm" variant="ghost" className="text-destructive-text" leadingIcon={Trash2} onClick={() => void askDelete(c)}>{t('memory.ctxManage.delete')}</Button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {error && <p role="alert" className="text-sm text-destructive-text">{error}</p>}
+          <DialogFooter>
+            <Button variant="tertiary" onClick={onClose} disabled={busy}>{t('memory.ctxManage.done')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(o) => !o && setToDelete(null)}
+        title={t('memory.ctxManage.deleteTitle', { name: toDelete?.context.name })}
+        description={toDelete && toDelete.count > 0 ? t('memory.ctxManage.deleteWith', { count: toDelete.count }) : t('memory.ctxManage.deleteEmpty')}
+        confirmLabel={t('memory.ctxManage.delete')}
+        cancelLabel={t('memory.actions.cancel')}
+        isPending={busy}
+        onConfirm={() => void doDelete()}
+      />
+    </>
   );
 }

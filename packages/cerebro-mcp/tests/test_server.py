@@ -133,8 +133,41 @@ class TestMemoryUpdate:
         fake_memory, _, _, _ = fake_clients
         fake_memory.update_memory.return_value = {"id": "m2"}
         out = server.memory_update("m1", "nuevo")
-        fake_memory.update_memory.assert_called_once_with("m1", "nuevo")
+        fake_memory.update_memory.assert_called_once_with(
+            "m1", "nuevo", title=None, type=None, importance=None, confidence=None, occurred_at=None
+        )
         assert out == {"memory": {"id": "m2"}}
+
+    def test_metadata_only_and_invalid_type(self, fake_clients):
+        fake_memory, _, _, _ = fake_clients
+        fake_memory.update_memory.return_value = {"id": "m1"}
+        server.memory_update("m1", importance=0.9)
+        fake_memory.update_memory.assert_called_once_with(
+            "m1", None, title=None, type=None, importance=0.9, confidence=None, occurred_at=None
+        )
+        assert "error" in server.memory_update("m1", type="bogus")
+
+
+class TestMemoryContextEditing:
+    def test_update_context_routes_to_client(self, fake_clients):
+        fake_memory, _, _, _ = fake_clients
+        fake_memory.update_context.return_value = {"slug": "c", "name": "N"}
+        out = server.memory_update_context("c", name="N")
+        fake_memory.update_context.assert_called_once_with("c", name="N", kind=None, description=None)
+        assert out == {"context": {"slug": "c", "name": "N"}}
+
+    def test_update_context_404_becomes_error(self, fake_clients):
+        fake_memory, _, _, _ = fake_clients
+        fake_memory.update_context.side_effect = _api_error(404)
+        assert "error" in server.memory_update_context("missing", name="x")
+
+    def test_delete_context_routes_and_maps_conflict(self, fake_clients):
+        fake_memory, _, _, _ = fake_clients
+        fake_memory.delete_context.return_value = {"slug": "c", "status": "deleted", "memories_deleted": 2}
+        assert server.memory_delete_context("c", force=True)["memories_deleted"] == 2
+        fake_memory.delete_context.assert_called_once_with("c", force=True)
+        fake_memory.delete_context.side_effect = _api_error(409)
+        assert "force" in server.memory_delete_context("c")["error"]
 
     def test_404_becomes_error(self, fake_clients):
         fake_memory, _, _, _ = fake_clients
@@ -702,7 +735,7 @@ def test_auth_revoke_token_routes_to_client(fake_clients):
 # =============================================================================== tool registry
 
 
-def test_all_44_tools_are_registered():
+def test_all_46_tools_are_registered():
     """The 10 memory_* + the 13 docs_* + the 13 flow_* (cerebro-flows engine:
     definition CRUD + execution) + the 8 new auth_* (cerebro-auth: users, groups,
     tokens) -- the exact inventory the user expects (ecosistema-cerebro.md SS10)."""
@@ -716,6 +749,8 @@ def test_all_44_tools_are_registered():
         "memory_timeline",
         "memory_contexts",
         "memory_create_context",
+        "memory_update_context",
+        "memory_delete_context",
         "memory_stats",
         "docs_create_category",
         "docs_categories",
@@ -752,7 +787,7 @@ def test_all_44_tools_are_registered():
         "auth_list_tokens",
         "auth_revoke_token",
     }
-    assert len(tool_names) == 44
+    assert len(tool_names) == 46
     for name in tool_names:
         assert hasattr(server, name), f"falta la tool {name}"
         assert callable(getattr(server, name))

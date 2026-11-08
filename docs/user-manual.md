@@ -69,7 +69,7 @@ There are two ways to talk to a running cerebro instance:
 ### A. Through an AI assistant (MCP)
 
 `cerebro-mcp` is a single MCP server that exposes all three modules
-(`memory_*`, `docs_*`, `flow_*`, `auth_*` — 44 tools total) over stdio. It runs on
+(`memory_*`, `docs_*`, `flow_*`, `auth_*` — 46 tools total) over stdio. It runs on
 **your** machine (e.g. inside Claude Desktop or Claude Code) and talks to the
 remote cerebro APIs over HTTPS. You don't call these tools yourself — you
 just talk to the assistant normally, and it decides when to use them (it

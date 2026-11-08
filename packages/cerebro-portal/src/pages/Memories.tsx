@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ArrowUpDown, FolderPlus, Plus, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, FolderCog, FolderPlus, Plus, Search, X } from 'lucide-react';
 import { Badge, Button, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
 import { MemoryDetail } from '../components/MemoryDetail';
-import { NewContextDialog, NewMemoryDialog } from '../components/MemoryDialogs';
+import { ManageContextsDialog, NewContextDialog, NewMemoryDialog } from '../components/MemoryDialogs';
 import { statusVariant, typeVariant, useShortDate } from '../components/memoryUi';
 import { listContexts, listMemories, MEMORY_STATUSES, MEMORY_TYPES, searchMemories, type Context, type Memory, type SortKey } from '../lib/memories';
 
@@ -64,6 +64,7 @@ export function Memories() {
   const [reloadKey, setReloadKey] = useState(0);
   const [newMemory, setNewMemory] = useState(false);
   const [newContext, setNewContext] = useState(false);
+  const [manageContexts, setManageContexts] = useState(false);
   const [items, setItems] = useState<Memory[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -156,6 +157,7 @@ export function Memories() {
         description={t('memory.description')}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button variant="tertiary" leadingIcon={FolderCog} onClick={() => setManageContexts(true)}>{t('memory.ctxManage.manage')}</Button>
             <Button variant="tertiary" leadingIcon={FolderPlus} onClick={() => setNewContext(true)}>{t('memory.actions.newContext')}</Button>
             <Button variant="primary" leadingIcon={Plus} onClick={() => setNewMemory(true)}>{t('memory.actions.newMemory')}</Button>
           </div>
@@ -290,6 +292,21 @@ export function Memories() {
           setOpenId(m.id);
         }}
         onNewContext={() => setNewContext(true)}
+      />
+      <ManageContextsDialog
+        open={manageContexts}
+        contexts={contexts}
+        onClose={() => setManageContexts(false)}
+        onChanged={() => {
+          listContexts().then(
+            (cs) => {
+              setContexts(cs);
+              setContext((cur) => (cs.some((c) => c.slug === cur) ? cur : ''));
+            },
+            () => undefined,
+          );
+          refresh();
+        }}
       />
       <NewContextDialog open={newContext} onClose={() => setNewContext(false)} onCreated={(c) => setContexts((cs) => [...cs, c].sort((x, y) => x.name.localeCompare(y.name)))} />
     </>
