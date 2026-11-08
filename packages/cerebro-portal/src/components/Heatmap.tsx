@@ -32,7 +32,7 @@ export function Heatmap({ grid, totals, year }: Props) {
   const summary = year ? t('heatmap.summaryYear', { total: total.toLocaleString(lang), year }) : t('heatmap.summary', { total: total.toLocaleString(lang) });
 
   return (
-    <div className="mx-auto space-y-2" style={{ maxWidth: 34 + grid.length * (CELL + 3) }}>
+    <div className="space-y-2" style={{ maxWidth: 34 + grid.length * (CELL + 3) }}>
       <div
         className="grid gap-[3px]"
         // Columns share the card width but the squares stop growing at CELL px, so the

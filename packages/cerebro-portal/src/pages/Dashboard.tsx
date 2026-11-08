@@ -148,7 +148,7 @@ export function Dashboard() {
         {heatSource ? <Heatmap grid={grid} totals={totals} year={year} /> : <p className="text-sm text-muted-foreground">{t('dashboard.loadingActivity')}</p>}
       </section>
       {yearOptions.length > 1 && (
-        <section className="space-y-3 rounded-2xl border p-4 lg:w-44 lg:shrink-0">
+        <section className="space-y-3 rounded-2xl border p-4 lg:w-56 lg:shrink-0">
           <h2 className="text-sm font-semibold">{t('dashboard.years')}</h2>
           <div role="group" aria-label={t('dashboard.years')} className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
             {yearOptions.map((o) => (
