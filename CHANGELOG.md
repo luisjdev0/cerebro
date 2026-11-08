@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.8.2] - English everywhere
+
+### Changed
+- Everything user- or model-facing that was still Spanish is now English: API error
+  messages of `cerebro-docs`, `cerebro-flows` (including the step-by-step engine and
+  the YAML schema validation errors) and `cerebro-memory` (secret-rejection message,
+  Context Engine disambiguation prompt, importer truncation marker), every runtime
+  message of the MCP server (errors, "not found" / "already exists" / "no access"
+  notices, the moved-document `alert`, ambiguity message and learning note), the
+  `skills/cerebro` skill (`SKILL.md` and its four references) and the evaluation suite
+  docs and harness output (`research/alternativas.md` is now `research/alternatives.md`).
+- Spanish remains only as data: the evaluation datasets (`evals/memories.yaml`,
+  `evals/cases.yaml`), Spanish text-handling test fixtures and the Context
+  Engine's accent-folding table.
+
+### Added
+- Repo-wide guard test (`cerebro-cli/tests/test_repo_english.py`) that fails when
+  accented characters or Spanish prose appear in tracked files outside the allowed data.
+
 ## [2.8.1] - Installer and client messages in English
 
 ### Changed

@@ -23,6 +23,7 @@ TEXT_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".toml", ".sh", ".ps1", ".sql", 
 # Spanish as data (relative posix paths / path prefixes).
 DATA_PATHS = (
     "packages/cerebro-memory/evals/README.md",  # quotes Spanish dataset examples
+    "packages/cerebro-memory/evals/research/alternatives.md",  # quotes Spanish example queries
     "packages/cerebro-memory/evals/cases.yaml",
     "packages/cerebro-memory/evals/memories.yaml",
     "packages/cerebro-memory/evals/harness/adapters/cerebro_memory_adapter.py",  # corpus context descriptions
