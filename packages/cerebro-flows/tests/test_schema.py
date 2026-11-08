@@ -120,12 +120,12 @@ def test_inc_22_example_from_design_doc_is_valid():
 
 
 def test_malformed_yaml_is_invalid_flow_schema_error():
-    with pytest.raises(InvalidFlowSchemaError, match="YAML invalido"):
+    with pytest.raises(InvalidFlowSchemaError, match="invalid YAML"):
         validate_flow_yaml("metadata: [unclosed")
 
 
 def test_non_mapping_top_level_is_rejected():
-    with pytest.raises(InvalidFlowSchemaError, match="mapeo de nivel superior"):
+    with pytest.raises(InvalidFlowSchemaError, match="top-level mapping"):
         validate_flow_yaml("- a\n- b\n")
 
 
@@ -136,7 +136,7 @@ def test_unknown_field_is_rejected():
 
 def test_entry_must_reference_existing_step():
     bad = MINIMAL.replace("entry: only", "entry: missing")
-    with pytest.raises(InvalidFlowSchemaError, match="no existe en 'procedure'"):
+    with pytest.raises(InvalidFlowSchemaError, match="does not exist in 'procedure'"):
         validate_flow_yaml(bad)
 
 
@@ -152,7 +152,7 @@ procedure:
     type: task
     terminal: true
 """
-    with pytest.raises(InvalidFlowSchemaError, match="duplicado"):
+    with pytest.raises(InvalidFlowSchemaError, match="duplicate step id"):
         validate_flow_yaml(bad)
 
 
@@ -164,7 +164,7 @@ procedure:
   - id: a
     type: task
 """
-    with pytest.raises(InvalidFlowSchemaError, match="falta 'next'"):
+    with pytest.raises(InvalidFlowSchemaError, match="missing 'next'"):
         validate_flow_yaml(bad)
 
 
@@ -177,7 +177,7 @@ procedure:
     type: decision
     next: a
 """
-    with pytest.raises(InvalidFlowSchemaError, match="requiere 'branches'"):
+    with pytest.raises(InvalidFlowSchemaError, match="requires 'branches'"):
         validate_flow_yaml(bad)
 
 
@@ -191,7 +191,7 @@ procedure:
     terminal: true
     next: a
 """
-    with pytest.raises(InvalidFlowSchemaError, match="no puede tener"):
+    with pytest.raises(InvalidFlowSchemaError, match="cannot have"):
         validate_flow_yaml(bad)
 
 
@@ -207,7 +207,7 @@ procedure:
     type: task
     terminal: true
 """
-    with pytest.raises(InvalidFlowSchemaError, match="next='nowhere' no existe"):
+    with pytest.raises(InvalidFlowSchemaError, match="next='nowhere' does not exist"):
         validate_flow_yaml(bad)
 
 
@@ -224,7 +224,7 @@ procedure:
     type: task
     terminal: true
 """
-    with pytest.raises(InvalidFlowSchemaError, match="branches.yes='nowhere' no existe"):
+    with pytest.raises(InvalidFlowSchemaError, match="branches.yes='nowhere' does not exist"):
         validate_flow_yaml(bad)
 
 
@@ -240,7 +240,7 @@ procedure:
       prompt: confirmas?
       on_reject: nowhere
 """
-    with pytest.raises(InvalidFlowSchemaError, match="checkpoint.on_reject='nowhere' no existe"):
+    with pytest.raises(InvalidFlowSchemaError, match="checkpoint.on_reject='nowhere' does not exist"):
         validate_flow_yaml(bad)
 
 
@@ -257,7 +257,7 @@ rules:
     rule: algo
     applies_to: [nowhere]
 """
-    with pytest.raises(InvalidFlowSchemaError, match="applies_to referencia el step inexistente"):
+    with pytest.raises(InvalidFlowSchemaError, match="applies_to references a step that does not exist"):
         validate_flow_yaml(bad)
 
 
@@ -270,7 +270,7 @@ procedure:
     type: task
     next: a
 """
-    with pytest.raises(InvalidFlowSchemaError, match="ningun step con terminal"):
+    with pytest.raises(InvalidFlowSchemaError, match="no step with terminal"):
         validate_flow_yaml(bad)
 
 
@@ -286,7 +286,7 @@ procedure:
     type: task
     terminal: true
 """
-    with pytest.raises(InvalidFlowSchemaError, match="requiere el bloque 'delegate'"):
+    with pytest.raises(InvalidFlowSchemaError, match="requires the 'delegate' block"):
         validate_flow_yaml(bad)
 
 

@@ -108,10 +108,10 @@ def _prerequisites_step(tools: list[str]) -> dict[str, Any]:
         "id": PREREQUISITES_STEP_ID,
         "type": "prerequisites",
         "description": (
-            "Antes de continuar, confirma que tienes disponibles todas las tools listadas en "
-            "'tools_required'. Si alguna esta diferida en tu entorno, intenta ToolSearch antes de "
-            "darla por ausente. Si de verdad falta alguna, informa al usuario y no continues -- "
-            "llama flow_next solo cuando las tengas todas."
+            "Before continuing, confirm that every tool listed in 'tools_required' is available. "
+            "If one is deferred in your environment, try ToolSearch before treating it as missing. "
+            "If one is really missing, tell the user and do not continue -- "
+            "call flow_next only once you have all of them."
         ),
         "tools_required": tools,
     }
@@ -174,11 +174,11 @@ async def _require_pointer(pool: asyncpg.Pool, redis_client: redis.Redis, run_id
 
     row = await pool.fetchrow("SELECT status FROM flow_runs WHERE run_id = $1", UUID(run_id))
     if row is None:
-        raise RunNotFoundError(f"run_id '{run_id}' no existe")
+        raise RunNotFoundError(f"run_id '{run_id}' does not exist")
     if row["status"] in ("completed", "aborted"):
-        raise RunAlreadyFinishedError(f"run_id '{run_id}' ya esta '{row['status']}'")
+        raise RunAlreadyFinishedError(f"run_id '{run_id}' is already '{row['status']}'")
     raise RunNotFoundError(
-        f"run_id '{run_id}' expiro por inactividad (TTL) sin completarse -- considera flow_start de nuevo"
+        f"run_id '{run_id}' expired from inactivity (TTL) before completing -- consider calling flow_start again"
     )
 
 
@@ -202,15 +202,15 @@ async def advance(
     pending = pointer.get("pending_checkpoint")
     if current.checkpoint is not None and current.checkpoint.required and not (pending and pending.get("approved")):
         raise CheckpointPendingError(
-            f"step '{current.id}' tiene un checkpoint pendiente -- llama flow_approve_checkpoint "
-            "o flow_reject_checkpoint antes de flow_next"
+            f"step '{current.id}' has a pending checkpoint -- call flow_approve_checkpoint "
+            "or flow_reject_checkpoint before flow_next"
         )
 
     if current.type == "decision":
         if decision is None or decision not in (current.branches or {}):
             valid = sorted((current.branches or {}).keys())
             raise InvalidDecisionError(
-                f"step '{current.id}' es una decision -- pasa 'decision' con uno de: {valid}"
+                f"step '{current.id}' is a decision -- pass 'decision' with one of: {valid}"
             )
         next_id = current.branches[decision]
         event_type = "decision_taken"
@@ -269,7 +269,7 @@ async def approve_checkpoint(pool: asyncpg.Pool, redis_client: redis.Redis, sett
     parsed = await _load_definition(pool, pointer["definition_id"], pointer["definition_version"])
     current = parsed.step(pointer["current_step_id"])
     if current.checkpoint is None:
-        raise NotAtCheckpointError(f"step '{current.id}' no tiene checkpoint")
+        raise NotAtCheckpointError(f"step '{current.id}' has no checkpoint")
 
     pointer["pending_checkpoint"] = {"step_id": current.id, "approved": True}
     await _save_pointer(redis_client, settings, run_id, pointer)
@@ -285,7 +285,7 @@ async def reject_checkpoint(
     parsed = await _load_definition(pool, pointer["definition_id"], pointer["definition_version"])
     current = parsed.step(pointer["current_step_id"])
     if current.checkpoint is None:
-        raise NotAtCheckpointError(f"step '{current.id}' no tiene checkpoint")
+        raise NotAtCheckpointError(f"step '{current.id}' has no checkpoint")
 
     await _log_event(pool, run_id, "checkpoint_rejected", current.id, {"reason": reason})
     return await _enter_step(
@@ -305,8 +305,8 @@ async def abort_run(pool: asyncpg.Pool, redis_client: redis.Redis, run_id: str, 
     if row is None:
         existing = await pool.fetchrow("SELECT status FROM flow_runs WHERE run_id = $1", UUID(run_id))
         if existing is None:
-            raise RunNotFoundError(f"run_id '{run_id}' no existe")
-        raise RunAlreadyFinishedError(f"run_id '{run_id}' ya esta '{existing['status']}'")
+            raise RunNotFoundError(f"run_id '{run_id}' does not exist")
+        raise RunAlreadyFinishedError(f"run_id '{run_id}' is already '{existing['status']}'")
 
     await _log_event(pool, run_id, "aborted", None, {"reason": reason} if reason else None)
     await redis_client.delete(_redis_key(run_id))
@@ -325,5 +325,5 @@ async def get_run_state(pool: asyncpg.Pool, redis_client: redis.Redis, run_id: s
 
     row = await pool.fetchrow("SELECT status FROM flow_runs WHERE run_id = $1", UUID(run_id))
     if row is None:
-        raise RunNotFoundError(f"run_id '{run_id}' no existe")
+        raise RunNotFoundError(f"run_id '{run_id}' does not exist")
     return {"run_id": run_id, "status": row["status"], "step": None}

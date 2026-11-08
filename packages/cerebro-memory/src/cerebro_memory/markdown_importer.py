@@ -22,7 +22,7 @@ Three recognized formats, in this order of preference (`parse_markdown_file`):
        previous one.
 
 In all three cases, code blocks longer than 30 lines are truncated to
-"[código truncado]" before any other processing.
+"[code truncated]" before any other processing.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ class ParsedMemory:
 
 def truncate_large_code_blocks(text: str, max_lines: int = CODE_BLOCK_MAX_LINES) -> str:
     """Replaces the inner content of any ``` ``` block longer than
-    `max_lines` lines with "[código truncado]", keeping the fences."""
+    `max_lines` lines with "[code truncated]", keeping the fences."""
 
     def _replace(m: re.Match[str]) -> str:
         block = m.group(0)
@@ -77,7 +77,7 @@ def truncate_large_code_blocks(text: str, max_lines: int = CODE_BLOCK_MAX_LINES)
         if len(inner_lines) <= max_lines:
             return block
         fence_line = block.splitlines()[0]  # e.g. "```python"
-        return f"{fence_line}\n[código truncado]\n```"
+        return f"{fence_line}\n[code truncated]\n```"
 
     return CODE_BLOCK_RE.sub(_replace, text)
 

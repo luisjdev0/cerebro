@@ -65,7 +65,7 @@ class CategoryCreate(StrictIn):
     @model_validator(mode="after")
     def _locked_requires_hidden(self) -> "CategoryCreate":
         if self.locked and not self.hidden:
-            raise ValueError("una categoria 'locked' debe ser 'hidden' (bloquear solo tiene sentido para ocultar)")
+            raise ValueError("a 'locked' category must also be 'hidden' (locking only makes sense for hidden categories)")
         return self
 
 
@@ -437,7 +437,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if category_row is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"categoria '{body.category}' inexistente - creala primero con docs_create_category",
+                detail=f"category '{body.category}' does not exist - create it first with docs_create_category",
             )
 
         slug = body.slug or slugify(body.title)
@@ -460,8 +460,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"ya existe un documento con slug '{slug}' en la categoria '{body.category}' "
-                    f"(GET /documents/{body.category}/{slug}) - usa PATCH /documents/{{id}} (docs_update) para editarlo"
+                    f"a document with slug '{slug}' already exists in category '{body.category}' "
+                    f"(GET /documents/{body.category}/{slug}) - use PATCH /documents/{{id}} (docs_update) to edit it"
                 ),
             ) from exc
 
@@ -683,7 +683,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if new_category is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"categoria '{body.category}' inexistente - creala primero con docs_create_category",
+                        detail=f"category '{body.category}' does not exist - create it first with docs_create_category",
                     )
 
                 new_slug = body.slug or old["slug"]
@@ -721,7 +721,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except asyncpg.UniqueViolationError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail=f"ya existe un documento con slug '{new_slug}' en la categoria '{body.category}'",
+                        detail=f"a document with slug '{new_slug}' already exists in category '{body.category}'",
                     ) from exc
 
                 # Slug redirect (luisjdev-pendientes/ecosistema-cerebro): if the

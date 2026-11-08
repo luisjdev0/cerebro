@@ -290,7 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if category is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"categoria '{body.category}' inexistente - creala primero con flow_create_category",
+                        detail=f"category '{body.category}' does not exist - create it first with flow_create_category",
                     )
 
                 if body.code:
@@ -323,7 +323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except asyncpg.UniqueViolationError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail=f"ya existe un flujo con code '{code}' (GET /flows/{code}) - usa PATCH /flows/{{code}} (flow_update) para editarlo",
+                        detail=f"a flow with code '{code}' already exists (GET /flows/{code}) - use PATCH /flows/{{code}} (flow_update) to edit it",
                     ) from exc
 
                 await conn.execute(

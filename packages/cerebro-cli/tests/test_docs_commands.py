@@ -89,7 +89,7 @@ class TestSave:
         content_file = tmp_path / "doc.md"
         content_file.write_text("contenido", encoding="utf-8")
         client = MagicMock()
-        client.create_document.side_effect = _api_error(404, "categoria inexistente")
+        client.create_document.side_effect = _api_error(404, "category does not exist")
         args = argparse.Namespace(category="no-existe", title="T", content_file=str(content_file), slug=None)
         with pytest.raises(SystemExit):
             docs_commands.cmd_save(args, client=client)

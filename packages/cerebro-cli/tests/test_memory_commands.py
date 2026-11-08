@@ -97,7 +97,7 @@ class TestImportMarkdown:
     def test_imports_new_memory_when_context_exists(self, tmp_path, capsys):
         md = tmp_path / "notas.md"
         md.write_text(
-            "# Un titulo\n\nContenido nuevo que no existe todavia en el sistema.\n"
+            "# A title\n\nNew content that does not exist yet in the system.\n"
             "Segunda linea de contenido real para pasar el minimo del parser.\n",
             encoding="utf-8",
         )

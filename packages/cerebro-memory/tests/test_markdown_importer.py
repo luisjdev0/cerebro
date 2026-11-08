@@ -110,7 +110,7 @@ def test_generic_markdown_splits_by_headings_and_merges_small_sections():
 def test_generic_markdown_truncates_large_code_blocks():
     memories = parse_markdown_file(FIXTURES / "generic_headings.md")
     code_section = next(m for m in memories if m.title == "Codigo de ejemplo")
-    assert "[código truncado]" in code_section.content
+    assert "[code truncated]" in code_section.content
     assert "line_0" not in code_section.content
     assert "Texto despues del bloque de codigo" in code_section.content
 

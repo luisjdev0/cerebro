@@ -73,7 +73,7 @@ class TestSave:
         yaml_file = tmp_path / "flow.yaml"
         yaml_file.write_text("metadata: {}", encoding="utf-8")
         client = MagicMock()
-        client.create_flow.side_effect = _api_error(404, "categoria inexistente")
+        client.create_flow.side_effect = _api_error(404, "category does not exist")
         args = argparse.Namespace(category="no-existe", yaml_file=str(yaml_file), code=None)
         with pytest.raises(SystemExit):
             flow_commands.cmd_save(args, client=client)

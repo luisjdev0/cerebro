@@ -170,18 +170,18 @@ class OllamaResolver(AmbiguityResolver):
     @staticmethod
     def _build_prompt(query: str, candidates: list[ContextCandidate]) -> str:
         lines = [
-            "Elige a que contexto pertenece la consulta de un usuario. Responde SOLO "
-            "con el slug exacto de un contexto de la lista, sin explicacion ni "
-            "puntuacion. Si ninguno encaja con confianza, responde exactamente: none",
+            "Pick the context a user's query belongs to. Answer ONLY with the exact "
+            "slug of a context from the list, with no explanation or punctuation. "
+            "If none fits with confidence, answer exactly: none",
             "",
-            f'Consulta: "{query}"',
+            f'Query: "{query}"',
             "",
-            "Contextos posibles:",
+            "Possible contexts:",
         ]
         for c in candidates:
             lines.append(f"- {c.slug}: {c.description or c.name}")
         lines.append("")
-        lines.append("Slug elegido:")
+        lines.append("Chosen slug:")
         return "\n".join(lines)
 
     @staticmethod

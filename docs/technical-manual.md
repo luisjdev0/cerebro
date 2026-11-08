@@ -271,7 +271,7 @@ retrieval fuses over.
   facts, not source dumps. Its importer recognizes three formats in preference
   order (Claude Code frontmatter → `MEMORY.md` index → generic heading-split
   Markdown) and unconditionally truncates any fenced code block longer than 30
-  lines to `[código truncado]` before anything else — a full source dump is
+  lines to `[code truncated]` before anything else — a full source dump is
   exactly what this package is *not* meant to store (that's `cerebro-docs`'
   job). This module is pure parsing (filesystem only, no API/DB calls) so it's
   testable with fixtures alone; orchestration (dedup search, `POST /memories`

@@ -186,8 +186,8 @@ services:
       retries: 10
       start_period: 15s
 
-  # cerebro-auth API (luisjdev-pendientes/ecosistema-cerebro §"Autenticación +
-  # Usuarios"): owns the shared cerebro_auth schema (users, groups, api_tokens)
+  # cerebro-auth API (luisjdev-pendientes/ecosistema-cerebro, auth + users section)
+  # -- owns the shared cerebro_auth schema (users, groups, api_tokens)
   # that memory/docs/flows now validate every request against directly (cross-
   # schema query, no network hop on that hot path -- this service is only the
   # management plane: create/revoke tokens, users, groups, login). Same pattern

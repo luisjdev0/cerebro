@@ -1,111 +1,126 @@
-# Suite de evaluación de retrieval — KnowledgeOS
+# Retrieval evaluation suite — KnowledgeOS
 
-## Propósito
+> **Note on language:** the documentation and code of this suite are in English
+> like the rest of the repo, but the *datasets* (`memories.yaml`, `cases.yaml`)
+> are deliberately in Spanish: they model a Spanish-speaking user, and the
+> lexical collisions they test (`gastos`/`costos`, `migración`, `presupuesto`)
+> only exist in that language. The YAML keys (`categoria`, `memorias_relevantes`,
+> `memorias_trampa`, `contexto_esperado`) are part of the dataset schema and are
+> kept as they are.
 
-KnowledgeOS es un sistema de memoria persistente para agentes de IA. Antes de construir
-o adoptar cualquier motor de retrieval (embeddings, grafos de conocimiento, búsqueda
-híbrida, etc.) necesitamos poder responder dos preguntas de forma objetiva y repetible:
+## Purpose
 
-1. **¿Encuentra lo que debe encontrar?** — cuando el usuario pregunta algo, ¿el sistema
-   recupera las memorias relevantes en el top-k?
-2. **¿Se contamina entre contextos?** — el usuario típico tiene varios "mundos" de vida
-   (proyectos de software, clientes, finanzas personales, salud, aprendizaje...). Cuando
-   pregunta algo de un contexto, ¿el sistema le devuelve memorias de otro contexto que
-   simplemente comparten vocabulario?
+KnowledgeOS is a persistent memory system for AI agents. Before building or
+adopting any retrieval engine (embeddings, knowledge graphs, hybrid search,
+etc.) we need to be able to answer two questions objectively and repeatably:
 
-El caso canónico que motiva esta suite: el usuario tiene un proyecto de software
-"Expense Tracker" y un dominio personal "finanzas personales". Ante la pregunta
-**"¿cuánto gasté este mes?"**, solo deberían recuperarse memorias de finanzas
-personales — las memorias del proyecto de software (que hablan de "gastos" y "costos"
-en el sentido de una tabla de datos o una factura de hosting) son **memorias trampa**:
-técnicamente relevantes por palabra clave, pero semánticamente del contexto equivocado.
+1. **Does it find what it should find?** — when the user asks something, does
+   the system retrieve the relevant memories in the top-k?
+2. **Does it leak across contexts?** — the typical user has several life
+   "worlds" (software projects, clients, personal finances, health,
+   learning...). When they ask about one context, does the system return
+   memories from another context that merely share vocabulary?
 
-Esta suite no evalúa razonamiento, redacción de respuestas ni generación — solo
-**retrieval puro**: dado un adaptador de memoria y una query, ¿qué ids devuelve y en
-qué orden?
+The canonical case that motivates this suite: the user has a software project
+"Expense Tracker" and a personal domain "personal finances". Given the question
+**"¿cuánto gasté este mes?"** ("how much did I spend this month?"), only
+personal-finance memories should be retrieved — the software project's
+memories (which talk about "gastos" and "costos" in the sense of a data table
+or a hosting invoice) are **trap memories**: technically relevant by keyword,
+but semantically from the wrong context.
 
-## Estructura
+This suite does not evaluate reasoning, answer writing or generation — only
+**pure retrieval**: given a memory adapter and a query, which ids does it
+return and in what order?
+
+## Structure
 
 ```
 evals/
-├── README.md               este archivo
-├── memories.yaml            corpus sintético (~40 memorias en 6 contextos)
-├── cases.yaml                30 casos de prueba contra ese corpus
+├── README.md               this file
+├── memories.yaml            synthetic corpus (~40 memories in 6 contexts)
+├── cases.yaml                30 test cases against that corpus
 ├── harness/
-│   ├── run_eval.py           runner del harness (CLI)
-│   ├── base.py                interfaz MemoryAdapter
-│   ├── requirements.txt       (solo pyyaml)
+│   ├── run_eval.py           harness runner (CLI)
+│   ├── base.py                MemoryAdapter interface
+│   ├── requirements.txt       (pyyaml only)
 │   └── adapters/
-│       ├── __init__.py        registro de adaptadores (ADAPTERS)
-│       ├── naive_keyword.py   adaptador de referencia (baseline)
-│       └── TEMPLATE.py        esqueleto para adaptadores nuevos (mem0/graphiti/letta/...)
+│       ├── __init__.py        adapter registry (ADAPTERS)
+│       ├── naive_keyword.py   reference adapter (baseline)
+│       └── TEMPLATE.py        skeleton for new adapters (mem0/graphiti/letta/...)
 └── results/
-    └── <adapter>-<timestamp>.json   detalle de cada corrida (se genera al ejecutar)
+    └── <adapter>-<timestamp>.json   detail of each run (generated on execution)
 ```
 
-## El corpus (`memories.yaml`)
+## The corpus (`memories.yaml`)
 
-~40 memorias sintéticas de un desarrollador freelance hispanohablante, repartidas en
-6 contextos:
+~40 synthetic memories of a Spanish-speaking freelance developer, spread over
+6 contexts:
 
-| Contexto              | Tipo       | Descripción                                    |
+| Context               | Kind       | Description                                    |
 |------------------------|------------|------------------------------------------------|
-| `expense-tracker`      | proyecto   | app de finanzas que el usuario desarrolla       |
-| `finanzas-personales`  | dominio    | las finanzas reales del usuario                 |
-| `cliente-acme`         | proyecto   | proyecto freelance para el cliente "Acme"       |
-| `infraestructura`      | dominio    | su VPS, despliegues, DNS, backups               |
-| `salud`                | dominio    | ejercicio, alergias, chequeos médicos           |
-| `aprendizaje`          | dominio    | cursos, lecturas, certificaciones               |
+| `expense-tracker`      | project    | finance app the user develops                   |
+| `finanzas-personales`  | domain     | the user's real finances                        |
+| `cliente-acme`         | project    | freelance project for the client "Acme"         |
+| `infraestructura`      | domain     | their VPS, deployments, DNS, backups            |
+| `salud`                | domain     | exercise, allergies, medical check-ups          |
+| `aprendizaje`          | domain     | courses, readings, certifications               |
 
-Cada memoria tiene `id`, `context`, `type` (semantic/episodic/procedural/decision),
-`title`, `content` y `status` (`active` o `superseded`).
+Each memory has `id`, `context`, `type` (semantic/episodic/procedural/decision),
+`title`, `content` and `status` (`active` or `superseded`).
 
-El corpus incluye **colisiones léxicas deliberadas** entre contextos, para forzar a
-cualquier sistema de retrieval basado en palabras clave (o en embeddings poco
-discriminativos) a equivocarse si no aísla bien por contexto:
+The corpus includes **deliberate lexical collisions** across contexts, to force
+any keyword-based retrieval system (or one with poorly discriminative
+embeddings) to get it wrong unless it isolates properly by context:
 
-- **"gastos" / "costos"** — entre `expense-tracker` (costos de hosting, tabla de
-  `gastos` en el modelo de datos) y `finanzas-personales` (gastos reales del usuario).
-- **"migración" / "migrar"** — entre `infraestructura` (migración del SO de producción,
-  migrar servicios a Docker) y `cliente-acme` (migración de la base de datos del
-  cliente).
-- **"presupuesto"** — entre `cliente-acme` (presupuesto aprobado del proyecto) y
-  `finanzas-personales` (presupuesto mensual personal).
+- **"gastos" / "costos"** (expenses / costs) — between `expense-tracker`
+  (hosting costs, a `gastos` table in the data model) and `finanzas-personales`
+  (the user's real expenses).
+- **"migración" / "migrar"** (migration / to migrate) — between
+  `infraestructura` (production OS migration, migrating services to Docker) and
+  `cliente-acme` (the client's database migration).
+- **"presupuesto"** (budget) — between `cliente-acme` (the project's approved
+  budget) and `finanzas-personales` (personal monthly budget).
 
-También incluye **3 pares "superseded → active"**, hechos que cambiaron con el tiempo:
+It also includes **3 "superseded → active" pairs**, facts that changed over
+time:
 
-- `inf-produccion-os-antiguo` (Ubuntu 22.04, superseded) → `inf-produccion-os-nuevo`
-  (Ubuntu 24.04, active)
-- `ca-tarifa-hora-antigua` ($35/h, superseded) → `ca-tarifa-hora-nueva` ($45/h, active)
-- `fp-presupuesto-antiguo` (1,500/mes, superseded) → `fp-presupuesto-mensual`
-  (2,000/mes, active)
+- `inf-produccion-os-antiguo` (Ubuntu 22.04, superseded) →
+  `inf-produccion-os-nuevo` (Ubuntu 24.04, active)
+- `ca-tarifa-hora-antigua` ($35/h, superseded) → `ca-tarifa-hora-nueva`
+  ($45/h, active)
+- `fp-presupuesto-antiguo` (1,500/month, superseded) → `fp-presupuesto-mensual`
+  (2,000/month, active)
 
-Por defecto el harness **solo inserta memorias `active`** — las `superseded` existen
-para probar deliberadamente si un sistema devuelve un hecho viejo cuando ya no
-debería (usar `--include-superseded`, ver más abajo).
+By default the harness **only inserts `active` memories** — the `superseded`
+ones exist to deliberately test whether a system returns an old fact when it
+shouldn't anymore (use `--include-superseded`, see below).
 
-## Los casos (`cases.yaml`)
+## The cases (`cases.yaml`)
 
-30 casos, cada uno con: `id`, `categoria`, `query` (en español, natural),
-`memorias_relevantes` (ids que deberían salir en el top-k), `memorias_trampa` (ids que
-NO deberían salir, puede ser una lista vacía) y `contexto_esperado`.
+30 cases, each with: `id`, `categoria` (category), `query` (in Spanish,
+natural), `memorias_relevantes` (ids that should come out in the top-k),
+`memorias_trampa` (ids that should NOT come out, may be an empty list) and
+`contexto_esperado` (expected context).
 
-### 1. Directos (12 casos, prefijo `d-`)
+### 1. Direct (12 cases, prefix `d-`)
 
-Una sola memoria relevante, sin ambigüedad de vocabulario relevante. `memorias_trampa`
-va vacío (o casi). Miden el caso base: "¿el sistema encuentra lo obvio?".
+A single relevant memory, with no ambiguity in the relevant vocabulary.
+`memorias_trampa` is empty (or nearly). They measure the base case: "does the
+system find the obvious?".
 
-Ejemplo: `d-004` — *"¿En qué proveedor está alojado mi VPS personal?"* →
-`inf-vps-proveedor`.
+Example: `d-004` — *"¿En qué proveedor está alojado mi VPS personal?"*
+("Which provider hosts my personal VPS?") → `inf-vps-proveedor`.
 
-### 2. Ambiguos (12 casos, prefijo `amb-`)
+### 2. Ambiguous (12 cases, prefix `amb-`)
 
-La query comparte vocabulario con memorias de **dos o más contextos distintos**.
-`memorias_trampa` documenta explícitamente cuáles memorias, si aparecen en el top-k,
-cuentan como contaminación. Es la categoría central de la suite — mide si el sistema
-distingue contexto más allá de la superficie léxica.
+The query shares vocabulary with memories from **two or more distinct
+contexts**. `memorias_trampa` explicitly documents which memories, if they show
+up in the top-k, count as contamination. This is the central category of the
+suite — it measures whether the system tells contexts apart beyond lexical
+surface.
 
-El primer caso ambiguo es `amb-001`, el caso canónico del proyecto:
+The first ambiguous case is `amb-001`, the project's canonical case:
 
 ```yaml
 - id: amb-001
@@ -116,104 +131,109 @@ El primer caso ambiguo es `amb-001`, el caso canónico del proyecto:
   contexto_esperado: finanzas-personales
 ```
 
-### 3. Temporales (6 casos, prefijo `tmp-`)
+### 3. Temporal (6 cases, prefix `tmp-`)
 
-La respuesta correcta es la memoria **activa** vigente; su versión `superseded` es la
-trampa. Miden si el sistema entiende que un hecho fue reemplazado, no solo que
-"algo relacionado" existe. Esta categoría solo es significativa si el corpus se
-indexa con `--include-superseded` (ver abajo) — si no, la memoria trampa ni siquiera
-está en el índice y la contaminación será trivialmente 0%.
+The correct answer is the currently **active** memory; its `superseded` version
+is the trap. They measure whether the system understands that a fact was
+replaced, not just that "something related" exists. This category is only
+meaningful if the corpus is indexed with `--include-superseded` (see below) —
+otherwise the trap memory is not even in the index and contamination will be
+trivially 0%.
 
-## Métricas
+## Metrics
 
-Para cada caso, con `k=5` (configurable con `--k`):
+For each case, with `k=5` (configurable with `--k`):
 
-- **Precision@5** = (memorias relevantes en el top-5) / 5. Sigue la convención
-  estándar de IR: si el adaptador devuelve menos de 5 resultados, las posiciones
-  vacías cuentan como "no relevante" (no se reduce el denominador).
-- **Recall@5** = (memorias relevantes en el top-5) / (total de memorias relevantes
-  del caso). En esta suite casi todos los casos tienen una sola memoria relevante,
-  así que recall@5 es binario (0% o 100%) por caso.
-- **Tasa de contaminación** = fracción de casos, dentro de una categoría, donde
-  **al menos una** memoria trampa aparece en el top-5. Es la métrica más importante
-  de este proyecto: mide fugas de contexto, no solo si "se encontró algo relevante".
+- **Precision@5** = (relevant memories in the top-5) / 5. Follows the standard
+  IR convention: if the adapter returns fewer than 5 results, the empty
+  positions count as "not relevant" (the denominator is not reduced).
+- **Recall@5** = (relevant memories in the top-5) / (total relevant memories
+  for the case). In this suite almost every case has a single relevant memory,
+  so recall@5 is binary (0% or 100%) per case.
+- **Contamination rate** = fraction of cases, within a category, where **at
+  least one** trap memory shows up in the top-5. It is the most important
+  metric of this project: it measures context leaks, not just whether
+  "something relevant was found".
 
-El runner agrega estas tres métricas por categoría (directo/ambiguo/temporal) y en
-total.
+The runner aggregates these three metrics per category (direct/ambiguous/
+temporal) and overall.
 
-## Cómo correr el harness
+## How to run the harness
 
 ```bash
-# instalar la única dependencia
+# install the only dependency
 python -m pip install -r evals/harness/requirements.txt
 
-# correr con el adaptador de referencia (baseline naive por keywords)
+# run with the reference adapter (naive keyword baseline)
 python evals/harness/run_eval.py --adapter naive
 
-# incluir las memorias superseded (para que la categoría "temporal" sea significativa)
+# include the superseded memories (so the "temporal" category is meaningful)
 python evals/harness/run_eval.py --adapter naive --include-superseded
 
-# top-k distinto, no guardar el JSON, apuntar a otro corpus, etc.
+# different top-k, don't save the JSON, point to another corpus, etc.
 python evals/harness/run_eval.py --adapter naive --k 10 --no-save
-python evals/harness/run_eval.py --adapter naive --memories otro_corpus.yaml --cases otros_casos.yaml
+python evals/harness/run_eval.py --adapter naive --memories other_corpus.yaml --cases other_cases.yaml
 ```
 
-Cada corrida imprime una tabla con precision@k, recall@k y tasa de contaminación por
-categoría, y (a menos que uses `--no-save`) guarda el detalle completo por caso en
+Each run prints a table with precision@k, recall@k and contamination rate per
+category, and (unless you use `--no-save`) saves the full per-case detail in
 `evals/results/<adapter>-<timestamp>.json`.
 
-### Qué esperar del adaptador `naive`
+### What to expect from the `naive` adapter
 
-`NaiveKeywordAdapter` (en `evals/harness/adapters/naive_keyword.py`) rankea memorias
-por overlap de tokens normalizados (sin stopwords españolas básicas), sin ningún
-concepto de contexto ni de tiempo. Es una línea base deliberadamente pobre para
-verificar que el harness completo corre sin instalar nada más pesado, y para tener un
-punto de comparación "peor caso razonable".
+`NaiveKeywordAdapter` (in `evals/harness/adapters/naive_keyword.py`) ranks
+memories by overlap of normalized tokens (minus basic Spanish stopwords), with
+no concept of context or time. It is a deliberately poor baseline, to verify
+that the whole harness runs without installing anything heavier, and to have a
+"reasonable worst case" comparison point.
 
-Se espera (y es correcto/deseable) que tenga:
+It is expected (and correct/desirable) to show:
 
-- Precision@5 y recall@5 razonables en `directo` (encuentra lo obvio).
-- **Contaminación alta en `ambiguo`** — por diseño, no distingue contexto, así que las
-  colisiones léxicas del corpus (gastos/costos, migración, presupuesto) lo engañan.
-- **Contaminación alta en `temporal` cuando se corre con `--include-superseded`** — no
-  tiene noción de "vigente vs. reemplazado", así que memorias viejas compiten en pie
-  de igualdad con las nuevas.
+- Reasonable precision@5 and recall@5 on `directo` (it finds the obvious).
+- **High contamination on `ambiguo`** — by design it does not tell contexts
+  apart, so the corpus's lexical collisions (gastos/costos, migración,
+  presupuesto) fool it.
+- **High contamination on `temporal` when run with `--include-superseded`** —
+  it has no notion of "current vs. replaced", so old memories compete on equal
+  footing with new ones.
 
-Cualquier adaptador real (mem0, graphiti, letta, o el motor propio de KnowledgeOS)
-debería superar claramente al naive, sobre todo en tasa de contaminación de `ambiguo`
-y `temporal` — esa es la señal de que el sistema realmente aísla contexto y entiende
-vigencia temporal, no solo que "busca bien".
+Any real adapter (mem0, graphiti, letta, or KnowledgeOS's own engine) should
+clearly beat the naive one, especially on contamination rate for `ambiguo` and
+`temporal` — that is the signal that the system really isolates context and
+understands temporal validity, not just that it "searches well".
 
-## Cómo añadir casos propios
+## How to add your own cases
 
-1. Si necesitas una memoria nueva, añádela a `evals/memories.yaml` con un `id` único
-   (slug, prefijo por contexto), `context`, `type`, `title`, `content` y `status`.
-2. Añade el caso a `evals/cases.yaml`:
-   - `id`: prefijo por categoría (`d-`, `amb-`, `tmp-`) seguido de un número.
-   - `categoria`: `directo`, `ambiguo` o `temporal`.
-   - `query`: en español, como la escribiría un usuario real.
-   - `memorias_relevantes`: ids que deberían salir en el top-k.
-   - `memorias_trampa`: ids de contexto equivocado (o la versión superseded, en
-     temporales) que NO deberían salir. Vacío en casos directos sin riesgo real de
-     colisión.
-   - `contexto_esperado`: el `context` al que pertenece la respuesta correcta.
-3. Corre el harness (`python evals/harness/run_eval.py --adapter naive`) — el runner
-   valida automáticamente que todos los ids referenciados en `cases.yaml` existan en
-   `memories.yaml` y avisa (sin abortar) si falta alguno.
-4. Si estás probando colisiones léxicas nuevas, revisa que la memoria "trampa" y la
-   memoria "relevante" compartan vocabulario real (no solo el mismo contexto temático)
-   — esa es la señal que hace al caso útil como ambiguo.
+1. If you need a new memory, add it to `evals/memories.yaml` with a unique `id`
+   (slug, prefixed by context), `context`, `type`, `title`, `content` and
+   `status`.
+2. Add the case to `evals/cases.yaml`:
+   - `id`: category prefix (`d-`, `amb-`, `tmp-`) followed by a number.
+   - `categoria`: `directo`, `ambiguo` or `temporal`.
+   - `query`: in Spanish, the way a real user would write it.
+   - `memorias_relevantes`: ids that should come out in the top-k.
+   - `memorias_trampa`: ids from the wrong context (or the superseded version,
+     in temporal cases) that should NOT come out. Empty in direct cases with no
+     real collision risk.
+   - `contexto_esperado`: the `context` the correct answer belongs to.
+3. Run the harness (`python evals/harness/run_eval.py --adapter naive`) — the
+   runner automatically validates that every id referenced in `cases.yaml`
+   exists in `memories.yaml` and warns (without aborting) if one is missing.
+4. If you are testing new lexical collisions, check that the "trap" memory and
+   the "relevant" memory share real vocabulary (not just the same thematic
+   context) — that is the signal that makes the case useful as ambiguous.
 
-## Cómo añadir un adaptador nuevo (mem0, graphiti, letta, KnowledgeOS real, ...)
+## How to add a new adapter (mem0, graphiti, letta, real KnowledgeOS, ...)
 
-1. Copia `evals/harness/adapters/TEMPLATE.py` a
-   `evals/harness/adapters/<nombre_sistema>.py` y renombra la clase.
-2. Implementa `setup()`, `insert(memory)`, `search(query, k)` y `teardown()` según la
-   interfaz `MemoryAdapter` (`evals/harness/base.py`). El contrato clave:
-   `search()` debe devolver los `id` del corpus (no ids internos del sistema, no
-   objetos), en orden de relevancia descendente.
-3. Regístralo en `evals/harness/adapters/__init__.py` (diccionario `ADAPTERS`).
-4. Corre `python evals/harness/run_eval.py --adapter <nombre_sistema>`.
+1. Copy `evals/harness/adapters/TEMPLATE.py` to
+   `evals/harness/adapters/<system_name>.py` and rename the class.
+2. Implement `setup()`, `insert(memory)`, `search(query, k)` and `teardown()`
+   according to the `MemoryAdapter` interface (`evals/harness/base.py`). The
+   key contract: `search()` must return the corpus `id`s (not the system's
+   internal ids, not objects), in descending relevance order.
+3. Register it in `evals/harness/adapters/__init__.py` (`ADAPTERS` dict).
+4. Run `python evals/harness/run_eval.py --adapter <system_name>`.
 
-`TEMPLATE.py` incluye TODOs y docstrings con ejemplos concretos de qué llamar en
-mem0, graphiti y letta — es solo el esqueleto, no una implementación real.
+`TEMPLATE.py` includes TODOs and docstrings with concrete examples of what to
+call in mem0, graphiti and letta — it is just the skeleton, not a real
+implementation.

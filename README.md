@@ -892,7 +892,7 @@ order:
    `content`=body); smaller sections merge with the previous one.
 
 In any of the three cases, code blocks longer than 30 lines are truncated to
-`[código truncado]` before processing -- a memory is a distilled summary, not a
+`[code truncated]` before processing -- a memory is a distilled summary, not a
 source-code dump.
 
 ```bash

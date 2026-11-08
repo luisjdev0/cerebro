@@ -109,7 +109,7 @@ class TestFlowValidate:
         bad = MINIMAL_FLOW.replace("entry: only", "entry: nowhere")
         resp = client.post("/flows/validate", json={"yaml_content": bad}, headers=auth_headers)
         assert resp.status_code == 422, resp.text
-        assert "no existe en 'procedure'" in resp.json()["detail"]
+        assert "does not exist in 'procedure'" in resp.json()["detail"]
 
 
 class TestFlowCrud:

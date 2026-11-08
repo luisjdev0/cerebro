@@ -63,8 +63,8 @@ def find_credential_leak(text: str) -> CredentialPattern | None:
 
 def credential_rejection_message(pattern: CredentialPattern) -> str:
     return (
-        f"Contenido rechazado: parece contener un secreto real ({pattern.hint}). "
-        "cerebro-memory nunca almacena valores de credenciales. Guarda una referencia en su "
-        "lugar, por ejemplo: secret://<entorno>/<nombre> "
+        f"Content rejected: it looks like it contains a real secret ({pattern.hint}). "
+        "cerebro-memory never stores credential values. Store a reference instead, "
+        "for example: secret://<environment>/<name> "
         "(ej. secret://production/aws-access-key)."
     )
