@@ -22,7 +22,9 @@ login endpoint does not reveal which usernames exist.
 
 from __future__ import annotations
 
+import hmac
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -135,11 +137,51 @@ async def check_user_password(
     return row
 
 
+# --------------------------------------------------------------------------- master user
+#
+# The deployment's master user (`ADMIN_USER` / `ADMIN_PASSWORD`) is checked against the
+# environment, never stored: the same model as the root token. It signs in with the normal
+# password login and gets a regular admin session token (no owning user row). Brute force is
+# throttled in memory per process (the same threshold/duration as database users); a restart
+# resets it, which is acceptable for one account whose password is chosen by the operator.
+
+_master_failures: dict[str, tuple[int, float]] = {}
+
+
+def master_configured(settings: Settings) -> bool:
+    return bool(settings.admin_user.strip()) and len(settings.admin_password.get_secret_value()) >= MIN_PASSWORD_LENGTH
+
+
+def is_master_name(settings: Settings, name: str) -> bool:
+    return master_configured(settings) and name == settings.admin_user.strip()
+
+
+def _check_master_password(settings: Settings, name: str, password: str) -> None:
+    now = time.monotonic()
+    count, locked_until = _master_failures.get(name, (0, 0.0))
+    if locked_until > now:
+        raise AccountLockedError(int(locked_until - now) + 1)
+    expected = settings.admin_password.get_secret_value().encode()
+    if not hmac.compare_digest(password.encode(), expected):
+        count += 1
+        if count >= settings.max_failed_attempts:
+            _master_failures[name] = (0, now + settings.lockout_minutes * 60)
+        else:
+            _master_failures[name] = (count, 0.0)
+        raise InvalidCredentialsError
+    _master_failures.pop(name, None)
+
+
 async def password_login(
     pool: asyncpg.Pool, settings: Settings, name: str, password: str
 ) -> dict[str, Any]:
     """Authenticate with username + password and mint a session token."""
-    row = await check_user_password(pool, settings, name, password)
+    master = is_master_name(settings, name)
+    if master:
+        _check_master_password(settings, name, password)
+        row = {"id": None, "name": name, "access_level": "admin"}
+    else:
+        row = await check_user_password(pool, settings, name, password)
 
     # Opportunistic housekeeping: drop sessions that expired more than a week ago.
     await pool.execute(
@@ -152,8 +194,9 @@ async def password_login(
         name=f"{SESSION_PREFIX}{row['name']}:{secrets.token_hex(4)}",
         scopes=["read", "write"],
         user_id=row["id"],
-        access_level=None,
-        allowed_modules=None,
+        # The master has no user row, so the token carries its own level and modules.
+        access_level="admin" if master else None,
+        allowed_modules=["memory", "docs", "flows"] if master else None,
         module_scopes=None,
         expires_at=expires_at,
     )

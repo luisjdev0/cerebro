@@ -39,7 +39,6 @@ from cerebro_auth.auth import (
     resolve_login,
     revoke_api_token,
 )
-from cerebro_auth.bootstrap import bootstrap_admin
 from cerebro_auth.config import Settings, get_settings
 from cerebro_auth.db import apply_migrations, check_health, create_pool
 from cerebro_auth.passwords import (
@@ -49,6 +48,7 @@ from cerebro_auth.passwords import (
     InvalidCredentialsError,
     UserNotFoundError,
     check_user_password,
+    is_master_name,
     hash_password,
     password_login,
     revoke_session,
@@ -205,7 +205,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         applied = await apply_migrations(pool, settings)
         if applied:
             logger.info("applied migrations: %s", applied)
-        await bootstrap_admin(pool, settings)
 
         app.state.pool = pool
         app.state.settings = settings
@@ -296,6 +295,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_admin)],
     )
     async def create_user(body: UserCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        if is_master_name(settings, body.name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"'{body.name}' is the master user defined in the server environment",
+            )
         try:
             row = await pool.fetchrow(
                 """

@@ -22,10 +22,11 @@ class Settings(BaseSettings):
 
     migrations_dir: str = "db/migrations"
 
-    # First-run admin bootstrap (see bootstrap.py): created only while no users exist.
+    # Master user, defined by the deployment (see passwords.master_login). It is not stored in
+    # the database: it lives in the environment, so changing these and restarting is all it
+    # takes to rotate it. Both must be set, and the password needs MIN_PASSWORD_LENGTH characters.
     admin_user: str = ""
     admin_password: SecretStr = SecretStr("")
-    admin_email: str = ""
 
     # Password login (Phase 1A)
     session_ttl_hours: int = 12

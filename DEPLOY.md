@@ -69,22 +69,25 @@ Note: if you already initialized the volume with the old password, changing it i
 `.env` does not change it in the database — do it before the first startup, or use
 `ALTER USER` in psql.
 
-### Initial admin (portal login)
+### Master user (portal login)
 
-The root token (`API_TOKEN`) is not a login, so a fresh deployment has no one who can sign
-in to the portal. Set the first admin in `.env` before the first startup:
+The root token (`API_TOKEN`) is not a login, so a fresh deployment needs a user who can
+sign in to the portal. Define the master user in `.env` before the first startup:
 
 ```bash
 sed -i "s/^ADMIN_USER=.*/ADMIN_USER=admin/" .env
 sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=$(openssl rand -base64 18)/" .env   # min. 10 characters
 grep ADMIN_PASSWORD .env                                                         # note it down
+chmod 600 .env
 ```
 
-`cerebro-auth` creates that user (access level `admin`) on startup **only while no users
-exist**: it never overwrites an existing user, and editing these variables later changes
-nothing. Change the password afterwards from the portal or `cerebro user set-password`, and
-consider removing `ADMIN_PASSWORD` from `.env` once you have. Note that `.env` is shared by
-all containers (like `API_TOKEN`), so keep its permissions tight (`chmod 600 .env`).
+The master user lives in `.env`, not in the database: it is checked on every login, like
+`API_TOKEN`, so to rotate it you edit `.env` and restart `cerebro-auth`
+(`docker compose --profile full up -d cerebro-auth-api`). It signs in with the normal
+password login and gets an `admin` session; from there you can create the regular users and
+groups in the portal. It does not show up in "Users & access" and a database user cannot take
+its name. Note that `.env` is shared by all containers (like `API_TOKEN`), so keep its
+permissions tight.
 
 ## 4. Start the stack
 

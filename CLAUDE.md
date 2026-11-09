@@ -132,10 +132,11 @@ a *session token* — a normal `api_tokens` row named `session:<user>:<hex>` wit
 `429`), generic `401` for every bad-credential case, no MCP tool handles
 passwords (a secret must not pass through a model).
 
-**Initial admin**: `ADMIN_USER`/`ADMIN_PASSWORD` in `.env` make `cerebro-auth` create the
-first admin on startup, only while the `users` table is empty (`bootstrap.py`; one-time, never
-overwrites). The root token is not a login, so this is how a fresh deployment gets someone who
-can sign in to the portal.
+**Master user**: `ADMIN_USER`/`ADMIN_PASSWORD` in `.env` define a user that lives only in the
+environment (checked on every password login like the root token, never stored; `passwords.py`).
+It gets an `admin` session token with no user row. The root token is not a login, so this is how
+a fresh deployment gets someone who can sign in to the portal; rotate it by editing `.env` and
+restarting `cerebro-auth`.
 
 **asyncpg does not auto-decode `jsonb` columns** — always `json.loads()` a
 `module_scopes`/similar column read if it comes back as `str` (no codec is

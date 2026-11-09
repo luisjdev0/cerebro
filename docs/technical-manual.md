@@ -854,9 +854,9 @@ are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
 
 ---
 
-### 4.4 Initial admin bootstrap
+### 4.4 Master user (environment)
 
-`cerebro_auth/bootstrap.py` runs in the service lifespan right after migrations. With `ADMIN_USER` and `ADMIN_PASSWORD` set (min. 10 characters; optional `ADMIN_EMAIL`) and **no row in `cerebro_auth.users`**, it inserts that user as `admin` with an argon2id password hash. The check and insert run in one transaction under `pg_advisory_xact_lock`, so concurrent starts create it once. It is one-time by design: it never touches an existing user and ignores later changes to the variables. Invalid combinations are logged (never the password) and skipped; the service still starts. Tests: `tests/test_bootstrap.py` (a throwaway database per test).
+`ADMIN_USER` / `ADMIN_PASSWORD` define a master user that exists only in the environment (`passwords.py`: `master_configured`, `is_master_name`, `_check_master_password`). `password_login` checks it first: a constant-time comparison (`hmac.compare_digest`) against the configured password, then mints a normal session token `session:<user>:<hex>` with `user_id = NULL`, `access_level = 'admin'` and `allowed_modules = [memory, docs, flows]` (the token carries its own level because there is no user row; see the `api_tokens` CHECK constraints). Same 401 for any bad credential; throttling is an in-memory counter per process (`max_failed_attempts` / `lockout_minutes`, 429 + `Retry-After`) that a restart resets. `POST /users` rejects the master's name with 409, and `set-password` finds no row to change: rotating means editing `.env` and restarting. Needs at least `MIN_PASSWORD_LENGTH` characters or it is treated as unset. Tests: `tests/test_master_user.py`.
 
 ## 5. `cerebro-flows`: YAML schema and execution protocol
 
