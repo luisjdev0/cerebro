@@ -6,10 +6,10 @@ import { useTranslation } from 'react-i18next';
 import { Heatmap } from '../components/Heatmap';
 import { SortableBlocks } from '../components/SortableBlocks';
 import { ModuleChart } from '../components/ModuleChart';
-import { monthlySeries, topSlices, type Slice } from '../lib/charts';
+import { monthlySeries, topSlices, yearSeries, type Slice } from '../lib/charts';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { buildGrid, buildYearGrid, fetchActivity, totalsByDate, type ActivityByModule, type ModuleKey } from '../lib/activity';
+import { buildGrid, buildYearGrid, fetchActivity, totalsByDate, type ActivityByModule, type ActivityDay, type ModuleKey } from '../lib/activity';
 
 type Stats = {
   memories: number | null;
@@ -161,16 +161,21 @@ export function Dashboard() {
     </div>
   );
 
+  // The evolution lines follow the year picked next to the heatmap (the pies do not: they show
+  // what exists now). While the year loads the lines stay empty rather than showing the wrong data.
+  const evolution = (days: (m: ModuleKey) => ActivityDay[]) => (m: ModuleKey) =>
+    year === null ? monthlySeries(days(m)) : yearSeries(heatSource ? days(m) : [], year);
+  const series = evolution((m) => (year === null ? activity?.[m] : heatSource?.[m]) ?? []);
   const chartsBlock = activity ? (
     <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
       {modules.includes('memory') && (
-        <ModuleChart title={t('charts.memoryTitle')} updatedLabel={t('charts.memoryUpdated')} series={monthlySeries(activity.memory)} slices={breakdown.memory} pieCaption={t('charts.memoryPie')} />
+        <ModuleChart title={t('charts.memoryTitle')} updatedLabel={t('charts.memoryUpdated')} series={series('memory')} slices={breakdown.memory} pieCaption={t('charts.memoryPie')} />
       )}
       {modules.includes('docs') && (
-        <ModuleChart title={t('charts.docsTitle')} updatedLabel={t('charts.docsUpdated')} series={monthlySeries(activity.docs)} slices={breakdown.docs} pieCaption={t('charts.docsPie')} />
+        <ModuleChart title={t('charts.docsTitle')} updatedLabel={t('charts.docsUpdated')} series={series('docs')} slices={breakdown.docs} pieCaption={t('charts.docsPie')} />
       )}
       {modules.includes('flows') && (
-        <ModuleChart title={t('charts.flowsTitle')} updatedLabel={t('charts.flowsUpdated')} series={monthlySeries(activity.flows)} slices={breakdown.flows} pieCaption={t('charts.flowsPie')} />
+        <ModuleChart title={t('charts.flowsTitle')} updatedLabel={t('charts.flowsUpdated')} series={series('flows')} slices={breakdown.flows} pieCaption={t('charts.flowsPie')} />
       )}
     </div>
   ) : null;

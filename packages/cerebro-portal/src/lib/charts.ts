@@ -22,6 +22,23 @@ export function monthlySeries(days: ActivityDay[], now = new Date(), months = 12
   return out;
 }
 
+/** January to December of `year` (UTC), zero-filled; for the current year it stops at the
+ *  current month so the line does not fall to zero over months that have not happened. */
+export function yearSeries(days: ActivityDay[], year: number, now = new Date()): MonthPoint[] {
+  const last = year === now.getUTCFullYear() ? now.getUTCMonth() : year > now.getUTCFullYear() ? -1 : 11;
+  const out: MonthPoint[] = [];
+  for (let m = 0; m <= last; m++) out.push({ month: `${year}-${String(m + 1).padStart(2, '0')}`, created: 0, updated: 0 });
+  const byMonth = new Map(out.map((p) => [p.month, p]));
+  for (const day of days) {
+    const p = byMonth.get(day.date.slice(0, 7));
+    if (p) {
+      p.created += day.created;
+      p.updated += day.updated;
+    }
+  }
+  return out;
+}
+
 /** Keeps the `max` biggest slices (zero-sized ones dropped) and folds the rest into one
  *  `otherKey` slice, so a pie never needs more colors than the theme defines. */
 export function topSlices(items: { key: string; name: string; value: number }[], max = 5, other = { key: '__other', name: 'Other' }): Slice[] {
