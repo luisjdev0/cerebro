@@ -1058,6 +1058,12 @@ pip install -e ".[dev]"
 pytest
 ```
 
+The portal (`cerebro-portal`) has no database: its checks run in the `portal` job of
+`.github/workflows/tests.yml`, parallel to the Python suites — and locally with
+`pnpm install && pnpm typecheck && pnpm test && pnpm build` from `packages/cerebro-portal`
+(`pnpm test` includes the en/es translation parity test). The job rewrites the Ixchel ssh
+URL in the lockfile to anonymous https, like the portal's Dockerfile.
+
 This mechanism, and the CLI/branching/merge-approval workflow rules around it,
 are documented in full in `CLAUDE.md` — this manual doesn't duplicate that
 content.
