@@ -19,7 +19,7 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-flows` | Step-by-step workflow execution engine ("traffic light"), Redis + Postgres | 8000 |
 | `cerebro-auth` | Owns the shared `cerebro_auth` schema (users, groups, tokens); memory/docs/flows validate every request against it directly | 8000 |
 | `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
-| `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
+| `cerebro-mcp` | Single MCP server (`FastMCP`; stdio, and streamable HTTP at the gateway's `/mcp` with the token on every request) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
 | `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients`; interactive layer (`rich` + `questionary`) that walks the argparse tree | — |
 | `cerebro-portal` | Web portal (React + Vite + TS + Tailwind, Ixchel components); static SPA served by nginx behind the gateway, talks to the same APIs and session tokens | 80 (internal, via the gateway) |
 

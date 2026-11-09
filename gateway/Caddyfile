@@ -50,7 +50,7 @@
 	# API documentation: /api/ is the page, /api/vendor/* its bundled Swagger UI files
 	# (gateway/apidocs, mounted at /srv/apidocs -- see compose.yaml).
 	handle /api {
-		redir /api/ 308
+		redir * /api/ 308
 	}
 
 	handle /api/ {

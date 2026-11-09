@@ -91,3 +91,18 @@ def test_pending_disambiguation_is_not_shared_between_callers(seen, monkeypatch)
 def test_health_needs_no_token(seen):
     client, _ = seen
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_a_rejected_token_is_reported_in_terms_of_the_connection_not_the_environment(seen, monkeypatch):
+    client, _ = seen
+
+    def deny(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"detail": "invalid token"})
+
+    real = server.MemoryClient
+    monkeypatch.setattr(
+        server, "_memory", server._ClientProxy(lambda *a, **kw: real(*a, transport=httpx.MockTransport(deny), **kw))
+    )
+    r = _rpc(client, "tools/call", {"name": "memory_search", "arguments": {"query": "x"}}, token="revoked")
+    text = r.json()["result"]["content"][0]["text"]
+    assert "Authorization header" in text and "CEREBRO_TOKEN" not in text

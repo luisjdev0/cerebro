@@ -148,6 +148,11 @@ def _connection_error_message(service: str, exc: CerebroConnectionError) -> str:
 
 
 def _auth_error_message(service: str, exc: CerebroAPIError) -> str:
+    if HTTP_MODE:
+        return (
+            f"The {service} API rejected the authentication (401). Check that the bearer token "
+            "sent in the Authorization header of this MCP connection is valid, active and not expired."
+        )
     return (
         f"The {service} API rejected the authentication (401). Check that the "
         "CEREBRO_TOKEN environment variable holds a valid value for that service."
