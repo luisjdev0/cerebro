@@ -14,6 +14,7 @@ export const es = {
     submit: 'Iniciar sesión',
     connecting: 'Conectando...',
     checking: 'Comprobando tus credenciales',
+    sessionEnded: 'Tu sesión terminó. Inicia sesión de nuevo para continuar donde estabas.',
     enterUsername: 'Ingresa tu usuario',
     enterPassword: 'Ingresa tu contraseña',
     invalid: 'Usuario o contraseña incorrectos',

@@ -858,6 +858,10 @@ are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
 
 `ADMIN_USER` / `ADMIN_PASSWORD` define a master user that exists only in the environment (`passwords.py`: `master_configured`, `is_master_name`, `_check_master_password`). `password_login` checks it first: a constant-time comparison (`hmac.compare_digest`) against the configured password, then mints a normal session token `session:<user>:<hex>` with `user_id = NULL`, `access_level = 'admin'` and `allowed_modules = [memory, docs, flows]` (the token carries its own level because there is no user row; see the `api_tokens` CHECK constraints). Same 401 for any bad credential; throttling is an in-memory counter per process (`max_failed_attempts` / `lockout_minutes`, 429 + `Retry-After`) that a restart resets. `POST /users` rejects the master's name with 409, and `set-password` finds no row to change: rotating means editing `.env` and restarting. Needs at least `MIN_PASSWORD_LENGTH` characters or it is treated as unset. Tests: `tests/test_master_user.py`.
 
+### 4.5 Portal session lifecycle
+
+`lib/auth.tsx` ends the session in three ways: a timer at `expires_at`, the unauthorized handler (any authenticated request answering 401, set from `lib/api.ts`), and a `storage` event when another tab clears or replaces `cerebro.session`. All three set `sessionEnded`, which the login screen shows as a notice; `logout()` clears it. `RequireAuth` redirects to `/login` with the current path in router state and `Login` returns there after sign-in (in-app paths only, never `/login` or `//…`). Login's own 401 is excluded (`auth: false`), so a wrong password is not reported as an expiry.
+
 ## 5. `cerebro-flows`: YAML schema and execution protocol
 
 ### 5.1 Top-level YAML shape

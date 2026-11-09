@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { useAuth } from './lib/auth';
 import { Access } from './pages/Access';
@@ -15,7 +15,9 @@ import { Memories } from './pages/Memories';
 // (/memory, /docs, /flows, /auth, /install): hence /memories, /documents, /workflows.
 function RequireAuth({ admin = false, children }: { admin?: boolean; children: React.ReactNode }) {
   const { session, isAdmin } = useAuth();
-  if (!session) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  // Remember where the person was so signing back in lands there, not on the home page.
+  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   if (admin && !isAdmin) return <Navigate to="/" replace />;
   return <>{children}</>;
 }

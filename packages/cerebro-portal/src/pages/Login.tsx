@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { ArrowRight, Brain, FileText, Lock, User, Workflow } from 'lucide-react';
 import { AuthLoadingState, Button, InputField, InputGroup, LoginBrandIntro, LoginScreenDivider } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
@@ -13,13 +13,17 @@ import { ApiError } from '../lib/api';
 // no label props, which cannot work with a runtime language switch.
 export function Login() {
   const { t } = useTranslation();
-  const { session, login } = useAuth();
+  const { session, login, sessionEnded } = useAuth();
+  const location = useLocation();
+  const from = (location.state as { from?: unknown } | null)?.from;
+  // Only an in-app path: anything else (or a login loop) falls back to the home page.
+  const returnTo = typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/login') ? from : '/';
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [nameError, setNameError] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  if (session) return <Navigate to="/" replace />;
+  if (session) return <Navigate to={returnTo} replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -61,6 +65,11 @@ export function Login() {
                     title={t('appName')}
                     description={t('login.description')}
                   />
+                  {sessionEnded && (
+                    <p role="status" className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+                      {t('login.sessionEnded')}
+                    </p>
+                  )}
                   <form onSubmit={(e) => void submit(e)} className="login-form space-y-4">
                     <InputGroup className="gap-4">
                       <InputField

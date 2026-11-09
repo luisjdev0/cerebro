@@ -14,6 +14,7 @@ export const en = {
     submit: 'Sign in',
     connecting: 'Signing in...',
     checking: 'Checking your credentials',
+    sessionEnded: 'Your session has ended. Sign in again to continue where you left off.',
     enterUsername: 'Enter your username',
     enterPassword: 'Enter your password',
     invalid: 'Invalid username or password',

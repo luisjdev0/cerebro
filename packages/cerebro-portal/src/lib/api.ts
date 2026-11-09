@@ -10,6 +10,7 @@ export type Session = {
 };
 
 const STORAGE_KEY = 'cerebro.session';
+export const SESSION_STORAGE_KEY = STORAGE_KEY;
 
 export class ApiError extends Error {
   status: number;
