@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monthlySeries, topSlices } from './charts';
+import { monthlySeries, topSlices, yearSeries } from './charts';
 
 describe('monthlySeries', () => {
   const now = new Date(Date.UTC(2026, 10, 8)); // 8 Nov 2026
@@ -21,6 +21,22 @@ describe('monthlySeries', () => {
     );
     expect(s[11]).toEqual({ month: '2026-11', created: 3, updated: 1 });
     expect(s.reduce((a, p) => a + p.created, 0)).toBe(3);
+  });
+});
+
+describe('yearSeries', () => {
+  const now = new Date(Date.UTC(2026, 10, 8));
+  it('covers January to December for a past year and ignores other years', () => {
+    const s = yearSeries([{ date: '2025-03-02', created: 4, updated: 1 }, { date: '2026-03-02', created: 9, updated: 9 }], 2025, now);
+    expect(s).toHaveLength(12);
+    expect(s[0].month).toBe('2025-01');
+    expect(s[2]).toEqual({ month: '2025-03', created: 4, updated: 1 });
+    expect(s.reduce((a, p) => a + p.created, 0)).toBe(4);
+  });
+  it('stops at the current month for the current year', () => {
+    const s = yearSeries([], 2026, now);
+    expect(s).toHaveLength(11);
+    expect(s[10].month).toBe('2026-11');
   });
 });
 

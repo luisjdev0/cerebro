@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Portal dashboard: the evolution lines follow the year picker.** Choosing a year next to the activity heatmap now also redraws the three line charts for January to December of that year (up to the current month for the current year); "Last 12 months" keeps the rolling window. The pie charts are unchanged, since they show what exists now.
+
 ## [3.0.0] - Phase 1C: web portal, OAuth for connectors
 
 ### Added
