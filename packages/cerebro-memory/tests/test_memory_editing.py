@@ -62,7 +62,10 @@ def test_metadata_edit_is_in_place(client, headers, ctx_and_memory):
     body = resp.json()
     assert body["id"] == memory["id"]  # no new version
     assert body["status"] == "active"
-    assert (body["importance"], body["title"], body["type"], body["confidence"]) == (0.9, "New title", "decision", 0.7)
+    # importance/confidence are float4 columns, so compare with a tolerance
+    assert body["importance"] == pytest.approx(0.9)
+    assert body["confidence"] == pytest.approx(0.7)
+    assert (body["title"], body["type"]) == ("New title", "decision")
     assert body["content"] == "Original fact"
 
 
@@ -72,7 +75,7 @@ def test_content_edit_versions_and_carries_metadata(client, headers, ctx_and_mem
     assert resp.status_code == 200, resp.text
     new = resp.json()
     assert new["id"] != memory["id"]
-    assert new["importance"] == 0.8
+    assert new["importance"] == pytest.approx(0.8)
     old = client.get(f"/memories/{memory['id']}", headers=headers).json()
     assert old["status"] == "superseded"
     assert old["superseded_by"] == new["id"]
