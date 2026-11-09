@@ -181,6 +181,9 @@ class LoginOut(BaseModel):
 class PasswordLoginIn(StrictIn):
     name: str = Field(min_length=1, max_length=100)
     password: SecretStr = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
+    # True for the CLI: a sliding session that ends after `remember_session_days` without use,
+    # instead of the short fixed one the portal gets.
+    remember: bool = False
 
 
 class PasswordLoginOut(LoginOut):
@@ -257,11 +260,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/login/password", response_model=PasswordLoginOut)
     async def login_password(body: PasswordLoginIn, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         """Username + password login. Returns a session token that expires after
-        `session_ttl_hours`. Any failure (unknown user, wrong password, revoked
+        `session_ttl_hours`, or, with `remember`, a sliding one that expires after
+        `remember_session_days` without use. Any failure (unknown user, wrong password, revoked
         user, user with no password) answers the same 401; a locked account
         answers 429 with `Retry-After`."""
         try:
-            result = await password_login(pool, settings, body.name, body.password.get_secret_value())
+            result = await password_login(
+                pool, settings, body.name, body.password.get_secret_value(), body.remember
+            )
         except AccountLockedError as exc:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

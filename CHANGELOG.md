@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The CLI no longer asks you to sign in every 12 hours.** `cerebro login --user` now mints a *sliding* session: every command renews it, and it ends only after 90 days without use (`REMEMBER_SESSION_DAYS`). The stdio MCP server, which reuses the saved login, benefits too. `POST /login/password` accepts `remember: true` (the CLI sends it); the portal keeps its 12 h session. New migration `006_session_sliding.sql` (`api_tokens.slide_days`); memory, docs, flows and auth push a sliding session's expiry forward on use (at most about once an hour, no extra query for ordinary tokens). The CLI stops saving a fixed `expires_at` for password logins (the server judges), and `AuthClient.login_password` gains `remember`. Revoking, logging out, changing the password or disabling the user still end the session at once. Header tokens for MCP have no expiry by default and OAuth connectors keep renewing through their 90-day rotating refresh token.
+
 ## [3.0.0] - Phase 1C: web portal, OAuth for connectors
 
 ### Added

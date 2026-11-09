@@ -982,3 +982,41 @@ class TestLogs:
         for level, expected in (("user", 403), ("admin", 200)):
             token, _ = _create_user_token(access_level=level, scopes=["read"])
             assert client.get("/logs", headers={"Authorization": f"Bearer {token}"}).status_code == expected, level
+
+
+def test_sliding_session_expiry_is_pushed_forward_by_use(client):
+    """A token with `slide_days` (a "remember" login, cerebro-auth migration 006) is renewed by use."""
+    plaintext = generate_token()
+
+    async def _setup_and_read():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at, slide_days)
+                VALUES ($1, $2, $3, NULL, $4, 'admin', $5, '{}', now() + interval '10 days', 90)
+                """,
+                uuid.uuid4(),
+                hash_token(plaintext),
+                f"test-sliding-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["memory"],
+            )
+        finally:
+            await conn.close()
+
+    async def _days_left():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            return await conn.fetchval(
+                "SELECT extract(epoch FROM (expires_at - now())) / 86400 FROM cerebro_auth.api_tokens WHERE token_hash = $1",
+                hash_token(plaintext),
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_setup_and_read())
+    assert asyncio.run(_days_left()) < 11
+    assert client.get("/contexts", headers={"Authorization": f"Bearer {plaintext}"}).status_code == 200
+    assert asyncio.run(_days_left()) > 89

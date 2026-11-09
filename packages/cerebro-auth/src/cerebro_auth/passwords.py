@@ -184,7 +184,7 @@ async def authenticate_password(
 
 
 async def mint_session(
-    pool: asyncpg.Pool, settings: Settings, row: Any, master: bool
+    pool: asyncpg.Pool, settings: Settings, row: Any, master: bool, remember: bool = False
 ) -> dict[str, Any]:
     """Mint a session token for an already authenticated user (see `authenticate_password`)."""
     # Opportunistic housekeeping: drop sessions that expired more than a week ago.
@@ -192,7 +192,11 @@ async def mint_session(
         "DELETE FROM api_tokens WHERE expires_at IS NOT NULL AND expires_at < now() - interval '7 days'"
     )
 
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.session_ttl_hours)
+    # `remember` (the CLI) = a sliding session: it ends after `remember_session_days` without use.
+    slide_days = settings.remember_session_days if remember else None
+    expires_at = datetime.now(timezone.utc) + (
+        timedelta(days=slide_days) if slide_days else timedelta(hours=settings.session_ttl_hours)
+    )
     created = await create_api_token(
         pool,
         name=f"{SESSION_PREFIX}{row['name']}:{secrets.token_hex(4)}",
@@ -203,6 +207,7 @@ async def mint_session(
         allowed_modules=["memory", "docs", "flows"] if master else None,
         module_scopes=None,
         expires_at=expires_at,
+        slide_days=slide_days,
     )
     resolved = await resolve_effective_scope(pool, hash_token(created["token"]))
     return {
@@ -217,11 +222,11 @@ async def mint_session(
 
 
 async def password_login(
-    pool: asyncpg.Pool, settings: Settings, name: str, password: str
+    pool: asyncpg.Pool, settings: Settings, name: str, password: str, remember: bool = False
 ) -> dict[str, Any]:
     """Authenticate with username + password and mint a session token."""
     row, master = await authenticate_password(pool, settings, name, password)
-    return await mint_session(pool, settings, row, master)
+    return await mint_session(pool, settings, row, master, remember)
 
 
 async def set_user_password(pool: asyncpg.Pool, name: str, new_password: str) -> None:

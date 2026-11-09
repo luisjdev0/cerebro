@@ -241,7 +241,7 @@ with the rest: open `http://localhost:8080/`.
 - **Admins**: Users & access, API tokens (create / switch on-off / revoke), Logs (raw lines per
   module that records them) and Backup (`POST /auth/backup` as a download).
 - **Sign-in**: username + password (`POST /auth/login/password`), which mints a session token
-  (12 h). The deployment's **master user** is defined in `.env` (`ADMIN_USER`/`ADMIN_PASSWORD`),
+  (12 h for the portal; the CLI asks for a sliding 90-day session, see the user manual). The deployment's **master user** is defined in `.env` (`ADMIN_USER`/`ADMIN_PASSWORD`),
   checked on every login like the root token and never stored; it creates everyone else.
 - Portal-only endpoints (`GET /logs` in memory and flows, flow categories and runs listing,
   user/group/token management) deliberately have no client/MCP/CLI mirror.

@@ -45,17 +45,19 @@ class TestPasswordLogin:
             "name": "ana", "access_level": "user", "allowed_modules": ["docs"], "token": "cbra_x", "expires_at": expires,
         }
         auth_commands.cmd_login(_login_args(user="ana", password="s3cret-pass-1", url="http://gw"), client=client)
-        client.login_password.assert_called_once_with("ana", "s3cret-pass-1")
+        client.login_password.assert_called_once_with("ana", "s3cret-pass-1", remember=True)
         saved = json.loads((isolated / "config.json").read_text())
-        assert saved == {"token": "cbra_x", "kind": "session", "url": "http://gw", "user": "ana", "expires_at": expires}
-        assert "ana" in capsys.readouterr().out
+        # A sliding session: the server judges it, so no fixed expiry is written to disk.
+        assert saved == {"token": "cbra_x", "kind": "session", "url": "http://gw", "user": "ana"}
+        out = capsys.readouterr().out
+        assert "ana" in out and "days without use" in out
 
     def test_password_from_environment(self, monkeypatch):
         monkeypatch.setenv("CEREBRO_PASSWORD", "from-the-env-123")
         client = MagicMock()
         client.login_password.return_value = {"name": "ana", "token": "t", "expires_at": None}
         auth_commands.cmd_login(_login_args(user="ana"), client=client)
-        client.login_password.assert_called_once_with("ana", "from-the-env-123")
+        client.login_password.assert_called_once_with("ana", "from-the-env-123", remember=True)
 
     def test_password_from_stdin(self, monkeypatch):
         import io
@@ -64,7 +66,7 @@ class TestPasswordLogin:
         client = MagicMock()
         client.login_password.return_value = {"name": "ana", "token": "t", "expires_at": None}
         auth_commands.cmd_login(_login_args(user="ana", password_stdin=True), client=client)
-        client.login_password.assert_called_once_with("ana", "piped-password-1")
+        client.login_password.assert_called_once_with("ana", "piped-password-1", remember=True)
 
     def test_no_terminal_and_no_password_fails_without_prompting(self, monkeypatch):
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: False))

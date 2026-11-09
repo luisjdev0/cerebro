@@ -2799,10 +2799,10 @@
                     "password"
                   ]
                 },
-                "description": "Username + password login. Returns a session token that expires after\n`session_ttl_hours`. Any failure (unknown user, wrong password, revoked\nuser, user with no password) answers the same 401; a locked account\nanswers 429 with `Retry-After`.",
+                "description": "Username + password login. Returns a session token that expires after\n`session_ttl_hours`, or, with `remember`, a sliding one that expires after\n`remember_session_days` without use. Any failure (unknown user, wrong password, revoked\nuser, user with no password) answers the same 401; a locked account\nanswers 429 with `Retry-After`.",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"string\",\n  \"password\": \"string\"\n}",
+                  "raw": "{\n  \"name\": \"string\",\n  \"password\": \"string\",\n  \"remember\": false\n}",
                   "options": {
                     "raw": {
                       "language": "json"

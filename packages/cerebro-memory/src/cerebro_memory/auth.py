@@ -59,6 +59,7 @@ import json
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 import asyncpg
@@ -263,7 +264,8 @@ async def get_principal(
             t.access_level AS token_access_level,
             t.allowed_modules AS token_allowed_modules,
             t.module_scopes AS token_module_scopes,
-            u.access_level AS user_access_level
+            u.access_level AS user_access_level,
+            t.expires_at AS token_expires_at, t.slide_days
         FROM cerebro_auth.api_tokens t
         LEFT JOIN cerebro_auth.users u ON u.id = t.user_id
         WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.disabled_at IS NULL
@@ -273,6 +275,7 @@ async def get_principal(
     )
     if row is None:
         raise unauthorized
+    await _slide_session(pool, hash_token(token), row["token_expires_at"], row["slide_days"])
 
     user_id: uuid.UUID | None = row["user_id"]
     access_level: str = row["user_access_level"] if user_id is not None else row["token_access_level"]
@@ -380,3 +383,18 @@ def require_admin():
         return principal
 
     return _dependency
+
+
+async def _slide_session(pool: asyncpg.Pool, token_hash: str, expires_at: Any, slide_days: int | None) -> None:
+    """Sliding sessions (cerebro-auth migration 006): a session minted with "remember" has
+    `slide_days`, and every use pushes `expires_at` forward, so it only ends after that many
+    days without use. Written at most about once an hour; tokens without `slide_days` cost nothing."""
+    if slide_days is None or expires_at is None:
+        return
+    target = datetime.now(timezone.utc) + timedelta(days=slide_days)
+    if target - expires_at > timedelta(hours=1):
+        await pool.execute(
+            "UPDATE cerebro_auth.api_tokens SET expires_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL",
+            token_hash,
+            target,
+        )

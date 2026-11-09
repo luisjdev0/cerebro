@@ -30,6 +30,7 @@ import argparse
 import getpass
 import os
 import sys
+from datetime import datetime, timezone
 
 from cerebro_clients import AuthClient, CerebroAPIError, CerebroConnectionError
 
@@ -94,6 +95,19 @@ def resolve_password(
 # --------------------------------------------------------------------------- login
 
 
+def _days_until(when: str | None) -> int | None:
+    """Whole days from now to an ISO timestamp from the server, or None if it can't be read."""
+    if not when:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return max(0, round((stamp - datetime.now(timezone.utc)).total_seconds() / 86400))
+
+
 def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
     # `--url` is the GATEWAY's base URL (e.g. https://cerebro.example.com), matching
     # every other CEREBRO_*_URL in this project -- the gateway routes /api/auth/* to
@@ -112,11 +126,16 @@ def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> 
         if token:
             result = client.login(token)
             session_token, kind, expires_at = token, "token", None
+            idle_days = None
         else:
             password = resolve_password(args, prompt=f"Contrasena de {user}: ")
-            result = client.login_password(user, password)
+            # A sliding session: every use renews it, and it ends only after a long time without
+            # use. The server is the judge, so the expiry is NOT saved (a fixed date on disk would
+            # lock out someone who uses the CLI every day).
+            result = client.login_password(user, password, remember=True)
             session_token = result["token"]
-            kind, expires_at = "session", result.get("expires_at")
+            kind, expires_at = "session", None
+            idle_days = _days_until(result.get("expires_at"))
     except CerebroConnectionError as exc:
         _fail(f"Could not connect to cerebro-auth: {exc}")
     except CerebroAPIError as exc:
@@ -138,8 +157,8 @@ def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> 
         f"Logged in as '{result.get('name')}' "
         f"(access_level: {result.get('access_level')}; modules: {', '.join(modules) or 'all'})."
     )
-    if expires_at:
-        print(f"The session expires on {expires_at}.")
+    if idle_days:
+        print(f"You stay signed in while you use cerebro; the session ends after {idle_days} days without use.")
     print("Credentials saved to ~/.cerebro/config.json.")
 
 

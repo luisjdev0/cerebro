@@ -30,6 +30,8 @@ class Settings(BaseSettings):
 
     # Password login (Phase 1A)
     session_ttl_hours: int = 12
+    # Sessions asked to be remembered (CLI login) slide: they end after this many days WITHOUT use.
+    remember_session_days: int = 90
     max_failed_attempts: int = 5
     lockout_minutes: int = 15
 

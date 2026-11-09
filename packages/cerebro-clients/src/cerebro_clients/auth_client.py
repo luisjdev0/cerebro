@@ -135,12 +135,15 @@ class AuthClient(BaseClient):
         # checks the *given* token, not the caller's.
         return self._request("POST", "/login", json={"token": token}, authenticated=False).json()
 
-    def login_password(self, name: str, password: str) -> dict[str, Any]:
+    def login_password(self, name: str, password: str, *, remember: bool = False) -> dict[str, Any]:
         """Username + password login (`POST /login/password`). Returns the session
-        `token` and its `expires_at`. Like `login()`, sends no Authorization header."""
-        return self._request(
-            "POST", "/login/password", json={"name": name, "password": password}, authenticated=False
-        ).json()
+        `token` and its `expires_at`. Like `login()`, sends no Authorization header.
+        `remember=True` asks for a sliding session (it ends only after a long time without
+        use, 90 days by default) instead of the short fixed one: what the CLI wants."""
+        body: dict[str, Any] = {"name": name, "password": password}
+        if remember:
+            body["remember"] = True
+        return self._request("POST", "/login/password", json=body, authenticated=False).json()
 
     def logout(self) -> dict[str, Any]:
         """Revoke THIS client's own session token (`POST /logout`)."""

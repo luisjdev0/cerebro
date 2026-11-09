@@ -707,3 +707,41 @@ class TestOwnershipFilter:
         # ownership - the redirect fallback must ALSO respect owner_filter
         via_redirect_outsider = client.get(f"/documents/{cat_a}/se-mueve", headers=outsider_headers)
         assert via_redirect_outsider.status_code == 404, via_redirect_outsider.text
+
+
+def test_sliding_session_expiry_is_pushed_forward_by_use(client):
+    """A token with `slide_days` (a "remember" login, cerebro-auth migration 006) is renewed by use."""
+    plaintext = generate_token()
+
+    async def _setup_and_read():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at, slide_days)
+                VALUES ($1, $2, $3, NULL, $4, 'admin', $5, '{}', now() + interval '10 days', 90)
+                """,
+                uuid.uuid4(),
+                hash_token(plaintext),
+                f"test-sliding-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["docs"],
+            )
+        finally:
+            await conn.close()
+
+    async def _days_left():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            return await conn.fetchval(
+                "SELECT extract(epoch FROM (expires_at - now())) / 86400 FROM cerebro_auth.api_tokens WHERE token_hash = $1",
+                hash_token(plaintext),
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_setup_and_read())
+    assert asyncio.run(_days_left()) < 11
+    assert client.get("/categories", headers={"Authorization": f"Bearer {plaintext}"}).status_code == 200
+    assert asyncio.run(_days_left()) > 89

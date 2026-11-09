@@ -401,8 +401,11 @@ a terminal.
 | `cerebro user create NAME [--password]` | Admin: creates a user, optionally with a password (without a value, it asks). |
 | `cerebro user set-password NAME` | Admin: sets anyone's password. A user changing their **own** adds `--current-password`. Changing a password closes that user's open sessions. |
 
-A password login creates a **session** that expires (12 hours by default); when it
-does, the CLI tells you to log in again. Five wrong passwords in a row lock the
+A password login creates a **session**. In the portal it lasts 12 hours. In the **CLI** it is a
+*sliding* session: every command renews it, so it only ends after 90 days without using it
+(`REMEMBER_SESSION_DAYS` on the server); you log in once, not every day. The stdio MCP server reuses
+that saved login, so it never needs re-authenticating either. When a session does end (idle too
+long, closed by an admin, or the password changed), the CLI tells you to log in again. Five wrong passwords in a row lock the
 account for 15 minutes. Users created before passwords existed keep working with
 their token; an admin can give them a password with `cerebro user set-password`.
 There is deliberately no assistant/MCP tool for passwords: a secret must never
@@ -438,7 +441,7 @@ Use the **username and password** an administrator gave you. The very first one 
 `.env` (see `DEPLOY.md`); it creates everyone else. After too many wrong passwords an account
 is locked for a few minutes.
 
-A session lasts 12 hours by default. When it ends — it expired, an administrator closed it, or
+A portal session lasts 12 hours by default. When it ends — it expired, an administrator closed it, or
 you signed out in another tab — the portal takes you back to the sign-in screen with a notice,
 and signing in again returns you to the page you were on. You only see the modules your account
 is allowed to use.

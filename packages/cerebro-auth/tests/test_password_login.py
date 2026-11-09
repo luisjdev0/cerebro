@@ -276,3 +276,69 @@ class TestLogout:
         assert client.post("/logout", headers=headers).status_code == 400
         # and it still works afterwards
         assert client.post("/logout", headers=headers).status_code == 400
+
+
+# --------------------------------------------------------------------------- sliding sessions
+
+
+def _expires_in_days(token: str) -> float:
+    """Days until the stored expiry of a session token (read straight from the table)."""
+    from cerebro_auth.auth import hash_token
+
+    async def _run():
+        conn = await asyncpg.connect(dsn=get_settings().database_url)
+        try:
+            return await conn.fetchval(
+                "SELECT extract(epoch FROM (expires_at - now())) / 86400 FROM cerebro_auth.api_tokens WHERE token_hash = $1",
+                hash_token(token),
+            )
+        finally:
+            await conn.close()
+
+    return float(asyncio.run(_run()))
+
+
+class TestSlidingSessions:
+    def test_remember_mints_a_long_sliding_session_and_default_stays_short(self, client, root_headers):
+        name = _create_user(client, root_headers, access_level="admin")
+        short = _login(client, name).json()["token"]
+        long_ = client.post("/login/password", json={"name": name, "password": GOOD_PASSWORD, "remember": True})
+        assert long_.status_code == 200, long_.text
+        assert _expires_in_days(short) < 1
+        assert 89 < _expires_in_days(long_.json()["token"]) <= 90
+
+    def test_using_a_sliding_session_pushes_its_expiry_forward(self, client, root_headers):
+        name = _create_user(client, root_headers, access_level="admin")
+        token = client.post(
+            "/login/password", json={"name": name, "password": GOOD_PASSWORD, "remember": True}
+        ).json()["token"]
+        from cerebro_auth.auth import hash_token
+
+        # Pretend it has not been used for 80 days: 10 left of its 90.
+        _sql(
+            "UPDATE cerebro_auth.api_tokens SET expires_at = now() + interval '10 days' WHERE token_hash = $1",
+            hash_token(token),
+        )
+        assert 9 < _expires_in_days(token) < 11
+        assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+        assert _expires_in_days(token) > 89  # renewed by that use
+
+    def test_a_fixed_session_is_never_extended_by_use(self, client, root_headers):
+        name = _create_user(client, root_headers, access_level="admin")
+        token = _login(client, name).json()["token"]
+        before = _expires_in_days(token)
+        assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+        assert _expires_in_days(token) <= before
+
+    def test_an_expired_sliding_session_is_not_resurrected(self, client, root_headers):
+        name = _create_user(client, root_headers, access_level="admin")
+        token = client.post(
+            "/login/password", json={"name": name, "password": GOOD_PASSWORD, "remember": True}
+        ).json()["token"]
+        from cerebro_auth.auth import hash_token
+
+        _sql(
+            "UPDATE cerebro_auth.api_tokens SET expires_at = now() - interval '1 minute' WHERE token_hash = $1",
+            hash_token(token),
+        )
+        assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 401

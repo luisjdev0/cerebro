@@ -34,6 +34,7 @@ only the prefix differs (`cbra_`, "cerebro-auth", vs. `cbrf_` for flows etc.).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import secrets
@@ -97,6 +98,22 @@ class Principal:
     @property
     def is_admin(self) -> bool:
         return self.access_level == "admin"
+
+
+# --------------------------------------------------------------------------- sliding sessions
+
+
+async def slide_session(pool: asyncpg.Pool, token_hash: str, expires_at: Any, slide_days: int | None) -> None:
+    """Push a sliding session's expiry forward (see migration 006). Every service that validates
+    `cerebro_auth.api_tokens` calls this after a successful lookup. A token with no `slide_days`
+    costs nothing; a sliding one is written at most about once an hour."""
+    if slide_days is None or expires_at is None:
+        return
+    target = datetime.now(timezone.utc) + timedelta(days=slide_days)
+    if target - expires_at > timedelta(hours=1):
+        await pool.execute(
+            "UPDATE api_tokens SET expires_at = $2 WHERE token_hash = $1 AND revoked_at IS NULL", token_hash, target
+        )
 
 
 # --------------------------------------------------------------------------- permission resolution
@@ -180,7 +197,7 @@ async def resolve_effective_scope(pool: asyncpg.Pool, token_hash: str) -> Resolv
     """
     token_row = await pool.fetchrow(
         """
-        SELECT name, user_id, access_level, allowed_modules, module_scopes
+        SELECT name, user_id, access_level, allowed_modules, module_scopes, expires_at, slide_days
         FROM api_tokens
         WHERE token_hash = $1 AND revoked_at IS NULL AND disabled_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
@@ -189,6 +206,7 @@ async def resolve_effective_scope(pool: asyncpg.Pool, token_hash: str) -> Resolv
     )
     if token_row is None:
         return None
+    await slide_session(pool, token_hash, token_row["expires_at"], token_row["slide_days"])
 
     token_allowed_modules: list[str] | None = token_row["allowed_modules"]
     token_module_scopes: dict[str, Any] = json.loads(token_row["module_scopes"]) if isinstance(token_row["module_scopes"], str) else (token_row["module_scopes"] or {})
@@ -323,6 +341,7 @@ async def create_api_token(
     module_scopes: dict[str, Any] | None,
     value: str | None = None,
     expires_at: Any | None = None,
+    slide_days: int | None = None,
 ) -> dict[str, Any]:
     invalid = sorted(set(scopes) - set(VALID_SCOPES))
     if invalid or not scopes:
@@ -338,8 +357,8 @@ async def create_api_token(
     try:
         row = await pool.fetchrow(
             """
-            INSERT INTO api_tokens (token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO api_tokens (token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at, slide_days)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at
             """,
             token_hash,
@@ -350,6 +369,7 @@ async def create_api_token(
             allowed_modules,
             module_scopes_json,
             expires_at,
+            slide_days,
         )
     except asyncpg.UniqueViolationError as exc:
         if value is not None:

@@ -283,3 +283,41 @@ class TestTokensRoutesRemoved:
         assert client.post("/tokens", json={"name": "x", "scopes": ["read"]}, headers=root_headers).status_code == 404
         assert client.get("/tokens", headers=root_headers).status_code == 404
         assert client.delete("/tokens/whatever", headers=root_headers).status_code == 404
+
+
+def test_sliding_session_expiry_is_pushed_forward_by_use(client):
+    """A token with `slide_days` (a "remember" login, cerebro-auth migration 006) is renewed by use."""
+    plaintext = generate_token()
+
+    async def _setup_and_read():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            await conn.execute(
+                """
+                INSERT INTO cerebro_auth.api_tokens
+                    (id, token_hash, name, user_id, scopes, access_level, allowed_modules, module_scopes, expires_at, slide_days)
+                VALUES ($1, $2, $3, NULL, $4, 'admin', $5, '{}', now() + interval '10 days', 90)
+                """,
+                uuid.uuid4(),
+                hash_token(plaintext),
+                f"test-sliding-{uuid.uuid4().hex[:8]}",
+                ["read"],
+                ["flows"],
+            )
+        finally:
+            await conn.close()
+
+    async def _days_left():
+        conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8)
+        try:
+            return await conn.fetchval(
+                "SELECT extract(epoch FROM (expires_at - now())) / 86400 FROM cerebro_auth.api_tokens WHERE token_hash = $1",
+                hash_token(plaintext),
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_setup_and_read())
+    assert asyncio.run(_days_left()) < 11
+    assert client.get("/categories", headers={"Authorization": f"Bearer {plaintext}"}).status_code == 200
+    assert asyncio.run(_days_left()) > 89

@@ -138,7 +138,12 @@ environment variables.
 a *session token* — a normal `api_tokens` row named `session:<user>:<hex>` with
 `expires_at` (default 12 h). Every service's token lookup must keep the
 `expires_at IS NULL OR expires_at > now()` check (a new service that reads
-`cerebro_auth.api_tokens` has to add it). Per-user lockout (5 failures → 15 min,
+`cerebro_auth.api_tokens` has to add it). **Sliding sessions**: `POST /login/password` with
+`remember: true` (what the CLI sends, and so the stdio MCP that reuses its saved login) mints a session
+with `slide_days` (`REMEMBER_SESSION_DAYS`, default 90, migration `006`); each service's lookup also
+selects `expires_at, slide_days` and calls its `_slide_session` helper, which pushes the expiry forward
+(at most about hourly). A new service that reads the table must do the same. The CLI never saves a fixed
+expiry for such a login: the server is the judge. Per-user lockout (5 failures → 15 min,
 `429`), generic `401` for every bad-credential case, no MCP tool handles
 passwords (a secret must not pass through a model).
 
