@@ -800,6 +800,19 @@ independent gates apply: what is visible (`allowed_modules` + `module_scopes`,
 shaped by `access_level` `user`/`owner`/`admin`) and who owns it
 (`owner_user_id`). See `CLAUDE.md` for the details.
 
+**Portal-only admin endpoints** (admin-gated, deliberately no client/MCP/CLI mirror,
+same rationale as the portal-only endpoints of the other services):
+`PATCH /users/{name}` (`email`, `access_level`, `active`; the name is immutable;
+`active=false` sets `revoked_at`, which invalidates every token of the user; a
+`409` refuses demoting or deactivating the **last active admin**), `GET /groups`
+(each group with `members`, `allowed_modules`, `module_scopes`), `PATCH /groups/{slug}`
+(rename), `DELETE /groups/{slug}` (memberships and scopes cascade; users stay) and
+`DELETE /groups/{slug}/members/{user}`. `GET /users` also returns each user's `groups`.
+Users are never hard-deleted from the portal, only deactivated. The portal's
+"Users & access" screen (users and groups) and "API tokens" screen (create with
+the secret shown once, revoke; password-login session tokens hidden by default)
+are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
+
 ### 4.3 Password login (Phase 1A)
 
 - **Storage**: `users.password_hash` holds an **argon2id** hash (`argon2-cffi`

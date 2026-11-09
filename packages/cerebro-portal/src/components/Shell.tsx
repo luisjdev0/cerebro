@@ -1,4 +1,4 @@
-import { Brain, ChevronsUpDown, FileText, LayoutDashboard, Moon, Sun, Users, Workflow } from 'lucide-react';
+import { Brain, ChevronsUpDown, FileText, KeyRound, LayoutDashboard, Moon, Sun, Users, Workflow } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
@@ -84,8 +84,13 @@ export function Shell() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
-                    <SidebarMenuButton icon={Users} tooltip={t('nav.admin')} isActive={active('/admin')} render={<Link to="/admin" />}>
+                    <SidebarMenuButton icon={Users} tooltip={t('nav.admin')} isActive={pathname === '/admin'} render={<Link to="/admin" />}>
                       {t('nav.admin')}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton icon={KeyRound} tooltip={t('nav.tokens')} isActive={active('/admin/tokens')} render={<Link to="/admin/tokens" />}>
+                      {t('nav.tokens')}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </SidebarMenu>

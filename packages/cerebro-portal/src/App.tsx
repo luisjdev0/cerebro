@@ -1,13 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { useAuth } from './lib/auth';
-import { ComingSoon } from './pages/ComingSoon';
+import { Access } from './pages/Access';
+import { ApiTokens } from './pages/ApiTokens';
 import { Workflows } from './pages/Workflows';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
 import { Documents } from './pages/Documents';
 import { Memories } from './pages/Memories';
-import { useTranslation } from 'react-i18next';
 
 // Client-side routes must not collide with the gateway's API prefixes
 // (/memory, /docs, /flows, /auth, /install): hence /memories, /documents, /workflows.
@@ -19,7 +19,6 @@ function RequireAuth({ admin = false, children }: { admin?: boolean; children: R
 }
 
 export function App() {
-  const { t } = useTranslation();
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -28,7 +27,8 @@ export function App() {
         <Route path="memories" element={<Memories />} />
         <Route path="documents" element={<Documents />} />
         <Route path="workflows" element={<Workflows />} />
-        <Route path="admin/*" element={<RequireAuth admin><ComingSoon title={t('nav.admin')} /></RequireAuth>} />
+        <Route path="admin" element={<RequireAuth admin><Access /></RequireAuth>} />
+        <Route path="admin/tokens" element={<RequireAuth admin><ApiTokens /></RequireAuth>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
