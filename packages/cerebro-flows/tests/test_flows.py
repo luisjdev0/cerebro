@@ -634,3 +634,32 @@ class TestCategoryManagement:
         cat = _make_category(client, auth_headers)
         resp = client.delete(f"/categories/{cat}", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200, resp.text
+
+
+class TestDisabledTokens:
+    def test_a_disabled_token_is_rejected_until_switched_back_on(self, client):
+        dsn = get_settings().database_url
+
+        async def make():
+            uid = await insert_user(dsn, access_level="user")
+            return await insert_token(dsn, name=f"dis-{uuid.uuid4().hex[:8]}", user_id=uid, allowed_modules=["flows"])
+
+        async def set_disabled(token, disabled):
+            from cerebro_flows.auth import hash_token
+
+            conn = await asyncpg.connect(dsn=dsn, timeout=8)
+            try:
+                await conn.execute(
+                    f"UPDATE cerebro_auth.api_tokens SET disabled_at = {'now()' if disabled else 'NULL'} WHERE token_hash = $1",
+                    hash_token(token),
+                )
+            finally:
+                await conn.close()
+
+        token = asyncio.run(make())
+        h = {"Authorization": f"Bearer {token}"}
+        assert client.get("/categories", headers=h).status_code == 200
+        asyncio.run(set_disabled(token, True))
+        assert client.get("/categories", headers=h).status_code == 401
+        asyncio.run(set_disabled(token, False))
+        assert client.get("/categories", headers=h).status_code == 200

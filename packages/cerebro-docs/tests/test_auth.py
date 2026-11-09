@@ -464,6 +464,29 @@ class TestScopeEnforcement:
         resp = client.get("/categories", headers=headers)
         assert resp.status_code == 403, resp.text
 
+    def test_a_disabled_token_is_rejected_until_switched_back_on(self, client, root_headers):
+        token, _ = _make_user_token(get_settings().database_url, access_level="user", scopes=["read"], allowed_modules=["docs"])
+        h = {"Authorization": f"Bearer {token}"}
+
+        def set_disabled(disabled: bool) -> None:
+            async def _do() -> None:
+                conn = await _connect(get_settings().database_url)
+                try:
+                    await conn.execute(
+                        f"UPDATE cerebro_auth.api_tokens SET disabled_at = {'now()' if disabled else 'NULL'} WHERE token_hash = $1",
+                        hash_token(token),
+                    )
+                finally:
+                    await conn.close()
+
+            asyncio.run(_do())
+
+        assert client.get("/categories", headers=h).status_code == 200
+        set_disabled(True)
+        assert client.get("/categories", headers=h).status_code == 401
+        set_disabled(False)
+        assert client.get("/categories", headers=h).status_code == 200
+
     def test_delete_category_requires_admin_not_just_write(self, client, root_headers):
         slug = _make_category(client, root_headers)
         settings = get_settings()

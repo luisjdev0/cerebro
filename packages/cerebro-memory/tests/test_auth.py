@@ -630,6 +630,22 @@ class TestDeleteContext:
         resp = client.delete(f"/contexts/does-not-exist-{uuid.uuid4().hex[:8]}", headers=root_headers)
         assert resp.status_code == 404, resp.text
 
+    def test_a_disabled_token_is_rejected_until_switched_back_on(self, client):
+        token, _ = _create_user_token(access_level="user", scopes=["read"])
+        h = {"Authorization": f"Bearer {token}"}
+
+        async def _set_disabled(conn, disabled: bool):
+            await conn.execute(
+                f"UPDATE cerebro_auth.api_tokens SET disabled_at = {'now()' if disabled else 'NULL'} WHERE token_hash = $1",
+                hash_token(token),
+            )
+
+        assert client.get("/contexts", headers=h).status_code == 200
+        _run_sql(_set_disabled, True)
+        assert client.get("/contexts", headers=h).status_code == 401
+        _run_sql(_set_disabled, False)
+        assert client.get("/contexts", headers=h).status_code == 200
+
     def test_delete_context_requires_admin_not_just_write(self, client, root_headers):
         slug = _make_context(client, root_headers)
         token = _create_service_token(scopes=["read", "write"])

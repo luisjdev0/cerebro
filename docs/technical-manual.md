@@ -807,7 +807,7 @@ same rationale as the portal-only endpoints of the other services):
 `409` refuses demoting or deactivating the **last active admin**), `GET /groups`
 (each group with `members`, `allowed_modules`, `module_scopes`), `PATCH /groups/{slug}`
 (rename), `DELETE /groups/{slug}` (memberships and scopes cascade; users stay) and
-`DELETE /groups/{slug}/members/{user}`, and `PATCH /tokens/{id}` (`{active}`: sets or clears `revoked_at`, same secret; `409` if turning on would clash with another active token's name). `GET /users` also returns each user's `groups`.
+`DELETE /groups/{slug}/members/{user}`, and `PATCH /tokens/{id}` (`{active}`: sets or clears the reversible `disabled_at`, same secret; revoking via `DELETE /tokens/{name}` stays permanent and a revoked token answers `409`). Every service that reads `cerebro_auth.api_tokens` must also check `AND disabled_at IS NULL`. `GET /users` also returns each user's `groups`.
 Users are never hard-deleted from the portal, only deactivated. The portal's
 "Users & access" screen (users and groups) and "API tokens" screen (create with
 the secret shown once, revoke; password-login session tokens hidden by default)

@@ -199,7 +199,7 @@ async def get_principal(
         """
         SELECT name, user_id, scopes, access_level, allowed_modules, module_scopes
         FROM cerebro_auth.api_tokens
-        WHERE token_hash = $1 AND revoked_at IS NULL
+        WHERE token_hash = $1 AND revoked_at IS NULL AND disabled_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
         """,
         hash_token(token),

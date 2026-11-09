@@ -40,6 +40,8 @@ export type ApiToken = {
   created_at: string;
   revoked_at: string | null;
   expires_at: string | null;
+  /** Switched off (reversible). Revoked is permanent and is `revoked_at`. */
+  disabled_at: string | null;
 };
 
 export const MIN_PASSWORD_LENGTH = 10;
@@ -73,7 +75,8 @@ export type TokenInput = {
   module_scopes?: ModuleScopes;
 };
 export const createToken = (t: TokenInput) => api<ApiToken & { token: string }>('/auth/tokens', { method: 'POST', json: t });
-/** Switches a token off or back on; the secret stays the same. */
+export const revokeToken = (name: string) => api<ApiToken>(`/auth/tokens/${enc(name)}`, { method: 'DELETE' });
+/** Switches a token off or back on (reversible, same secret). Revoking is separate and permanent. */
 export const setTokenActive = (id: string, active: boolean) => api<ApiToken>(`/auth/tokens/${enc(id)}`, { method: 'PATCH', json: { active } });
 
 /** Session tokens (`session:<user>:<hex>`) are minted by every password login: noise in a token list. */

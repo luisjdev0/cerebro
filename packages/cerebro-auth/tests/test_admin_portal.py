@@ -145,23 +145,29 @@ class TestTokenToggle:
         t = self._make(client, root)
         assert client.post("/login", json={"token": t["token"]}).status_code == 200
         off = client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root)
-        assert off.status_code == 200 and off.json()["revoked_at"] is not None
+        assert off.status_code == 200 and off.json()["disabled_at"] is not None and off.json()["revoked_at"] is None
         assert client.post("/login", json={"token": t["token"]}).status_code == 401
         on = client.patch(f"/tokens/{t['id']}", json={"active": True}, headers=root)
-        assert on.status_code == 200 and on.json()["revoked_at"] is None
+        assert on.status_code == 200 and on.json()["disabled_at"] is None
         assert client.post("/login", json={"token": t["token"]}).status_code == 200
+
+    def test_listing_shows_the_disabled_state(self, client, root):
+        t = self._make(client, root)
+        client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root)
+        row = next(x for x in client.get("/tokens", headers=root).json() if x["id"] == t["id"])
+        assert row["disabled_at"] is not None and row["revoked_at"] is None
 
     def test_turning_off_twice_is_idempotent(self, client, root):
         t = self._make(client, root)
-        first = client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["revoked_at"]
-        assert client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["revoked_at"] == first
+        first = client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["disabled_at"]
+        assert client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["disabled_at"] == first
 
-    def test_name_clash_with_an_active_token_is_409(self, client, root):
-        name = _unique("tg")
-        old = self._make(client, root, name)
-        client.patch(f"/tokens/{old['id']}", json={"active": False}, headers=root)
-        self._make(client, root, name)  # a new active token takes the name
-        assert client.patch(f"/tokens/{old['id']}", json={"active": True}, headers=root).status_code == 409
+    def test_revoked_token_cannot_be_switched_and_revoking_is_permanent(self, client, root):
+        t = self._make(client, root)
+        client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root)  # off, then revoked
+        assert client.delete(f"/tokens/{t['name']}", headers=root).status_code == 200
+        assert client.patch(f"/tokens/{t['id']}", json={"active": True}, headers=root).status_code == 409
+        assert client.post("/login", json={"token": t["token"]}).status_code == 401
 
     def test_unknown_token_and_bad_body(self, client, root):
         assert client.patch(f"/tokens/{uuid.uuid4()}", json={"active": True}, headers=root).status_code == 404

@@ -155,6 +155,7 @@ class TokenOut(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     expires_at: datetime | None = None
+    disabled_at: datetime | None = None
 
 
 class TokenToggle(StrictIn):
@@ -616,25 +617,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/tokens/{token_id}", response_model=TokenOut, dependencies=[Depends(require_admin)])
     async def set_token_active(token_id: UUID, body: TokenToggle, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
-        """Portal-only (no client/MCP/CLI mirror): switch a token off (`revoked_at = now()`) or back
-        on (`revoked_at = NULL`). The secret never changes. Turning one on is a 409 if another
-        active token already has its name (names are unique among active tokens)."""
-        try:
-            row = await pool.fetchrow(
-                f"""
-                UPDATE api_tokens SET revoked_at = {"NULL" if body.active else "COALESCE(revoked_at, now())"}
-                WHERE id = $1
-                RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes,
-                          created_at, revoked_at, expires_at
-                """,
-                token_id,
-            )
-        except asyncpg.UniqueViolationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="another active token already has this name - switch it off or revoke it first",
-            ) from exc
+        """Portal-only (no client/MCP/CLI mirror): switch a token off (`disabled_at = now()`) or back
+        on (`disabled_at = NULL`); the secret never changes. Different from revoking, which is
+        permanent: a revoked token cannot be switched (409)."""
+        row = await pool.fetchrow(
+            f"""
+            UPDATE api_tokens SET disabled_at = {"NULL" if body.active else "COALESCE(disabled_at, now())"}
+            WHERE id = $1 AND revoked_at IS NULL
+            RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes,
+                      created_at, revoked_at, expires_at, disabled_at
+            """,
+            token_id,
+        )
         if row is None:
+            exists = await pool.fetchval("SELECT 1 FROM api_tokens WHERE id = $1", token_id)
+            if exists:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="this token is revoked for good and cannot be switched")
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such token")
         data = dict(row)
         ms = data["module_scopes"]

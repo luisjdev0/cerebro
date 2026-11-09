@@ -286,9 +286,10 @@ export const es = {
       generate: 'Generar token', createdTitle: 'Token creado', createdDesc: 'Cópialo ahora y guárdalo en un lugar seguro.',
       once: 'Esta es la única vez que se muestra el secreto. Después no se puede recuperar, solo reemplazar por un token nuevo.',
       savedIt: 'Ya lo guardé',
-      statusOn: 'Encendido', statusOff: 'Apagado', statusOnPlural: 'Encendidos', statusOffPlural: 'Apagados', showSessions: 'Mostrar sesiones de ingreso',
+      statusOn: 'Encendido', statusOff: 'Apagado', statusRevoked: 'Revocado', statusOnPlural: 'Encendidos', statusOffPlural: 'Apagados', statusRevokedPlural: 'Revocados', revoke: 'Revocar',
+      revokedOn: 'Revocado el {{date}}', revokeTitle: '¿Revocar «{{name}}» definitivamente?', revokeDesc: 'Es permanente, prácticamente eliminarlo: el token no volverá a funcionar y no se puede volver a encender. Para bloquearlo temporalmente, apágalo en su lugar.', showSessions: 'Mostrar sesiones de ingreso',
       turnOff: 'Apagar {{name}}', turnOn: 'Encender {{name}}', offSince: 'Apagado desde el {{date}}', expires: 'Expira el {{date}}', unknownUser: 'Usuario desconocido',
-      legend: '* limitado a algunos contextos o categorías. Apagar un token lo bloquea de inmediato; al encenderlo de nuevo vuelve a funcionar con el mismo secreto. Las sesiones de ingreso se ocultan por defecto: cada ingreso con contraseña crea una.',
+      legend: '* limitado a algunos contextos o categorías. El interruptor apaga y vuelve a encender un token con el mismo secreto. Revocar es permanente. Las sesiones de ingreso se ocultan por defecto: cada ingreso con contraseña crea una.',
     },
   },
   flows: {

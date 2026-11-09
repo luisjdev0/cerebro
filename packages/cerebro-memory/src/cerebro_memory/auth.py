@@ -266,7 +266,7 @@ async def get_principal(
             u.access_level AS user_access_level
         FROM cerebro_auth.api_tokens t
         LEFT JOIN cerebro_auth.users u ON u.id = t.user_id
-        WHERE t.token_hash = $1 AND t.revoked_at IS NULL
+        WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.disabled_at IS NULL
           AND (t.expires_at IS NULL OR t.expires_at > now())
         """,
         hash_token(token),
