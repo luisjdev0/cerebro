@@ -74,6 +74,13 @@ pytest
   straight to `main`, and reaches `main` through a PR that only the owner approves.
 - **Every change updates the docs and `CHANGELOG.md`** (README, DEPLOY,
   `docs/technical-manual.md`, `docs/user-manual.md`, this file when conventions change).
+- **The Postman collection must follow the API.** `docs/postman/cerebro.postman_collection.json`
+  is generated from the four services' OpenAPI documents. Whenever you add, remove or change an
+  endpoint or a request/response contract (path, method, parameters, body or auth), run
+  `python scripts/generate_postman.py` and commit the result in the same change (needs the four
+  API packages installed; no database). Never edit the JSON by hand. CI runs
+  `python scripts/generate_postman.py --check` and fails when it is stale. The same applies to
+  the `/api/` Swagger page, which reads the live OpenAPI and needs nothing extra.
 - **The green criterion is GitHub Actions** (`.github/workflows/tests.yml`: Postgres
   17 + pgvector and Redis, every package's suite). A PR is not ready until it is green.
 - **Integration tests can also run on the optional LAN test server**

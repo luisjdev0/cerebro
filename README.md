@@ -255,6 +255,13 @@ VITE_GATEWAY_URL=http://localhost:8080 pnpm dev   # proxies /api and /mcp
 pnpm typecheck && pnpm test && pnpm build          # what CI runs (the `portal` job)
 ```
 
+## API documentation and Postman
+
+Every instance serves the API reference at `/api/` (Swagger UI). For Postman, import
+`docs/postman/cerebro.postman_collection.json`: set `baseUrl` to your gateway and `token` to an API
+token (or run *Auth > Sign in with password*). The file is generated from the services' OpenAPI
+documents (`python scripts/generate_postman.py`) and CI keeps it in sync.
+
 ## `cerebro-memory` endpoints
 
 | Method | Path | Scope | Description |

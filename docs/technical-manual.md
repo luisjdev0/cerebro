@@ -1056,6 +1056,15 @@ their own external reverse proxy config (see §8).
 
 ---
 
+### 6.1 Postman collection
+
+`docs/postman/cerebro.postman_collection.json` is **generated, not written**: `scripts/generate_postman.py`
+imports each service's `create_app()`, takes its OpenAPI document and emits a Postman v2.1
+collection (folders per service, then per first path segment). Variables: `baseUrl` (the gateway) and
+`token`; requests use `{{baseUrl}}/api/<service>/…`, path parameters as `:name`, optional query
+parameters disabled, JSON bodies from the schema, and `Auth > Sign in with password` saves the session
+token into `token`. Run it after any endpoint/contract change; CI runs it with `--check`.
+
 ## 7. Testing conventions
 
 Every package with an integration suite (`cerebro-memory`, `cerebro-docs`,
