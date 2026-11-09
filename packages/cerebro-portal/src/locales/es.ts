@@ -2,7 +2,7 @@ export const es = {
   appName: 'cerebro',
   portal: 'portal',
   language: 'Idioma',
-  nav: { overview: 'Resumen', memory: 'Memoria', documents: 'Documentos', workflows: 'Flujos', admin: 'Usuarios y acceso', tokens: 'API tokens', modules: 'Módulos', administration: 'Administración' },
+  nav: { overview: 'Resumen', memory: 'Memoria', documents: 'Documentos', workflows: 'Flujos', admin: 'Usuarios y acceso', tokens: 'API tokens', logs: 'Logs', modules: 'Módulos', administration: 'Administración' },
   shell: { signOut: 'Cerrar sesión', signOutLine: 'cerrar sesión', toggleTheme: 'Cambiar tema' },
   login: {
     eyebrow: 'Memoria · Documentos · Flujos',
@@ -269,6 +269,13 @@ export const es = {
       saveScopes: 'Guardar alcance', delete: 'Eliminar grupo', deleteTitle: '¿Eliminar el grupo «{{name}}»?',
       deleteDesc_one: 'Su {{count}} miembro pierde lo que el grupo concedía. El usuario no se elimina.',
       deleteDesc_other: 'Sus {{count}} miembros pierden lo que el grupo concedía. Los usuarios no se eliminan.',
+    },
+    logs: {
+      title: 'Logs', description: 'Lo que ha registrado cada módulo, línea por línea, de lo más reciente a lo más antiguo',
+      sources: { memory: 'Memoria', flows: 'Flujos' },
+      filter: 'Filtrar líneas…', live: 'En vivo', refresh: 'Actualizar', copy: 'Copiar líneas', download: 'Descargar .log',
+      older: 'Cargar anteriores', empty: 'Aún no hay nada registrado.', noMatch: 'Ninguna línea coincide con el filtro.',
+      count_one: '{{count}} línea', count_other: '{{count}} líneas', hint: 'Las horas están en UTC. Los módulos aparecen aquí a medida que empiezan a registrar logs.',
     },
     tokens: {
       title: 'API tokens', description: 'Credenciales para agentes, scripts e integraciones: qué puede hacer cada una y de quién es',

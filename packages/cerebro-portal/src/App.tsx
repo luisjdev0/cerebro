@@ -3,6 +3,7 @@ import { Shell } from './components/Shell';
 import { useAuth } from './lib/auth';
 import { Access } from './pages/Access';
 import { ApiTokens } from './pages/ApiTokens';
+import { Logs } from './pages/Logs';
 import { Workflows } from './pages/Workflows';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
@@ -28,6 +29,7 @@ export function App() {
         <Route path="documents" element={<Documents />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="admin" element={<RequireAuth admin><Access /></RequireAuth>} />
+        <Route path="admin/logs" element={<RequireAuth admin><Logs /></RequireAuth>} />
         <Route path="admin/tokens" element={<RequireAuth admin><ApiTokens /></RequireAuth>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

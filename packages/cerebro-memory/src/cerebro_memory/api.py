@@ -65,6 +65,20 @@ class ContextCreate(BaseModel):
     description: str | None = None
 
 
+class AuditLogEntry(BaseModel):
+    id: int
+    created_at: datetime
+    agent: str
+    action: str
+    memory_id: UUID | None
+    detail: dict[str, Any] | None
+
+
+class AuditLogOut(BaseModel):
+    items: list[AuditLogEntry]
+    next: str | None  # pass as `before` to read the next (older) page; null at the end
+
+
 class ContextOut(BaseModel):
     id: UUID
     slug: str
@@ -889,6 +903,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"memory '{memory_id}' not found")
         return row_to_memory_out(row)
+
+    @app.get("/logs", response_model=AuditLogOut)
+    async def get_logs(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_admin())],
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+        before: Annotated[int | None, Query(ge=1)] = None,
+        agent: str | None = None,
+        action: str | None = None,
+    ):
+        """Portal-only (no client/MCP/CLI mirror): the `audit_log` (which agent did what), newest
+        first, keyset-paginated by id. Admin only: search queries are in there."""
+        import json
+
+        filters: list[str] = []
+        params: list[Any] = []
+        for col, val in (("agent", agent), ("action", action)):
+            if val:
+                params.append(val)
+                filters.append(f"{col} = ${len(params)}")
+        if before is not None:
+            params.append(before)
+            filters.append(f"id < ${len(params)}")
+        params.append(limit + 1)
+        rows = await pool.fetch(
+            f"""
+            SELECT id, created_at, agent, action, memory_id, detail FROM audit_log
+            {"WHERE " + " AND ".join(filters) if filters else ""}
+            ORDER BY id DESC LIMIT ${len(params)}
+            """,
+            *params,
+        )
+        more = len(rows) > limit
+        items = []
+        for r in rows[:limit]:
+            d = dict(r)
+            if isinstance(d["detail"], str):
+                d["detail"] = json.loads(d["detail"])
+            items.append(d)
+        return {"items": items, "next": str(items[-1]["id"]) if more and items else None}
 
     @app.get("/stats", response_model=StatsOut)
     async def get_stats(

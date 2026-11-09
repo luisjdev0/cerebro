@@ -2,7 +2,7 @@ export const en = {
   appName: 'cerebro',
   portal: 'portal',
   language: 'Language',
-  nav: { overview: 'Overview', memory: 'Memory', documents: 'Documents', workflows: 'Flows', admin: 'Users & access', tokens: 'API tokens', modules: 'Modules', administration: 'Administration' },
+  nav: { overview: 'Overview', memory: 'Memory', documents: 'Documents', workflows: 'Flows', admin: 'Users & access', tokens: 'API tokens', logs: 'Logs', modules: 'Modules', administration: 'Administration' },
   shell: { signOut: 'Sign out', signOutLine: 'sign out', toggleTheme: 'Toggle theme' },
   login: {
     eyebrow: 'Memory · Documents · Flows',
@@ -269,6 +269,13 @@ export const en = {
       saveScopes: 'Save scopes', delete: 'Delete group', deleteTitle: 'Delete group “{{name}}”?',
       deleteDesc_one: 'Its {{count}} member loses what the group granted. The user is not deleted.',
       deleteDesc_other: 'Its {{count}} members lose what the group granted. The users are not deleted.',
+    },
+    logs: {
+      title: 'Logs', description: 'What each module has recorded, line by line, newest first',
+      sources: { memory: 'Memory', flows: 'Flows' },
+      filter: 'Filter lines…', live: 'Live', refresh: 'Refresh', copy: 'Copy lines', download: 'Download .log',
+      older: 'Load older', empty: 'Nothing recorded yet.', noMatch: 'No line matches the filter.',
+      count_one: '{{count}} line', count_other: '{{count}} lines', hint: 'Timestamps are UTC. Modules appear here as they start recording logs.',
     },
     tokens: {
       title: 'API tokens', description: 'Credentials for agents, scripts and integrations: what each can do and who owns it',

@@ -963,3 +963,22 @@ class TestOwnershipFilter:
             f"/memories/{memory_id}", json={"content": "editada por user_a"}, headers=headers_a
         )
         assert own_patch.status_code == 200, own_patch.text
+
+
+class TestLogs:
+    def test_logs_list_the_audit_trail_newest_first_with_filters_and_paging(self, client, root_headers):
+        slug = _make_context(client, root_headers)
+        _make_memory(client, root_headers, slug, "primera memoria para el log")
+        _make_memory(client, root_headers, slug, "segunda memoria para el log")
+
+        r = client.get("/logs", params={"action": "remember", "limit": 1}, headers=root_headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["items"]) == 1 and body["items"][0]["action"] == "remember" and body["next"] is not None
+        older = client.get("/logs", params={"action": "remember", "limit": 1, "before": body["next"]}, headers=root_headers).json()
+        assert older["items"] and older["items"][0]["id"] < body["items"][0]["id"]
+
+    def test_logs_are_admin_only(self, client):
+        for level, expected in (("user", 403), ("admin", 200)):
+            token, _ = _create_user_token(access_level=level, scopes=["read"])
+            assert client.get("/logs", headers={"Authorization": f"Bearer {token}"}).status_code == expected, level

@@ -663,3 +663,38 @@ class TestDisabledTokens:
         assert client.get("/categories", headers=h).status_code == 401
         asyncio.run(set_disabled(token, False))
         assert client.get("/categories", headers=h).status_code == 200
+
+
+class TestLogs:
+    def test_logs_lists_run_events_newest_first_and_paginates(self, client, auth_headers):
+        cat = _make_category(client, auth_headers)
+        flow = _make_flow(client, auth_headers, cat)
+        run = client.post(f"/flows/{flow['code']}/start", headers=auth_headers).json()
+
+        r = client.get("/logs", params={"flow": flow["code"]}, headers=auth_headers)
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        assert len(items) >= 2 and all(i["flow_code"] == flow["code"] and i["run_id"] == run["run_id"] for i in items)
+        types = [i["event_type"] for i in items]
+        assert "step_entered" in types and types.index("step_entered") > 0  # newest first: what came later is listed first
+        seqs = [i["seq"] for i in items]
+        assert seqs == sorted(seqs, reverse=True)
+
+        first = client.get("/logs", params={"flow": flow["code"], "limit": 1}, headers=auth_headers).json()
+        assert len(first["items"]) == 1 and first["next"] is not None
+        second = client.get("/logs", params={"flow": flow["code"], "limit": 1, "before": first["next"]}, headers=auth_headers).json()
+        assert second["items"] and second["items"][0]["seq"] < first["items"][0]["seq"]
+
+        only = client.get("/logs", params={"flow": flow["code"], "event_type": "step_entered"}, headers=auth_headers).json()["items"]
+        assert only and all(i["event_type"] == "step_entered" for i in only)
+
+    def test_logs_are_admin_only(self, client):
+        dsn = get_settings().database_url
+
+        async def setup(level):
+            uid = await insert_user(dsn, access_level=level)
+            return await insert_token(dsn, name=f"log-{uuid.uuid4().hex[:8]}", user_id=uid, allowed_modules=["flows"])
+
+        for level, expected in (("user", 403), ("owner", 403), ("admin", 200)):
+            token = asyncio.run(setup(level))
+            assert client.get("/logs", headers={"Authorization": f"Bearer {token}"}).status_code == expected, level

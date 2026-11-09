@@ -63,6 +63,21 @@ class CategoryOut(BaseModel):
     updated_at: datetime
 
 
+class RunLogEntry(BaseModel):
+    seq: int
+    created_at: datetime
+    run_id: UUID
+    flow_code: str
+    event_type: str
+    step_id: str | None
+    payload: dict[str, Any] | None
+
+
+class RunLogOut(BaseModel):
+    items: list[RunLogEntry]
+    next: str | None  # pass as `before` (a `seq`) to read the next, older page
+
+
 class CategoryUpdate(StrictIn):
     """Only the display data. The slug (tokens scope by it) and the code (flow ids like
     OPS-1 are built from it) never change."""
@@ -755,6 +770,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         live = await engine.describe_in_progress(pool, redis_client, [dict(r) for r in rows if r["status"] == "in_progress"])
         return {"items": [shape(r, live) for r in rows], "total": total}
+
+    @app.get("/logs", response_model=RunLogOut)
+    async def get_logs(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_admin())],
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+        before: Annotated[int | None, Query(ge=1)] = None,
+        flow: str | None = None,
+        event_type: str | None = None,
+    ):
+        """Portal-only (no client/MCP/CLI mirror): every run event across all flows (`flow_run_events`),
+        newest first (insertion order), keyset-paginated by `seq`. Admin only."""
+        import json
+
+        filters: list[str] = []
+        params: list[Any] = []
+        for col, val in (("d.code", flow), ("e.event_type", event_type)):
+            if val:
+                params.append(val)
+                filters.append(f"{col} = ${len(params)}")
+        if before is not None:
+            params.append(before)
+            filters.append(f"e.seq < ${len(params)}")
+        params.append(limit + 1)
+        rows = await pool.fetch(
+            f"""
+            SELECT e.seq, e.created_at, e.run_id, d.code AS flow_code, e.event_type, e.step_id, e.payload
+            FROM flow_run_events e
+            JOIN flow_runs r ON r.run_id = e.run_id
+            JOIN flow_definitions d ON d.id = r.definition_id
+            {"WHERE " + " AND ".join(filters) if filters else ""}
+            ORDER BY e.seq DESC LIMIT ${len(params)}
+            """,
+            *params,
+        )
+        more = len(rows) > limit
+        items = []
+        for r in rows[:limit]:
+            d = dict(r)
+            if isinstance(d["payload"], str):
+                d["payload"] = json.loads(d["payload"])
+            items.append(d)
+        return {"items": items, "next": str(items[-1]["seq"]) if more and items else None}
 
     @app.get("/runs/{run_id}/events", response_model=list[RunEventOut])
     async def run_events(
