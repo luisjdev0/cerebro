@@ -71,9 +71,17 @@ to define a new process:
    auto-generated if you omit it. To modify an existing flow use
    `flow_update(code, yaml_content)` (replaces the whole YAML, versioned: a run
    already in progress keeps following the version it started with).
-5. `flow_get(code)`/`flow_list(category?)` to inspect what already exists; `flow_diagram(code)` to show a flow to the person as a Mermaid flowchart
-   before creating something redundant — same criterion as with memory and
+5. `flow_get(code)`/`flow_list(category?)` to inspect what already exists before
+   creating something redundant — same criterion as with memory and
    documents: search before duplicating.
+5b. **Showing a flow to the person: `flow_diagram(code, version?)`.** It returns
+   `diagram` (Mermaid flowchart source), `code`, `version` and `format`, generated from
+   the complete definition: tasks as boxes, decisions as diamonds with their labeled
+   branches, delegates (parallel groups together), terminals, and approval checkpoints with
+   their rejection path. Present the `diagram` in a ```mermaid code block so it renders.
+   Use it to review, explain or document a flow — NEVER to execute one: running a flow is
+   `flow_start`/`flow_next`, one step at a time. Omit `version` for the current one; a
+   wrong code or version returns `error`.
 6. `flow_delete(code)` is irreversible (it also deletes the run history) —
    confirm with the user if in doubt.
 
