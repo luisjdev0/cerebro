@@ -11,6 +11,17 @@
   --color-brand-ghost: #f8fafc;
 }
 
+/* Dark mode: Ixchel's foreground is near-pure white (#f8fafc, ~17:1 on the background), which glares and
+   also paints the primary buttons and the active tab. A softer slate keeps AA with room to spare (~11:1). */
+.dark,
+.dark [data-ixchel-color-theme] {
+  --foreground: #cdd6e2;
+  --card-foreground: #cdd6e2;
+  --popover-foreground: #cdd6e2;
+  --secondary-foreground: #cdd6e2;
+  --sidebar-foreground: #cdd6e2;
+}
+
 /* Slim scrollbars in the theme colors (Ixchel hides them everywhere by default; the sidebar
    keeps its own rule and stays hidden). Unlayered, so they win over Ixchel's base layer. */
 * {
