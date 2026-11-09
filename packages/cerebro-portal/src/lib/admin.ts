@@ -73,7 +73,8 @@ export type TokenInput = {
   module_scopes?: ModuleScopes;
 };
 export const createToken = (t: TokenInput) => api<ApiToken & { token: string }>('/auth/tokens', { method: 'POST', json: t });
-export const revokeToken = (name: string) => api<ApiToken>(`/auth/tokens/${enc(name)}`, { method: 'DELETE' });
+/** Switches a token off or back on; the secret stays the same. */
+export const setTokenActive = (id: string, active: boolean) => api<ApiToken>(`/auth/tokens/${enc(id)}`, { method: 'PATCH', json: { active } });
 
 /** Session tokens (`session:<user>:<hex>`) are minted by every password login: noise in a token list. */
 export const isSessionToken = (t: Pick<ApiToken, 'name'>) => t.name.startsWith('session:');

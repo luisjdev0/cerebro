@@ -57,7 +57,7 @@ export function NewUserPanel({ open, onClose, onCreated }: { open: boolean; onCl
   return (
     <ResizableSheet open={open} onClose={onClose}>
       <PanelHeader title={t('admin.users.newTitle')} description={t('admin.users.newDesc')} />
-      <form id="new-user-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-4 overflow-y-auto p-6">
+      <form id="new-user-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-4 overflow-y-auto [scrollbar-gutter:stable] p-6">
         <Field label={t('admin.users.name')} hint={t('admin.users.nameHint')}>
           <input autoFocus required maxLength={100} className={INPUT} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -139,7 +139,7 @@ export function UserDetail({ user, groups, me, onClose, onChanged }: {
   return (
     <ResizableSheet open onClose={onClose}>
       <PanelHeader title={user.name} description={user.email ?? undefined} />
-      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+      <div className="flex-1 space-y-6 overflow-y-auto [scrollbar-gutter:stable] p-6">
         <div className="flex flex-wrap items-center gap-2">
           <LevelBadge level={user.access_level} />
           <Badge variant={inactive ? 'outline' : 'success'}>{inactive ? t('admin.users.inactive') : t('admin.users.active')}</Badge>

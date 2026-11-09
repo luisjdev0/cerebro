@@ -43,7 +43,7 @@ export function NewGroupPanel({ open, onClose, onCreated }: { open: boolean; onC
   return (
     <ResizableSheet open={open} onClose={onClose}>
       <PanelHeader title={t('admin.groups.newTitle')} description={t('admin.groups.newDesc')} />
-      <form id="new-group-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-4 overflow-y-auto p-6">
+      <form id="new-group-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-4 overflow-y-auto [scrollbar-gutter:stable] p-6">
         <Field label={t('admin.groups.name')}>
           <input autoFocus required className={INPUT} value={name} onChange={(e) => { setName(e.target.value); if (!touched) setSlug(slugify(e.target.value)); }} />
         </Field>
@@ -109,7 +109,7 @@ export function GroupDetail({ group, users, onClose, onChanged }: {
   return (
     <ResizableSheet open onClose={onClose}>
       <PanelHeader title={group.name} description={group.slug} />
-      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+      <div className="flex-1 space-y-6 overflow-y-auto [scrollbar-gutter:stable] p-6">
         <section className="space-y-3">
           <h3 className="text-xs font-bold tracking-wider text-muted-foreground uppercase">{t('admin.groups.details')}</h3>
           <Field label={t('admin.groups.name')}>

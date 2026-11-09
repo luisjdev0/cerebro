@@ -286,10 +286,9 @@ export const en = {
       generate: 'Generate token', createdTitle: 'Token created', createdDesc: 'Copy it now and keep it somewhere safe.',
       once: 'This is the only time the secret is shown. It cannot be recovered afterwards, only replaced by a new token.',
       savedIt: 'I have saved it',
-      active: 'Active', revoked: 'Revoked', showSessions: 'Show sign-in sessions', revoke: 'Revoke',
-      revokedOn: 'Revoked {{date}}', expires: 'Expires {{date}}', unknownUser: 'Unknown user',
-      revokeTitle: 'Revoke “{{name}}”?', revokeDesc: 'Anything using this token stops working immediately. This cannot be undone.',
-      legend: '* limited to some contexts or categories. Sign-in sessions are hidden by default: every password sign-in creates one.',
+      statusOn: 'On', statusOff: 'Off', statusOnPlural: 'On', statusOffPlural: 'Off', showSessions: 'Show sign-in sessions',
+      turnOff: 'Turn off {{name}}', turnOn: 'Turn on {{name}}', offSince: 'Off since {{date}}', expires: 'Expires {{date}}', unknownUser: 'Unknown user',
+      legend: '* limited to some contexts or categories. Turning a token off blocks it immediately; turning it on again restores it with the same secret. Sign-in sessions are hidden by default: every password sign-in creates one.',
     },
   },
   flows: {

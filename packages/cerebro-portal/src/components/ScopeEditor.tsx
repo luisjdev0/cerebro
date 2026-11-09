@@ -80,7 +80,7 @@ export function ScopeEditor({ value, onChange, disabled }: { value: ScopeValue; 
                   {t(`admin.scope.only.${m}`)}
                 </label>
                 {restricted && (
-                  <div className="ml-6 max-h-40 space-y-1 overflow-y-auto rounded-lg bg-muted/50 p-2">
+                  <div className="ml-6 space-y-1.5 rounded-lg bg-muted/50 p-2.5">
                     {opt === null && <p className="text-xs text-muted-foreground">…</p>}
                     {opt !== null && opt.length + extras.length === 0 && <p className="text-xs text-muted-foreground">{t('admin.scope.none')}</p>}
                     {[...(opt ?? []), ...extras.map((s) => ({ slug: s, name: s }))].map((o) => (

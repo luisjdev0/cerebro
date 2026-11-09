@@ -157,6 +157,10 @@ class TokenOut(BaseModel):
     expires_at: datetime | None = None
 
 
+class TokenToggle(StrictIn):
+    active: bool
+
+
 class TokenCreateOut(TokenOut):
     token: str
 
@@ -609,6 +613,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_admin)])
     async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         return await list_api_tokens(pool)
+
+    @app.patch("/tokens/{token_id}", response_model=TokenOut, dependencies=[Depends(require_admin)])
+    async def set_token_active(token_id: UUID, body: TokenToggle, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Portal-only (no client/MCP/CLI mirror): switch a token off (`revoked_at = now()`) or back
+        on (`revoked_at = NULL`). The secret never changes. Turning one on is a 409 if another
+        active token already has its name (names are unique among active tokens)."""
+        try:
+            row = await pool.fetchrow(
+                f"""
+                UPDATE api_tokens SET revoked_at = {"NULL" if body.active else "COALESCE(revoked_at, now())"}
+                WHERE id = $1
+                RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes,
+                          created_at, revoked_at, expires_at
+                """,
+                token_id,
+            )
+        except asyncpg.UniqueViolationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="another active token already has this name - switch it off or revoke it first",
+            ) from exc
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such token")
+        data = dict(row)
+        ms = data["module_scopes"]
+        data["module_scopes"] = (json.loads(ms) if isinstance(ms, str) else ms) or {}
+        return data
 
     @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_admin)])
     async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):

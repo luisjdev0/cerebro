@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
-import { Badge, Button, ConfirmDialog, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@alquimias/ixchel';
+import { Plus, Search } from 'lucide-react';
+import { Badge, Button, PageHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@alquimias/ixchel';
 import { useTranslation } from 'react-i18next';
-import { LevelBadge, ModuleChips, useAdminError } from '../components/adminUi';
+import { LevelBadge, ModuleChips, ToggleSwitch, useAdminError } from '../components/adminUi';
 import { FilterField, SELECT } from '../components/flowUi';
 import { useDateTime } from '../components/memoryUi';
 import { NewTokenPanel } from '../components/TokenPanels';
-import { MODULES, RESTRICTION_KEY, isSessionToken, listTokens, listUsers, revokeToken, type AdminUser, type ApiToken } from '../lib/admin';
+import { MODULES, RESTRICTION_KEY, isSessionToken, listTokens, listUsers, setTokenActive, type AdminUser, type ApiToken } from '../lib/admin';
 
 export function ApiTokens() {
   const { t } = useTranslation();
@@ -16,11 +16,10 @@ export function ApiTokens() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [error, setError] = useState<string>();
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState<'active' | 'revoked' | 'all'>('active');
+  const [status, setStatus] = useState<'on' | 'off' | 'all'>('on');
   const [sessions, setSessions] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [toRevoke, setToRevoke] = useState<ApiToken | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     Promise.all([listTokens(), listUsers()]).then(
@@ -38,23 +37,21 @@ export function ApiTokens() {
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return (tokens ?? [])
-      .filter((tk) => (sessions || !isSessionToken(tk)) && (status === 'all' || (status === 'active') === (tk.revoked_at === null)))
+      .filter((tk) => (sessions || !isSessionToken(tk)) && (status === 'all' || (status === 'on') === (tk.revoked_at === null)))
       .filter((tk) => !needle || tk.name.toLowerCase().includes(needle) || (owner(tk)?.name ?? '').toLowerCase().includes(needle))
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [tokens, users, q, status, sessions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const doRevoke = async () => {
-    if (!toRevoke) return;
-    setBusy(true);
+  const toggle = async (tk: ApiToken, active: boolean) => {
+    setBusyId(tk.id);
+    setError(undefined);
     try {
-      await revokeToken(toRevoke.name);
-      setToRevoke(null);
-      reload();
+      const updated = await setTokenActive(tk.id, active);
+      setTokens((list) => (list ? list.map((x) => (x.id === updated.id ? updated : x)) : list));
     } catch (e) {
       setError(errMsg(e));
-      setToRevoke(null);
     } finally {
-      setBusy(false);
+      setBusyId(null);
     }
   };
 
@@ -74,8 +71,8 @@ export function ApiTokens() {
           <div className="w-44">
             <FilterField label={t('admin.status')}>
               <select className={SELECT} value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-                <option value="active">{t('admin.tokens.active')}</option>
-                <option value="revoked">{t('admin.tokens.revoked')}</option>
+                <option value="on">{t('admin.tokens.statusOnPlural')}</option>
+                <option value="off">{t('admin.tokens.statusOffPlural')}</option>
                 <option value="all">{t('admin.all')}</option>
               </select>
             </FilterField>
@@ -93,7 +90,7 @@ export function ApiTokens() {
               <TableHead>{t('admin.tokens.permissions')}</TableHead>
               <TableHead>{t('admin.tokens.modules')}</TableHead>
               <TableHead>{t('admin.tokens.createdCol')}</TableHead>
-              <TableHead className="w-24" />
+              <TableHead className="w-24">{t('admin.status')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -108,7 +105,7 @@ export function ApiTokens() {
                   <TableRow key={tk.id}>
                     <TableCell>
                       <p className="font-medium break-all">{tk.name}</p>
-                      {tk.revoked_at && <Badge variant="outline">{t('admin.tokens.revokedOn', { date: dt(tk.revoked_at) })}</Badge>}
+                      {tk.revoked_at && <p className="text-xs text-muted-foreground">{t('admin.tokens.offSince', { date: dt(tk.revoked_at) })}</p>}
                       {!tk.revoked_at && tk.expires_at && <p className="text-xs text-muted-foreground">{t('admin.tokens.expires', { date: dt(tk.expires_at) })}</p>}
                     </TableCell>
                     <TableCell>
@@ -123,10 +120,16 @@ export function ApiTokens() {
                       <ModuleChips modules={tk.allowed_modules} restricted={Object.fromEntries(MODULES.map((m) => [m, Array.isArray(tk.module_scopes[m]?.[RESTRICTION_KEY[m]])]))} />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{dt(tk.created_at)}</TableCell>
-                    <TableCell className="text-right">
-                      {!tk.revoked_at && (
-                        <Button size="sm" variant="ghost" className="text-destructive-text" leadingIcon={Trash2} onClick={() => setToRevoke(tk)}>{t('admin.tokens.revoke')}</Button>
-                      )}
+                    <TableCell>
+                      <span className="flex items-center gap-2">
+                        <ToggleSwitch
+                          checked={tk.revoked_at === null}
+                          disabled={busyId === tk.id}
+                          label={tk.revoked_at === null ? t('admin.tokens.turnOff', { name: tk.name }) : t('admin.tokens.turnOn', { name: tk.name })}
+                          onChange={(next) => void toggle(tk, next)}
+                        />
+                        <span className="text-xs text-muted-foreground">{tk.revoked_at === null ? t('admin.tokens.statusOn') : t('admin.tokens.statusOff')}</span>
+                      </span>
                     </TableCell>
                   </TableRow>
                 );
@@ -137,16 +140,6 @@ export function ApiTokens() {
         <p className="text-xs text-muted-foreground">{t('admin.tokens.legend')}</p>
       </div>
       <NewTokenPanel open={creating} users={users} onClose={() => setCreating(false)} onCreated={reload} />
-      <ConfirmDialog
-        open={toRevoke !== null}
-        onOpenChange={(o) => !o && setToRevoke(null)}
-        title={t('admin.tokens.revokeTitle', { name: toRevoke?.name })}
-        description={t('admin.tokens.revokeDesc')}
-        confirmLabel={t('admin.tokens.revoke')}
-        cancelLabel={t('admin.cancel')}
-        isPending={busy}
-        onConfirm={() => void doRevoke()}
-      />
     </>
   );
 }

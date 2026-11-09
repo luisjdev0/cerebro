@@ -73,7 +73,7 @@ export function NewTokenPanel({ open, users, onClose, onCreated }: { open: boole
     return (
       <ResizableSheet open={open} onClose={onClose}>
         <PanelHeader title={t('admin.tokens.createdTitle')} description={t('admin.tokens.createdDesc')} />
-        <div className="flex-1 space-y-4 overflow-y-auto p-6">
+        <div className="flex-1 space-y-4 overflow-y-auto [scrollbar-gutter:stable] p-6">
           <div className="flex items-center gap-2 rounded-xl border bg-muted/40 p-3">
             <code className="min-w-0 flex-1 text-sm break-all select-all">{secret}</code>
             <CopyButton text={secret} />
@@ -90,7 +90,7 @@ export function NewTokenPanel({ open, users, onClose, onCreated }: { open: boole
   return (
     <ResizableSheet open={open} onClose={onClose}>
       <PanelHeader title={t('admin.tokens.newTitle')} description={t('admin.tokens.newDesc')} />
-      <form id="new-token-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-5 overflow-y-auto p-6">
+      <form id="new-token-form" onSubmit={(e) => void submit(e)} className="flex-1 space-y-5 overflow-y-auto [scrollbar-gutter:stable] p-6">
         <Field label={t('admin.tokens.name')} hint={t('admin.tokens.nameHint')}>
           <input autoFocus required maxLength={100} className={INPUT} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>

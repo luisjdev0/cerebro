@@ -133,3 +133,38 @@ class TestGroups:
     def test_unknown_group_is_404(self, client, root):
         assert client.patch("/groups/nope-nope", json={"name": "x"}, headers=root).status_code == 404
         assert client.delete("/groups/nope-nope/members/someone", headers=root).status_code == 404
+
+
+class TestTokenToggle:
+    def _make(self, client, root, name=None):
+        r = client.post("/tokens", json={"name": name or _unique("tg"), "scopes": ["read"], "access_level": "user", "allowed_modules": ["docs"]}, headers=root)
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_off_then_on_keeps_the_same_secret(self, client, root):
+        t = self._make(client, root)
+        assert client.post("/login", json={"token": t["token"]}).status_code == 200
+        off = client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root)
+        assert off.status_code == 200 and off.json()["revoked_at"] is not None
+        assert client.post("/login", json={"token": t["token"]}).status_code == 401
+        on = client.patch(f"/tokens/{t['id']}", json={"active": True}, headers=root)
+        assert on.status_code == 200 and on.json()["revoked_at"] is None
+        assert client.post("/login", json={"token": t["token"]}).status_code == 200
+
+    def test_turning_off_twice_is_idempotent(self, client, root):
+        t = self._make(client, root)
+        first = client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["revoked_at"]
+        assert client.patch(f"/tokens/{t['id']}", json={"active": False}, headers=root).json()["revoked_at"] == first
+
+    def test_name_clash_with_an_active_token_is_409(self, client, root):
+        name = _unique("tg")
+        old = self._make(client, root, name)
+        client.patch(f"/tokens/{old['id']}", json={"active": False}, headers=root)
+        self._make(client, root, name)  # a new active token takes the name
+        assert client.patch(f"/tokens/{old['id']}", json={"active": True}, headers=root).status_code == 409
+
+    def test_unknown_token_and_bad_body(self, client, root):
+        assert client.patch(f"/tokens/{uuid.uuid4()}", json={"active": True}, headers=root).status_code == 404
+        t = self._make(client, root)
+        assert client.patch(f"/tokens/{t['id']}", json={}, headers=root).status_code == 422
+        assert client.patch(f"/tokens/{t['id']}", json={"active": "maybe"}, headers=root).status_code == 422
