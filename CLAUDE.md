@@ -155,10 +155,10 @@ services before being caught in live testing.
 
 ## OAuth for MCP connectors
 
-`/mcp` must work for clients that cannot send a header (claude.ai, Claude Desktop): adding the
+`/mcp` must work for clients that cannot send a header (claude.ai, ChatGPT, Cursor, any provider): adding the
 connector opens a sign-in page and registers the token. `cerebro-auth` (`oauth.py`, migration
 `004_oauth.sql`) is the OAuth 2.1 authorization server (code + PKCE S256, DCR restricted by
-`OAUTH_REDIRECT_ALLOWLIST`); the access token is a normal session token, so no other service
+`OAUTH_REDIRECT_ALLOWLIST`, empty = any provider); the access token is a normal session token, so no other service
 changes. Discovery lives at the gateway root (`/.well-known/oauth-*`), the 401 of `/mcp` points
 to it, and `cerebro-mcp` turns an expired token into an HTTP 401 so connectors refresh. Header
 bearer tokens keep working for Claude Code and scripts. The external URL is `CEREBRO_PUBLIC_URL`.

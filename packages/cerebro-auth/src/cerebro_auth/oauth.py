@@ -15,8 +15,8 @@ PKCE, which is all this module implements:
        any other -- and a rotating refresh token.
 
 Passwords are checked by the same code as `POST /login/password` (lockout included). Codes and
-refresh tokens are stored hashed. Registration is restricted to an allowlist of redirect URIs so
-a stranger cannot register a client that receives the codes of people signing in.
+refresh tokens are stored hashed. Any client may register (the point is that every MCP provider can connect); the sign-in page
+names the host the browser will return to, and `OAUTH_REDIRECT_ALLOWLIST` can restrict it.
 """
 
 from __future__ import annotations
@@ -77,16 +77,26 @@ def _is_loopback(uri: str) -> bool:
     return parts.scheme == "http" and (parts.hostname or "") in _LOOPBACK_HOSTS
 
 
+_FORBIDDEN_SCHEMES = {"javascript", "data", "file", "vbscript", "about", "blob", "ftp", "ws", "wss"}
+
+
 def redirect_uri_allowed(settings: Settings, uri: str) -> bool:
+    """Any MCP client may register (the connection is meant to work with every provider), as
+    long as its redirect is one a browser can safely hand a code to: https, a loopback address
+    over http (CLI tools, RFC 8252), or an app's own scheme (`cursor://`, `vscode://`...).
+    `OAUTH_REDIRECT_ALLOWLIST` (comma-separated prefixes), when set, narrows that further."""
     try:
         parts = urlsplit(uri)
     except ValueError:
         return False
-    if parts.scheme not in ("https", "http") or not parts.netloc or parts.fragment:
+    scheme = parts.scheme.lower()
+    if not scheme or parts.fragment or scheme in _FORBIDDEN_SCHEMES:
         return False
-    if parts.scheme == "http" and not _is_loopback(uri):
-        return False
-    return any(uri.startswith(prefix) for prefix in _allowlist(settings))
+    if scheme in ("http", "https"):
+        if not parts.netloc or (scheme == "http" and not _is_loopback(uri)):
+            return False
+    allow = _allowlist(settings)
+    return not allow or any(uri.startswith(prefix) for prefix in allow)
 
 
 def _same_redirect(registered: str, requested: str) -> bool:
@@ -189,7 +199,7 @@ def _login_page(
 <style nonce="{nonce}">{_STYLE}</style></head>
 <body><main class="card" id="c" data-ignore="{1 if ignore_session else 0}">
 <div class="brand">{_LOGO}<h1>Connect to cerebro</h1>
-<p><b>{escape(client_name)}</b> ({escape(redirect_host)}) wants to use your memory, documents and flows.</p></div>
+<p><b>{escape(client_name)}</b> (returns to <b>{escape(redirect_host)}</b>) wants to use your memory, documents and flows.</p></div>
 {err}
 <form method="post" id="confirm" hidden>{hidden}
 <input type="hidden" name="session_token" value="">
@@ -210,7 +220,7 @@ def _page(html: str, redirect_uri: str, nonce: str, status: int = 200) -> HTMLRe
     # Browsers apply `form-action` to the redirect that follows the form post as well, so the
     # (already validated) origin of the client's redirect URI has to be allowed explicitly.
     parts = urlsplit(redirect_uri)
-    origin = f"{parts.scheme}://{parts.netloc}"
+    origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme in ("http", "https") else f"{parts.scheme}:"
     return HTMLResponse(
         html,
         status_code=status,

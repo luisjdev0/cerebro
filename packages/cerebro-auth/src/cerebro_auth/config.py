@@ -38,12 +38,10 @@ class Settings(BaseSettings):
     # trailing slash); when empty it is derived from the request's forwarded headers.
     public_url: str = ""
     oauth_refresh_days: int = 90
-    # Registered clients may only use redirect URIs starting with one of these prefixes
-    # (comma separated), so a stranger cannot register a client that receives the codes of
-    # people signing in. Loopback addresses (any port) are what CLI clients such as Claude Code use.
-    oauth_redirect_allowlist: str = (
-        "https://claude.ai/,https://claude.com/,http://localhost,http://127.0.0.1,http://[::1]"
-    )
+    # Optional: comma-separated redirect-URI prefixes. Empty (default) = any client may register
+    # with an https, loopback or app-scheme redirect, so every MCP provider can connect. Set it
+    # (e.g. "https://claude.ai/,https://chatgpt.com/") to accept only those.
+    oauth_redirect_allowlist: str = ""
 
 
 @lru_cache

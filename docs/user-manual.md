@@ -111,7 +111,7 @@ database?") to confirm the connection works.
 **Remote, no install (HTTP).** If your instance runs behind the gateway, it also serves the
 tools at `https://your-cerebro-host/mcp`. Two ways to connect:
 
-- **Sign in through the connection** (claude.ai, Claude Desktop, any client where you cannot set a
+- **Sign in through the connection** (claude.ai, ChatGPT, Cursor, any MCP client where you cannot set a
   header): add a custom connector with just the URL `https://your-cerebro-host/mcp`. The client
   opens the cerebro sign-in page; if you are already signed in to the portal in that browser it
   shows your user and a **Confirm connection** button, otherwise it asks for username and password.

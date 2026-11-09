@@ -167,11 +167,11 @@ at `/mcp`** (streamable HTTP, token on every request) through that same single b
 the old unprefixed `/memory`, `/docs`, `/flows`, `/auth` as aliases of `/api/<service>`. Nothing
 to add in your Caddy.
 
-**Connectors that sign in (claude.ai, Claude Desktop).** Adding `https://your-domain/mcp` as a
+**Connectors that sign in (claude.ai, ChatGPT, Cursor, any MCP client).** Adding `https://your-domain/mcp` as a
 custom connector opens the cerebro sign-in page, so the discovery documents and the 401 of `/mcp`
 must name your public address: set `CEREBRO_PUBLIC_URL=https://your-domain` in `.env` (no trailing
-slash) and recreate `cerebro-auth-api` and `cerebro-mcp`. Claude requires HTTPS and a certificate
-it trusts, and its servers (egress `160.79.104.0/21`) must be able to reach `/mcp`, `/.well-known/*`
+slash) and recreate `cerebro-auth-api` and `cerebro-mcp`. Providers require HTTPS with a certificate
+they trust, and their servers must be able to reach `/mcp`, `/.well-known/*`
 and `/api/auth/oauth/*`. After the upgrade `cerebro-auth` applies migration `004_oauth.sql` by itself. If you deploy a version with `/api` over an old server, upgrade the server
 first: the CLI saved by `cerebro login` now derives `https://host/api/<service>`.
 

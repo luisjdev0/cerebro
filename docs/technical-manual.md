@@ -1031,7 +1031,7 @@ this mode), so the caller can do exactly what their token allows. State that use
 compose network (`CEREBRO_*_URL=http://cerebro-<x>-api:8000`) and holds no secret.
 
 **OAuth for connectors** (`cerebro-auth`, `oauth.py`, migration `004_oauth.sql`). A connector
-(claude.ai, Claude Desktop) cannot be given a header: adding it must open a sign-in page and
+(claude.ai, ChatGPT, Cursor, ...) cannot be given a header: adding it must open a sign-in page and
 register the token afterwards. `cerebro-auth` is therefore also a small OAuth 2.1 authorization
 server (authorization code + PKCE S256, public clients), reached through the gateway:
 
@@ -1039,7 +1039,7 @@ server (authorization code + PKCE S256, public clients), reached through the gat
 |---|---|
 | Challenge | `401` from `/mcp` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"` |
 | Discovery (RFC 9728 / 8414) | `/.well-known/oauth-protected-resource[/mcp]` and `/.well-known/oauth-authorization-server` (Caddy `handle /.well-known/oauth-*` -> `cerebro-auth`) |
-| Registration (RFC 7591) | `POST /api/auth/oauth/register`, only redirect URIs matching `OAUTH_REDIRECT_ALLOWLIST` (default: claude.ai/claude.com + loopback) |
+| Registration (RFC 7591) | `POST /api/auth/oauth/register`, open to any client (standard OAuth, so every MCP provider connects); redirect must be https, loopback http or an app scheme (`cursor://`); `javascript:`/`data:`/`file:`/plain http are refused, and `OAUTH_REDIRECT_ALLOWLIST` can narrow it to given prefixes |
 | Sign-in | `GET/POST /api/auth/oauth/authorize`: centred card in the portal's palette; a script reads the portal session from `localStorage` (same origin) and, when it is live, shows the user with **Confirm connection**, which posts that session token; otherwise username + password (same lockout as `/login/password`) |
 | Tokens | `POST /api/auth/oauth/token` (form-encoded): `authorization_code` (60 s, single use, PKCE) and `refresh_token` (90 days, rotated: the old one is deleted by the exchange) |
 

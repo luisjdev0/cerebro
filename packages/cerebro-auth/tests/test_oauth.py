@@ -100,12 +100,21 @@ def test_discovery_documents(env):
         assert res["authorization_servers"] == ["https://cerebro.test"]
 
 
-def test_registration_only_accepts_allowed_redirects(env):
+def test_any_provider_can_register_but_unsafe_redirects_are_refused(env):
     c, _ = env
-    assert c.post("/oauth/register", json={"redirect_uris": ["https://evil.example/cb"]}).status_code == 400
-    assert c.post("/oauth/register", json={"redirect_uris": ["http://claude.ai/x"]}).status_code == 400
+    for ok in ("https://chatgpt.com/connector/oauth/abc", "http://localhost:33418/callback", "cursor://anysphere.cursor-retrieval/oauth/cb"):
+        assert c.post("/oauth/register", json={"redirect_uris": [ok]}).status_code == 201, ok
+    for bad in ("http://evil.example/cb", "javascript:alert(1)", "https://x.example/cb#frag", "data:text/html,x"):
+        assert c.post("/oauth/register", json={"redirect_uris": [bad]}).status_code == 400, bad
     assert c.post("/oauth/register", json={}).status_code == 400
-    assert c.post("/oauth/register", json={"redirect_uris": ["http://localhost:33418/callback"]}).status_code == 201
+
+
+def test_the_allowlist_can_still_restrict_registration(env):
+    from cerebro_auth.oauth import redirect_uri_allowed
+
+    s = get_settings().model_copy(update={"oauth_redirect_allowlist": "https://claude.ai/"})
+    assert redirect_uri_allowed(s, REDIRECT)
+    assert not redirect_uri_allowed(s, "https://chatgpt.com/cb")
 
 
 def test_full_flow_gives_a_working_session_and_rotating_refresh(env):

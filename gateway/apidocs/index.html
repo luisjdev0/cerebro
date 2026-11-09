@@ -70,7 +70,7 @@
     <p style="margin-top:0">The same tools the CLI and the stdio server expose are available over HTTP at
       <code>/mcp</code> (streamable HTTP, stateless). The assistant can do exactly what the token behind the
       connection allows.</p>
-    <p><strong>Sign in through the connection</strong> (claude.ai, Claude Desktop, any client that cannot set
+    <p><strong>Sign in through the connection</strong> (claude.ai, ChatGPT, Cursor, any MCP client that cannot set
       headers): add a custom connector with just the URL <code>$HOST/mcp</code>. The client opens the cerebro
       sign-in page and, once you confirm, registers the token by itself.</p>
     <p><strong>Token in a header</strong> (Claude Code, scripts): send <code>Authorization: Bearer &lt;token&gt;</code>

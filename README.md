@@ -840,7 +840,7 @@ profile). It is stateless and every request carries a token, which it forwards t
 assistant can do exactly what the token allows. No secret lives in that container. There are two
 ways to get that token there:
 
-- **Sign in through the connection (claude.ai, Claude Desktop, any client that cannot set
+- **Sign in through the connection (claude.ai, ChatGPT, Claude Desktop, Cursor, any MCP client that cannot set
   headers).** Add a custom connector with the URL `https://your-domain/mcp` and nothing else. The
   client discovers the OAuth sign-in from the `401` of `/mcp`, opens the cerebro sign-in page and,
   once you confirm, registers the token itself. If you already have the portal open in that
@@ -848,7 +848,7 @@ ways to get that token there:
   username and password (the same as the portal, master user included). The access token is a
   normal 12-hour session; the client renews it with a refresh token (90 days, rotated on every use).
   Disabling the user ends the connection at the next renewal; revoking or logging out the session
-  ends it at once. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
+  ends it at once. It is plain OAuth 2.1 (discovery, dynamic client registration, PKCE), so it works with any provider that supports remote MCP, not only Claude. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
 - **A token in a header (Claude Code, scripts).** `Authorization: Bearer <token>` on every request:
 
 ```bash
