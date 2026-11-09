@@ -854,6 +854,10 @@ are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
 
 ---
 
+### 4.4 Initial admin bootstrap
+
+`cerebro_auth/bootstrap.py` runs in the service lifespan right after migrations. With `ADMIN_USER` and `ADMIN_PASSWORD` set (min. 10 characters; optional `ADMIN_EMAIL`) and **no row in `cerebro_auth.users`**, it inserts that user as `admin` with an argon2id password hash. The check and insert run in one transaction under `pg_advisory_xact_lock`, so concurrent starts create it once. It is one-time by design: it never touches an existing user and ignores later changes to the variables. Invalid combinations are logged (never the password) and skipped; the service still starts. Tests: `tests/test_bootstrap.py` (a throwaway database per test).
+
 ## 5. `cerebro-flows`: YAML schema and execution protocol
 
 ### 5.1 Top-level YAML shape

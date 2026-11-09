@@ -7,6 +7,7 @@ has no ephemeral/mutable state of its own, unlike cerebro-flows.
 
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,11 @@ class Settings(BaseSettings):
     app_port: int = 8000
 
     migrations_dir: str = "db/migrations"
+
+    # First-run admin bootstrap (see bootstrap.py): created only while no users exist.
+    admin_user: str = ""
+    admin_password: SecretStr = SecretStr("")
+    admin_email: str = ""
 
     # Password login (Phase 1A)
     session_ttl_hours: int = 12
