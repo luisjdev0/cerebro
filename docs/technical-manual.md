@@ -844,6 +844,17 @@ are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
 - **`POST /users/{name}/password`**: admin sets anyone's; any other user may only
   change their own and must send `current_password` (verified with the same
   lockout). A change clears the lockout and revokes all the user's sessions.
+- **Sliding sessions.** `POST /login/password` accepts `remember: true` (the CLI sends it; the portal does not).
+  The session is minted with `expires_at = now() + REMEMBER_SESSION_DAYS` (default 90) and `api_tokens.slide_days`
+  (migration `006_session_sliding.sql`). Every service's token lookup selects `expires_at, slide_days` and, for a
+  sliding row, pushes `expires_at` to `now() + slide_days` when more than an hour has passed (`slide_session` in
+  `cerebro-auth`, `_slide_session` in memory/docs/flows), so it dies only after that long without use; tokens with
+  no `slide_days` (every older one, the portal's 12 h sessions) are untouched and cost no extra query. Logout, a password
+  change, revocation or disabling still end it at once. The CLI does not save an `expires_at` for such a login, because a
+  fixed date on disk would lock out someone who uses it daily; the server answers 401 when it really ended. Header-token
+  connections (`auth_create_token`) have no expiry unless one is set, and OAuth connectors renew through their 90-day
+  rotating refresh token.
+
 - **`POST /logout`**: revokes the calling token if (and only if) it is a session;
   the root token and ordinary named tokens cannot be logged out.
 - **Bootstrap**: existing users have no password; an admin (or the root token)
@@ -862,18 +873,6 @@ are built on these and on the existing `/users`, `/groups`, `/tokens` endpoints.
 ### 4.5 Portal session lifecycle
 
 `lib/auth.tsx` ends the session in three ways: a timer at `expires_at`, the unauthorized handler (any authenticated request answering 401, set from `lib/api.ts`), and a `storage` event when another tab clears or replaces `cerebro.session`. All three set `sessionEnded`, which the login screen shows as a notice; `logout()` clears it. `RequireAuth` redirects to `/login` with the current path in router state and `Login` returns there after sign-in (in-app paths only, never `/login` or `//…`). Login's own 401 is excluded (`auth: false`), so a wrong password is not reported as an expiry.
-
-
-**Sliding sessions.** `POST /login/password` accepts `remember: true` (the CLI sends it; the portal does not).
-The session is minted with `expires_at = now() + REMEMBER_SESSION_DAYS` (default 90) and `api_tokens.slide_days`
-(migration `006_session_sliding.sql`). Every service's token lookup selects `expires_at, slide_days` and, for a
-sliding row, pushes `expires_at` to `now() + slide_days` when more than an hour has passed (`slide_session` in
-`cerebro-auth`, `_slide_session` in memory/docs/flows), so it dies only after that long without use; tokens with
-no `slide_days` (every older one, the portal's 12 h sessions) are untouched and cost no extra query. Logout, a password
-change, revocation or disabling still end it at once. The CLI does not save an `expires_at` for such a login, because a
-fixed date on disk would lock out someone who uses it daily; the server answers 401 when it really ended. Header-token
-connections (`auth_create_token`) have no expiry unless one is set, and OAuth connectors renew through their 90-day
-rotating refresh token.
 
 ## 5. `cerebro-flows`: YAML schema and execution protocol
 
