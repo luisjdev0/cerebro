@@ -847,8 +847,8 @@ ways to get that token there:
   browser the page shows your user with a **Confirm connection** button; otherwise it asks for
   username and password (the same as the portal, master user included). The access token is a
   normal 12-hour session; the client renews it with a refresh token (90 days, rotated on every use).
-  Disabling the user ends the connection at the next renewal; revoking or logging out the session
-  ends it at once. It is plain OAuth 2.1 (discovery, dynamic client registration, PKCE), so it works with any provider that supports remote MCP, not only Claude. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
+  Disabling the user ends the connection at the next renewal; revoking the connection's access token, logging out its session or changing the password
+  ends it at once (the refresh token is tied to the session it was issued with). It is plain OAuth 2.1 (discovery, dynamic client registration, PKCE), so it works with any provider that supports remote MCP, not only Claude. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
 - **A token in a header (Claude Code, scripts).** `Authorization: Bearer <token>` on every request:
 
 ```bash

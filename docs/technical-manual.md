@@ -1046,7 +1046,9 @@ server (authorization code + PKCE S256, public clients), reached through the gat
 The access token **is an ordinary session token** (`session:<user>:<hex>`, 12 h), so memory, docs,
 flows and auth validate it with no change and revoking/disabling it works as for any session.
 Codes and refresh tokens are stored hashed; a refresh re-checks that the user is still active (or
-that the master is still configured). "Confirm connection" accepts only live *session* tokens, so a
+that the master is still configured), and refuses when the session token issued with it
+(`oauth_refresh_tokens.session_token_hash`, migration `005`) was revoked or disabled. Registration is
+bounded (unused clients purged after a day, 1000 kept). "Confirm connection" accepts only live *session* tokens, so a
 service token cannot be turned into a login. `cerebro-mcp` additionally asks `POST /login` of
 `cerebro-auth` (cached 30 s) whether the bearer is still valid, because an expired token must be an
 HTTP `401` for the connector to use its refresh token; if the auth service is unreachable the

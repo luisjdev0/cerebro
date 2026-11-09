@@ -230,3 +230,42 @@ def test_confirm_rejects_dead_sessions_and_non_session_tokens(env):
     assert r.status_code == 401 and "expired" in r.text and "location" not in r.headers
     # The root/service tokens are not sessions: they cannot be turned into a connector login.
     assert _confirm(c, client_id, get_settings().api_token).status_code == 401
+
+
+def test_revoking_the_connections_token_also_ends_its_refresh(env):
+    c, user = env
+    client_id = _register(c)
+    tok = _exchange(c, client_id, _code(_authorize(c, client_id, user))).json()
+    # Signing out of that very session (as revoking it from the portal does) ends the connection.
+    assert c.post("/logout", headers={"Authorization": f"Bearer {tok['access_token']}"}).status_code == 200
+    r = _form(c, "/oauth/token", {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"], "client_id": client_id})
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_unused_clients_are_purged_and_the_table_is_capped(env, monkeypatch):
+    from cerebro_auth import oauth
+
+    c, _ = env
+    stale = _register(c)
+    asyncio.run(_exec("UPDATE oauth_clients SET created_at = now() - interval '2 days' WHERE client_id = $1", stale))
+    _register(c)  # registering sweeps the stale, never-used client
+    assert not asyncio.run(_fetch("SELECT 1 FROM oauth_clients WHERE client_id = $1", stale))
+    monkeypatch.setattr(oauth, "MAX_CLIENTS", 1)
+    r = c.post("/oauth/register", json={"redirect_uris": [REDIRECT]})
+    assert r.status_code == 503
+
+
+async def _exec(query, *args):
+    conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8, server_settings={"search_path": "cerebro_auth"})
+    try:
+        await conn.execute(query, *args)
+    finally:
+        await conn.close()
+
+
+async def _fetch(query, *args):
+    conn = await asyncpg.connect(dsn=get_settings().database_url, timeout=8, server_settings={"search_path": "cerebro_auth"})
+    try:
+        return await conn.fetch(query, *args)
+    finally:
+        await conn.close()

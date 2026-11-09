@@ -47,6 +47,7 @@ from cerebro_auth.passwords import (
 )
 
 CODE_TTL_SECONDS = 60
+MAX_CLIENTS = 1000
 MCP_PATH = "/mcp"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
@@ -313,7 +314,19 @@ def build_router(get_pool: Any, settings: Settings) -> APIRouter:
             return _oauth_error("invalid_redirect_uri", f"redirect URI not allowed: {bad[0]}")
         name = str(body.get("client_name") or "MCP client")[:100]
         client_id = secrets.token_urlsafe(24)
-        await pool_of(request).execute(
+        pool = pool_of(request)
+        # Registration is open, so keep the table bounded: clients that never completed a
+        # sign-in disappear after a day, and there is a hard ceiling on what is kept.
+        await pool.execute(
+            """
+            DELETE FROM oauth_clients c
+            WHERE c.created_at < now() - interval '1 day'
+              AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens r WHERE r.client_id = c.client_id)
+            """
+        )
+        if await pool.fetchval("SELECT count(*) FROM oauth_clients") >= MAX_CLIENTS:
+            return _oauth_error("temporarily_unavailable", "too many registered clients, try again later", 503)
+        await pool.execute(
             "INSERT INTO oauth_clients (client_id, client_name, redirect_uris) VALUES ($1, $2, $3::jsonb)",
             client_id,
             name,
@@ -441,14 +454,15 @@ def build_router(get_pool: Any, settings: Settings) -> APIRouter:
         await pool.execute("DELETE FROM oauth_refresh_tokens WHERE expires_at < now()")
         await pool.execute(
             """
-            INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_name, is_master, expires_at)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO oauth_refresh_tokens (token_hash, client_id, user_name, is_master, expires_at, session_token_hash)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
             hash_token(refresh),
             client_id,
             user_name,
             master,
             datetime.now(timezone.utc) + timedelta(days=settings.oauth_refresh_days),
+            hash_token(session["token"]),
         )
         expires_in = max(1, int((session["expires_at"] - datetime.now(timezone.utc)).total_seconds()))
         return _json(
@@ -489,12 +503,18 @@ def build_router(get_pool: Any, settings: Settings) -> APIRouter:
             row = await pool.fetchrow(
                 """
                 DELETE FROM oauth_refresh_tokens WHERE token_hash = $1 AND expires_at > now()
-                RETURNING client_id, user_name, is_master
+                RETURNING client_id, user_name, is_master, session_token_hash
                 """,
                 hash_token(f.get("refresh_token", "")),
             )
             if row is None:
                 return _oauth_error("invalid_grant", "refresh token is invalid or expired")
+            if row["session_token_hash"] and await pool.fetchval(
+                "SELECT 1 FROM api_tokens WHERE token_hash = $1 AND (revoked_at IS NOT NULL OR disabled_at IS NOT NULL)",
+                row["session_token_hash"],
+            ):
+                # The connection was ended on purpose (token revoked or switched off, password changed).
+                return _oauth_error("invalid_grant", "the connection was revoked")
             if f.get("client_id") and f["client_id"] != row["client_id"]:
                 return _oauth_error("invalid_grant", "refresh token was issued to another client")
             issued = await _issue(pool, row["client_id"], row["user_name"], row["is_master"])
