@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [3.1.0] - Long-lived CLI sessions
 
 ### Changed
+- **The skill documents every MCP tool, and `CLAUDE.md` now requires it.** `skills/cerebro` gains `memory_update_context` and `memory_delete_context`; the rule "the skill must follow the MCP tools" joins the expected workflow. The claude.ai copy of the skill needs a manual re-upload.
 - **The CLI no longer asks you to sign in every 12 hours.** `cerebro login --user` now mints a *sliding* session: every command renews it, and it ends only after 90 days without use (`REMEMBER_SESSION_DAYS`). The stdio MCP server, which reuses the saved login, benefits too. `POST /login/password` accepts `remember: true` (the CLI sends it); the portal keeps its 12 h session. New migration `006_session_sliding.sql` (`api_tokens.slide_days`); memory, docs, flows and auth push a sliding session's expiry forward on use (at most about once an hour, no extra query for ordinary tokens). The CLI stops saving a fixed `expires_at` for password logins (the server judges), and `AuthClient.login_password` gains `remember`. Revoking, logging out, changing the password or disabling the user still end the session at once. Header tokens for MCP have no expiry by default and OAuth connectors keep renewing through their 90-day rotating refresh token.
 
 ## [3.0.0] - Phase 1C: web portal, OAuth for connectors

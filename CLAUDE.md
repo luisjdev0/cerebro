@@ -74,6 +74,12 @@ pytest
   straight to `main`, and reaches `main` through a PR that only the owner approves.
 - **Every change updates the docs and `CHANGELOG.md`** (README, DEPLOY,
   `docs/technical-manual.md`, `docs/user-manual.md`, this file when conventions change).
+- **The skill must follow the MCP tools.** `skills/cerebro/` (`SKILL.md` + `references/*.md`) is
+  what teaches a model to use the MCP tools, and it is not generated. Whenever you add, remove,
+  rename or change the behavior of a `memory_*`/`docs_*`/`flow_*`/`auth_*` tool, update the skill in the
+  same change (in English) and mention it in `CHANGELOG.md`. Check that every tool in
+  `cerebro-mcp/server.py` is named somewhere in `skills/cerebro/`. The copy the owner uploaded to
+  claude.ai is manual: say in the PR when the skill changed so it can be re-uploaded.
 - **The Postman collection must follow the API.** `docs/postman/cerebro.postman_collection.json`
   is generated from the four services' OpenAPI documents. Whenever you add, remove or change an
   endpoint or a request/response contract (path, method, parameters, body or auth), run

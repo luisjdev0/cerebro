@@ -12,6 +12,8 @@ reconstruct the full conversation.
 | `memory_search` | Retrieve facts/decisions/events before answering. First call by default. |
 | `memory_contexts` | See the existing contexts and their descriptions. |
 | `memory_create_context` | Create a new context ONLY if no existing one fits. |
+| `memory_update_context` | Edit a context's name, kind or description (the slug never changes). Keep descriptions clear: the Context Engine uses them. |
+| `memory_delete_context` | Permanently delete a context (admin-only, irreversible). Without `force` it fails if the context still has memories; use `force=true` only if the user explicitly asked, after confirming how many memories it holds. |
 | `memory_remember` | Save something new that is worth keeping long-term. |
 | `memory_update` | A stored fact changed (new version, keeps history). |
 | `memory_forget` | The user asks to forget something, or a memory became obsolete with no replacement. |
