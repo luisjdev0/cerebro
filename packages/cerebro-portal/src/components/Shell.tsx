@@ -1,4 +1,4 @@
-import { Brain, ChevronsUpDown, FileText, KeyRound, LayoutDashboard, Moon, ScrollText, Sun, Users, Workflow } from 'lucide-react';
+import { Brain, ChevronsUpDown, FileText, KeyRound, LayoutDashboard, Moon, ScrollText, DatabaseBackup, Sun, Users, Workflow } from 'lucide-react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
@@ -96,6 +96,11 @@ export function Shell() {
                   <SidebarMenuItem>
                     <SidebarMenuButton icon={ScrollText} tooltip={t('nav.logs')} isActive={active('/admin/logs')} render={<Link to="/admin/logs" />}>
                       {t('nav.logs')}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton icon={DatabaseBackup} tooltip={t('nav.backup')} isActive={active('/admin/backup')} render={<Link to="/admin/backup" />}>
+                      {t('nav.backup')}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </SidebarMenu>

@@ -712,6 +712,10 @@ the route; `admin` does **not** imply `read`/`write`.
 
 `GET /memory/logs` (reads `audit_log`) and `GET /flows/logs` (reads `flow_run_events` joined with runs and definitions) are admin-only (`require_admin()`), return `{items, next}` newest first and paginate by keyset: pass the previous `next` as `before`. Memory pages by `id`; flows pages by `seq` (migration `004_run_event_seq.sql`), not by timestamp, because events written in one transaction share `created_at`. The portal's `/admin/logs` screen renders each source as raw lines; its sources live in `packages/cerebro-portal/src/lib/logs.ts`, so covering a new module means adding the endpoint and one entry there. Today `cerebro-docs` (only `document_versions`) and `cerebro-auth` record no logs, so they have no tab. No client/MCP/CLI mirror.
 
+### 3.5 Portal backup screen
+
+`/admin/backup` (admin only) calls `POST /auth/backup` with the session token and saves the response as a `.sql` file (`packages/cerebro-portal/src/lib/backup.ts`). The response is read as a Blob, so the whole dump sits in browser memory; for very large instances use `cerebro backup`, which streams to disk. Extraction only: no restore, no scheduling.
+
 ## 4. Auth model
 
 ### 4.1 Current model (implemented today)

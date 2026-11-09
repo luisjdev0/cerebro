@@ -2,7 +2,7 @@ export const es = {
   appName: 'cerebro',
   portal: 'portal',
   language: 'Idioma',
-  nav: { overview: 'Resumen', memory: 'Memoria', documents: 'Documentos', workflows: 'Flujos', admin: 'Usuarios y acceso', tokens: 'API tokens', logs: 'Logs', modules: 'Módulos', administration: 'Administración' },
+  nav: { overview: 'Resumen', memory: 'Memoria', documents: 'Documentos', workflows: 'Flujos', admin: 'Usuarios y acceso', tokens: 'API tokens', logs: 'Logs', backup: 'Respaldo', modules: 'Módulos', administration: 'Administración' },
   shell: { signOut: 'Cerrar sesión', signOutLine: 'cerrar sesión', toggleTheme: 'Cambiar tema' },
   login: {
     eyebrow: 'Memoria · Documentos · Flujos',
@@ -269,6 +269,14 @@ export const es = {
       saveScopes: 'Guardar alcance', delete: 'Eliminar grupo', deleteTitle: '¿Eliminar el grupo «{{name}}»?',
       deleteDesc_one: 'Su {{count}} miembro pierde lo que el grupo concedía. El usuario no se elimina.',
       deleteDesc_other: 'Sus {{count}} miembros pierden lo que el grupo concedía. Los usuarios no se eliminan.',
+    },
+    backup: {
+      title: 'Respaldo', description: 'Descarga una copia completa de la base de datos de esta instancia',
+      what: 'Descarga un volcado SQL completo (pg_dump) de todo lo que guarda esta instancia: memorias, documentos, flujos, usuarios, grupos y tokens.',
+      note1: 'El archivo contiene hashes de tokens y de contraseñas: guárdalo en un lugar privado.',
+      note2: 'Es solo extracción: no hay restauración desde el portal.',
+      note3: 'El volcado se mantiene en el navegador antes de guardarse; para instancias muy grandes usa `cerebro backup`.',
+      download: 'Descargar respaldo', running: 'Preparando el volcado…', done: 'Guardado {{filename}} ({{size}} MB).',
     },
     logs: {
       title: 'Logs', description: 'Lo que ha registrado cada módulo, línea por línea, de lo más reciente a lo más antiguo',

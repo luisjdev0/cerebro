@@ -2,7 +2,7 @@ export const en = {
   appName: 'cerebro',
   portal: 'portal',
   language: 'Language',
-  nav: { overview: 'Overview', memory: 'Memory', documents: 'Documents', workflows: 'Flows', admin: 'Users & access', tokens: 'API tokens', logs: 'Logs', modules: 'Modules', administration: 'Administration' },
+  nav: { overview: 'Overview', memory: 'Memory', documents: 'Documents', workflows: 'Flows', admin: 'Users & access', tokens: 'API tokens', logs: 'Logs', backup: 'Backup', modules: 'Modules', administration: 'Administration' },
   shell: { signOut: 'Sign out', signOutLine: 'sign out', toggleTheme: 'Toggle theme' },
   login: {
     eyebrow: 'Memory · Documents · Flows',
@@ -269,6 +269,14 @@ export const en = {
       saveScopes: 'Save scopes', delete: 'Delete group', deleteTitle: 'Delete group “{{name}}”?',
       deleteDesc_one: 'Its {{count}} member loses what the group granted. The user is not deleted.',
       deleteDesc_other: 'Its {{count}} members lose what the group granted. The users are not deleted.',
+    },
+    backup: {
+      title: 'Backup', description: 'Download a full copy of this instance\'s database',
+      what: 'Downloads a complete SQL dump (pg_dump) of everything this instance stores: memories, documents, flows, users, groups and tokens.',
+      note1: 'The file contains token hashes and password hashes: store it somewhere private.',
+      note2: 'This is extraction only: there is no restore from the portal.',
+      note3: 'The dump is held in the browser before saving; for very large instances use `cerebro backup`.',
+      download: 'Download backup', running: 'Preparing the dump…', done: 'Saved {{filename}} ({{size}} MB).',
     },
     logs: {
       title: 'Logs', description: 'What each module has recorded, line by line, newest first',

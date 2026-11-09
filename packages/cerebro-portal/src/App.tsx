@@ -4,6 +4,7 @@ import { useAuth } from './lib/auth';
 import { Access } from './pages/Access';
 import { ApiTokens } from './pages/ApiTokens';
 import { Logs } from './pages/Logs';
+import { Backup } from './pages/Backup';
 import { Workflows } from './pages/Workflows';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
@@ -29,6 +30,7 @@ export function App() {
         <Route path="documents" element={<Documents />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="admin" element={<RequireAuth admin><Access /></RequireAuth>} />
+        <Route path="admin/backup" element={<RequireAuth admin><Backup /></RequireAuth>} />
         <Route path="admin/logs" element={<RequireAuth admin><Logs /></RequireAuth>} />
         <Route path="admin/tokens" element={<RequireAuth admin><ApiTokens /></RequireAuth>} />
       </Route>
