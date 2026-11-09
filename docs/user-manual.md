@@ -64,7 +64,8 @@ one someone set up for you) — see `DEPLOY.md` for how that part is installed
 and configured. This section is about pointing a *client* at an
 already-running instance.
 
-There are two ways to talk to a running cerebro instance:
+There are three ways to talk to a running cerebro instance (the third, the web portal, is
+covered in section 7):
 
 ### A. Through an AI assistant (MCP)
 
@@ -407,7 +408,55 @@ creating a duplicate.
 
 ---
 
-## 7. Managing your access
+## 7. The web portal
+
+Besides the assistant and the CLI, cerebro has a web portal: the same memories,
+documents and flows, in a browser. It is served by the instance itself, at its root
+address (for example `https://your-cerebro-host/`). It is available in English and Spanish
+(the switch is on the sign-in screen and in the user menu) and in light and dark themes.
+
+### Signing in
+
+Use the **username and password** an administrator gave you. The very first one is the
+*master user* of the deployment, defined by `ADMIN_USER` / `ADMIN_PASSWORD` in the server's
+`.env` (see `DEPLOY.md`); it creates everyone else. After too many wrong passwords an account
+is locked for a few minutes.
+
+A session lasts 12 hours by default. When it ends — it expired, an administrator closed it, or
+you signed out in another tab — the portal takes you back to the sign-in screen with a notice,
+and signing in again returns you to the page you were on. You only see the modules your account
+is allowed to use.
+
+### What's in it
+
+- **Overview** — counters per module and an activity chart you can rearrange.
+- **Memory** — search memories by meaning or browse them by context, type and status; create,
+  edit (a content change keeps the previous version) and forget them; create and manage contexts.
+- **Documents** — search and browse, write in Markdown with a live preview, see the version
+  history, archive and unarchive, manage categories, and import `.md`/`.txt` files in bulk.
+- **Flows** — two tabs. *Flows*: the definitions, shown as YAML or as a flowchart you can zoom
+  and export (PNG, SVG, PDF), with version history, validation before saving, the documents each
+  flow references (and an Upload button when one is missing) and category management. *Runs*: the
+  runs in progress or finished, with their timeline, and a badge for those waiting for your
+  approval. Runs are read-only here: approving or rejecting a checkpoint is done through the
+  assistant or the CLI.
+
+Administrators also see an **Administration** group:
+
+- **Users & access** — create users and groups, set passwords, choose what each one may see
+  (modules, contexts, categories) and their level (`user`, `owner`, `admin`). Users are
+  deactivated, not deleted, and the last active admin cannot be removed.
+- **API tokens** — create tokens for agents (the secret is shown **once**; copy it then), switch
+  them on and off without losing them, or revoke them for good. Sign-in sessions are hidden by
+  default.
+- **Logs** — what each module has recorded, as raw lines, newest first, with a filter, a live
+  mode and download. Only memory and flows record logs today; more tabs appear as other modules do.
+- **Backup** — downloads a full copy of the database as a `.sql` file. It contains token and
+  password hashes, so keep it private. There is no restore from the portal.
+
+---
+
+## 8. Managing your access
 
 Cerebro authenticates every request with a **token**, and every token carries
 one or more **scopes**:
@@ -457,7 +506,7 @@ it.
 
 ---
 
-## 8. Troubleshooting / FAQ
+## 9. Troubleshooting / FAQ
 
 **"The assistant says it doesn't know me / has no memory of this."**
 This usually means it searched and genuinely found nothing — not that
@@ -490,7 +539,7 @@ rather than silently filing something under the wrong bucket. Answer it
 once and similar questions in that area should stop coming up.
 
 **"I got a permission/scope error."**
-Your token doesn't have the scope needed for that action (see section 7).
+Your token doesn't have the scope needed for that action (see section 8).
 Ask whoever administers your instance for a token with the right scope.
 
 **"The assistant can't reach cerebro at all."**

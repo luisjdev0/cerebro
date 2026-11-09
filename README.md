@@ -108,6 +108,9 @@ To rebuild an image after a code change:
 `docker compose --profile full build cerebro-memory-api` (or `cerebro-docs-api`/
 `cerebro-flows-api`).
 
+Then open `http://localhost:8080/` for the web portal (see "Web portal" below). Set
+`ADMIN_USER` and `ADMIN_PASSWORD` in `.env` first: that is the account you sign in with.
+
 #### Exposing it behind a single reverse proxy (`gateway`)
 
 The `gateway` service (Caddy, `gateway/Caddyfile`) routes by prefix to each internal
@@ -219,6 +222,33 @@ justifies it (see "Optional local classifier" below).
 `DATABASE_URL`/`POSTGRES_PASSWORD`) but each lives in its own schema and applies
 its own migrations on startup — they are independent stateless services, not a
 monolith split into two processes that coordinate at runtime.
+
+## Web portal (`cerebro-portal`)
+
+A browser UI over the same APIs and session tokens (React + Vite + TypeScript + Tailwind with
+the Ixchel components, English/Spanish, light/dark). It is a static SPA built into an nginx
+image and served by the gateway at its root, so everything is same-origin (`/memory`, `/docs`,
+`/flows`, `/auth`) and there is nothing extra to expose. With the `full` profile it comes up
+with the rest: open `http://localhost:8080/`.
+
+- **Everyone**: Overview (counters and activity), Memory, Documents, Flows (definitions, diagrams,
+  runs), limited to the modules and contexts/categories the account may see.
+- **Admins**: Users & access, API tokens (create / switch on-off / revoke), Logs (raw lines per
+  module that records them) and Backup (`POST /auth/backup` as a download).
+- **Sign-in**: username + password (`POST /auth/login/password`), which mints a session token
+  (12 h). The deployment's **master user** is defined in `.env` (`ADMIN_USER`/`ADMIN_PASSWORD`),
+  checked on every login like the root token and never stored; it creates everyone else.
+- Portal-only endpoints (`GET /logs` in memory and flows, flow categories and runs listing,
+  user/group/token management) deliberately have no client/MCP/CLI mirror.
+
+Develop it against a running gateway:
+
+```bash
+cd packages/cerebro-portal
+pnpm install
+VITE_GATEWAY_URL=http://localhost:8080 pnpm dev   # proxies /memory /docs /flows /auth
+pnpm typecheck && pnpm test && pnpm build          # what CI runs (the `portal` job)
+```
 
 ## `cerebro-memory` endpoints
 

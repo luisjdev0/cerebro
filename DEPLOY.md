@@ -99,6 +99,10 @@ curl -s localhost:8005/health         # {"status":"ok"}  (cerebro-memory-api)
 curl -s localhost:8006/health         # {"status":"ok"}  (cerebro-docs-api)
 ```
 
+The web portal is part of the `full` profile: once it is up, open the gateway's address
+(`http://localhost:8080/`, or your domain after step 5) and sign in with the master user from
+`.env`. It needs no extra port or proxy block: the gateway serves it at the root.
+
 `docker compose up -d` (without `--profile full`) still only starts `postgres` — no
 change to the day-to-day flow if you run the APIs outside Docker.
 
@@ -218,6 +222,10 @@ before continuing to use the system.
 
 ## 7. Tokens (don't use root for day-to-day work)
 
+You can also do this from the web portal (administrators only): **API tokens** creates a
+token (the secret is shown once), switches it on and off, or revokes it, and **Users & access**
+manages users and groups. The CLI commands below do the same.
+
 From your local machine (the CLI talks to the remote APIs):
 
 ```bash
@@ -329,6 +337,8 @@ otherwise it does nothing.
 - [ ] Random root `API_TOKEN`, kept out of the repo (only in the VPS's `.env`) — it's
       the root for **both** services
 - [ ] `POSTGRES_PASSWORD` changed in `.env` (not in `compose.yaml`)
+- [ ] `ADMIN_USER` / `ADMIN_PASSWORD` set in `.env` (the portal's master user), `chmod 600 .env`,
+      and the password rotated or removed from `.env` once regular admins exist
 - [ ] `ufw` active; 5432/8005/8006 NOT exposed (verify: `ss -tlnp | grep -E '5432|8005|8006'` should show only 127.0.0.1)
 - [ ] HTTPS working on both subdomains (or Tailscale)
 - [ ] Agents using scoped tokens (cross-service or scoped to a single service), not root
