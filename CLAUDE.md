@@ -87,6 +87,8 @@ pytest
   API packages installed; no database). Never edit the JSON by hand. CI runs
   `python scripts/generate_postman.py --check` and fails when it is stale. The same applies to
   the `/api/` Swagger page, which reads the live OpenAPI and needs nothing extra.
+- **Delete the branch once its PR is merged** (remote and local). Before deleting, confirm it has no
+  unmerged commits; a branch with unmerged work and no PR is reported to the owner, not deleted.
 - **The green criterion is GitHub Actions** (`.github/workflows/tests.yml`: Postgres
   17 + pgvector and Redis, every package's suite). A PR is not ready until it is green.
 - **Integration tests can also run on the optional LAN test server**
