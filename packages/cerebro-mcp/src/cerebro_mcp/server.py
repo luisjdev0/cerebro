@@ -42,18 +42,74 @@ from mcp.server.fastmcp import FastMCP
 MEMORY_TYPES = ("semantic", "episodic", "procedural", "decision")
 SECTION_OPERATIONS = ("replace", "append", "insert_after", "insert_before", "delete")
 
-_memory = MemoryClient()
-_docs = DocsClient()
-_flows = FlowsClient()
-_auth = AuthClient()
+# Set by `cerebro_mcp.http` when the server runs over HTTP (`/mcp`): then every request
+# carries its own `Authorization: Bearer` token and the environment token is never used.
+HTTP_MODE = False
+
+
+def _request_headers() -> Any:
+    """Headers of the HTTP request being served right now, or None (stdio, or outside a request)."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request = getattr(request_ctx.get(), "request", None)
+    except (ImportError, LookupError):
+        return None
+    return getattr(request, "headers", None)
+
+
+def _request_token() -> str | None:
+    headers = _request_headers()
+    value = headers.get("authorization", "") if headers is not None else ""
+    return value[7:].strip() if value.lower().startswith("bearer ") else None
+
+
+class _ClientProxy:
+    """Stands in for one `cerebro_clients` client. Over stdio it is the single client the
+    environment configures (as before); over HTTP it resolves, on every call, the client for
+    the token of the request being served, so two callers never share an identity."""
+
+    _MAX_CACHED = 64
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+        self._default: Any = None
+        self._by_token: dict[str, Any] = {}
+
+    def _resolve(self) -> Any:
+        if not HTTP_MODE:
+            if self._default is None:
+                self._default = self._factory()
+            return self._default
+        token = _request_token() or ""
+        client = self._by_token.get(token)
+        if client is None:
+            if len(self._by_token) >= self._MAX_CACHED:  # evict the oldest, close its connections
+                self._by_token.pop(next(iter(self._by_token))).close()
+            client = self._by_token[token] = self._factory(token=token)
+        return client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+
+_memory = _ClientProxy(MemoryClient)
+_docs = _ClientProxy(DocsClient)
+_flows = _ClientProxy(FlowsClient)
+_auth = _ClientProxy(AuthClient)
 
 # Process-memory of the last *unresolved* disambiguation (Phase 2 Context Engine,
 # plan_v2.md SS7). See the memory_search() docstring for the auto-resolution
-# behavior this enables. Deliberately a single slot, not a
+# behavior this enables. Deliberately a single slot per caller, not a
 # stack/history: it only needs to bridge "ambiguous search" -> "the NEXT search
 # from the agent with an explicit context", which is the pattern that an
-# agent calling tools naturally produces.
-_last_disambiguation_id: str | None = None
+# agent calling tools naturally produces. Keyed by the caller's token so that, over
+# HTTP, one person's pending ambiguity can never be consumed by another.
+_last_disambiguation_ids: dict[str, str | None] = {}
+
+
+def _caller_key() -> str:
+    return (_request_token() or "") if HTTP_MODE else ""
 
 mcp = FastMCP(
     name="cerebro",
@@ -92,6 +148,11 @@ def _connection_error_message(service: str, exc: CerebroConnectionError) -> str:
 
 
 def _auth_error_message(service: str, exc: CerebroAPIError) -> str:
+    if HTTP_MODE:
+        return (
+            f"The {service} API rejected the authentication (401). Check that the bearer token "
+            "sent in the Authorization header of this MCP connection is valid, active and not expired."
+        )
     return (
         f"The {service} API rejected the authentication (401). Check that the "
         "CEREBRO_TOKEN environment variable holds a valid value for that service."
@@ -212,7 +273,7 @@ def memory_search(
         None, confirms when a preference was learned by resolving a
         previous ambiguity) and `related` (list, present only if `expand=True`).
     """
-    global _last_disambiguation_id
+    caller = _caller_key()
 
     try:
         data = _memory.search_memories(query, context=context, type=type, limit=limit, expand=expand)
@@ -230,8 +291,7 @@ def memory_search(
 
     # Consume the pending slot in THIS call (whether it's used below or not) so it only
     # covers one following call - see docstring.
-    pending_id = _last_disambiguation_id
-    _last_disambiguation_id = None
+    pending_id = _last_disambiguation_ids.pop(caller, None)
 
     note: str | None = None
     if context and pending_id:
@@ -245,7 +305,7 @@ def memory_search(
             pass  # best-effort: do not lose the search result over this
 
     if mode == "ambiguous":
-        _last_disambiguation_id = scope_decision.get("disambiguation_id")
+        _last_disambiguation_ids[caller] = scope_decision.get("disambiguation_id")
         out: dict[str, Any] = {
             "results": results,
             "scope_decision": scope_decision,
@@ -336,27 +396,47 @@ def memory_remember(
 
 
 @mcp.tool()
-def memory_update(memory_id: str, content: str) -> dict[str, Any]:
-    """Updates the content of an existing memory when a fact changed.
+def memory_update(
+    memory_id: str,
+    content: str | None = None,
+    title: str | None = None,
+    type: str | None = None,
+    importance: float | None = None,
+    confidence: float | None = None,
+    occurred_at: str | None = None,
+) -> dict[str, Any]:
+    """Updates an existing memory: its content when a fact changed, or its metadata.
 
-    cerebro-memory never edits in place: it creates a new memory with the
+    Changing `content` never edits in place: cerebro-memory creates a new memory with the
     updated content and marks the previous one as "superseded", preserving the
-    complete history. Use it when something you saved before stopped being true
+    complete history. Changing only metadata (`title`, `type`, `importance`,
+    `confidence`, `occurred_at`) edits the same memory in place, with no new version.
+    Use it when something you saved before stopped being true
     (e.g. a rate, a budget, or a system version changed) instead of
     creating a loose new memory that would compete with the old one in searches.
 
     Args:
         memory_id: UUID of the active memory to replace (the `id` returned by
             memory_search or memory_remember).
-        content: the new, correct content.
+        content: the new, correct content (optional; creates a new version).
+        title: new title (optional).
+        type: new type, one of "semantic", "episodic", "procedural", "decision" (optional).
+        importance: new importance, 0.0-1.0 (optional).
+        confidence: new confidence, 0.0-1.0 (optional).
+        occurred_at: ISO 8601 date/time the event happened (optional).
+        At least one of these must be given.
 
     Returns:
-        dict with the new memory created (`memory`, with its own `id`), or `error`
-        if the memory doesn't exist or is no longer active (e.g. archived or already
-        superseded previously).
+        dict with the resulting memory (`memory`; with a new `id` if the content
+        changed, the same `id` otherwise), or `error` if the memory doesn't exist,
+        is no longer active (e.g. archived or already superseded), or nothing was given.
     """
+    if type is not None and type not in MEMORY_TYPES:
+        return {"error": f"invalid type: '{type}'. Must be one of: {', '.join(MEMORY_TYPES)}."}
     try:
-        memory = _memory.update_memory(memory_id, content)
+        memory = _memory.update_memory(
+            memory_id, content, title=title, type=type, importance=importance, confidence=confidence, occurred_at=occurred_at
+        )
     except CerebroConnectionError as exc:
         return {"error": _connection_error_message("cerebro-memory", exc)}
     except CerebroAPIError as exc:
@@ -618,6 +698,69 @@ def memory_create_context(slug: str, name: str, kind: str, description: str | No
         return {"error": _http_error_message("cerebro-memory", exc)}
 
     return {"context": context}
+
+
+@mcp.tool()
+def memory_update_context(
+    slug: str, name: str | None = None, kind: str | None = None, description: str | None = None
+) -> dict[str, Any]:
+    """Edits a context's name, kind or description (its slug never changes).
+
+    A clear description helps the Context Engine and future agents decide where
+    new memories belong. At least one of `name`, `kind`, `description` is required.
+
+    Args:
+        slug: slug of the existing context.
+        name: new human-readable name (optional).
+        kind: new kind, e.g. "project", "domain", "person", "org" (optional).
+        description: new description (optional).
+
+    Returns:
+        dict with the updated context (`context`), or `error` if it doesn't exist or
+        the token isn't allowed to modify it.
+    """
+    try:
+        context = _memory.update_context(slug, name=name, kind=kind, description=description)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-memory", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-memory", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No context exists with slug '{slug}'."}
+        return {"error": _http_error_message("cerebro-memory", exc)}
+
+    return {"context": context}
+
+
+@mcp.tool()
+def memory_delete_context(slug: str, force: bool = False) -> dict[str, Any]:
+    """Permanently deletes a context. Admin-only and irreversible.
+
+    Without `force`, it fails if the context still has memories. With `force=True` it
+    also hard-deletes every memory in it (and their relations). Only use `force`
+    when the user explicitly asked for that, and confirm first how many memories it holds.
+
+    Args:
+        slug: slug of the context to delete.
+        force: also delete its memories (default False).
+
+    Returns:
+        dict with the deletion summary, or `error` (not found, not an admin token,
+        or the context still has memories and `force` was not set).
+    """
+    try:
+        return _memory.delete_context(slug, force=force)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-memory", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-memory", exc)}
+        if exc.status_code == 404:
+            return {"error": f"No context exists with slug '{slug}'."}
+        if exc.status_code == 409:
+            return {"error": f"Context '{slug}' still has memories; pass force=True to delete them too. ({exc.detail})"}
+        return {"error": _http_error_message("cerebro-memory", exc)}
 
 
 @mcp.tool()
@@ -1323,6 +1466,34 @@ def flow_get(code: str) -> dict[str, Any]:
         return {"error": _http_error_message("cerebro-flows", exc)}
 
     return {"flow": flow}
+
+
+@mcp.tool()
+def flow_diagram(code: str, version: int | None = None) -> dict[str, Any]:
+    """Draws a flow as a Mermaid flowchart (tasks, decisions with their branches, delegates,
+    approval checkpoints and rejection paths), generated from its complete definition.
+
+    For showing or reviewing a flow to a person. Do NOT use it to EXECUTE a flow
+    (that's flow_start/flow_next, which reveal one step at a time).
+
+    Args:
+        code: sequential id of the flow, e.g. "INC-22".
+        version: a saved version number (default: the current one).
+
+    Returns:
+        dict with `diagram` (Mermaid source), `code`, `version` and `format`, or `error`.
+    """
+    try:
+        return _flows.get_flow_diagram(code, version=version)
+    except CerebroConnectionError as exc:
+        return {"error": _connection_error_message("cerebro-flows", exc)}
+    except CerebroAPIError as exc:
+        if exc.status_code == 401:
+            return {"error": _auth_error_message("cerebro-flows", exc)}
+        if exc.status_code == 404:
+            what = f"flow '{code}'" if version is None else f"version {version} of flow '{code}'"
+            return {"error": f"No {what} exists."}
+        return {"error": _http_error_message("cerebro-flows", exc)}
 
 
 @mcp.tool()

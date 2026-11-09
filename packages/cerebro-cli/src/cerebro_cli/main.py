@@ -38,6 +38,39 @@ def _add_memory_subparser(sub: argparse._SubParsersAction) -> None:
     p_stats = memory_sub.add_parser("stats", help="System statistics (same as GET /stats)")
     p_stats.set_defaults(func=memory_commands.cmd_stats)
 
+    p_mem_update = memory_sub.add_parser(
+        "update", help="Edit a memory: new content creates a version; metadata changes are made in place"
+    )
+    p_mem_update.add_argument("memory_id")
+    p_mem_update.add_argument("--content", default=None, help="new content (creates a new version)")
+    p_mem_update.add_argument("--title", default=None)
+    p_mem_update.add_argument("--type", dest="type_", default=None, choices=["semantic", "episodic", "procedural", "decision"])
+    p_mem_update.add_argument("--importance", type=float, default=None, help="0.0-1.0")
+    p_mem_update.add_argument("--confidence", type=float, default=None, help="0.0-1.0")
+    p_mem_update.add_argument("--occurred-at", default=None, help="ISO 8601 date or datetime")
+    p_mem_update.set_defaults(func=memory_commands.cmd_update)
+
+    p_ctx = memory_sub.add_parser("context", help="Manage contexts")
+    ctx_sub = p_ctx.add_subparsers(dest="context_command", required=True)
+    p_ctx_list = ctx_sub.add_parser("list", help="List contexts")
+    p_ctx_list.set_defaults(func=memory_commands.cmd_context_list)
+    p_ctx_create = ctx_sub.add_parser("create", help="Create a context")
+    p_ctx_create.add_argument("slug")
+    p_ctx_create.add_argument("name")
+    p_ctx_create.add_argument("kind", help="e.g. project, domain, person, org")
+    p_ctx_create.add_argument("--description", default=None)
+    p_ctx_create.set_defaults(func=memory_commands.cmd_context_create)
+    p_ctx_update = ctx_sub.add_parser("update", help="Edit a context's name, kind or description (the slug is fixed)")
+    p_ctx_update.add_argument("slug")
+    p_ctx_update.add_argument("--name", default=None)
+    p_ctx_update.add_argument("--kind", default=None)
+    p_ctx_update.add_argument("--description", default=None)
+    p_ctx_update.set_defaults(func=memory_commands.cmd_context_update)
+    p_ctx_delete = ctx_sub.add_parser("delete", help="Delete a context (admin only)")
+    p_ctx_delete.add_argument("slug")
+    p_ctx_delete.add_argument("--force", action="store_true", help="also delete every memory in it")
+    p_ctx_delete.set_defaults(func=memory_commands.cmd_context_delete)
+
     p_export = memory_sub.add_parser(
         "export-disambiguations", help="Export disambiguation_log to JSONL (Phase 4 dataset)"
     )
@@ -220,6 +253,11 @@ def _add_flows_subparser(sub: argparse._SubParsersAction) -> None:
     p_get = flow_sub.add_parser("get", help="Read a flow's complete YAML by its code")
     p_get.add_argument("code")
     p_get.set_defaults(func=flow_commands.cmd_get)
+
+    p_diagram = flow_sub.add_parser("diagram", help="Print a flow as a Mermaid flowchart")
+    p_diagram.add_argument("code")
+    p_diagram.add_argument("--version", type=int, default=None, help="saved version number (default: current)")
+    p_diagram.set_defaults(func=flow_commands.cmd_diagram)
 
     p_list = flow_sub.add_parser("list", help="List flow definitions")
     p_list.add_argument("--category", default=None)

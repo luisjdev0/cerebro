@@ -64,12 +64,13 @@ one someone set up for you) — see `DEPLOY.md` for how that part is installed
 and configured. This section is about pointing a *client* at an
 already-running instance.
 
-There are two ways to talk to a running cerebro instance:
+There are three ways to talk to a running cerebro instance (the third, the web portal, is
+covered in section 7):
 
 ### A. Through an AI assistant (MCP)
 
 `cerebro-mcp` is a single MCP server that exposes all three modules
-(`memory_*`, `docs_*`, `flow_*`, `auth_*` — 44 tools total) over stdio. It runs on
+(`memory_*`, `docs_*`, `flow_*`, `auth_*` — 46 tools total) over stdio. It runs on
 **your** machine (e.g. inside Claude Desktop or Claude Code) and talks to the
 remote cerebro APIs over HTTPS. You don't call these tools yourself — you
 just talk to the assistant normally, and it decides when to use them (it
@@ -84,9 +85,9 @@ along these lines (Windows path shown; adjust for your OS) in
 "cerebro": {
   "command": "C:\\path\\to\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
   "env": {
-    "CEREBRO_MEMORY_URL": "https://your-cerebro-host/memory",
-    "CEREBRO_DOCS_URL": "https://your-cerebro-host/docs",
-    "CEREBRO_FLOWS_URL": "https://your-cerebro-host/flows",
+    "CEREBRO_MEMORY_URL": "https://your-cerebro-host/api/memory",
+    "CEREBRO_DOCS_URL": "https://your-cerebro-host/api/docs",
+    "CEREBRO_FLOWS_URL": "https://your-cerebro-host/api/flows",
     "CEREBRO_TOKEN": "<your personal/agent token, not the root token>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }
@@ -107,6 +108,22 @@ Once that's in place, restart Claude Desktop/Code and just talk to it — ask
 it something only cerebro would know ("what did we decide about the
 database?") to confirm the connection works.
 
+**Remote, no install (HTTP).** If your instance runs behind the gateway, it also serves the
+tools at `https://your-cerebro-host/mcp`. Two ways to connect:
+
+- **Sign in through the connection** (claude.ai, ChatGPT, Cursor, any MCP client where you cannot set a
+  header): add a custom connector with just the URL `https://your-cerebro-host/mcp`. The client
+  opens the cerebro sign-in page; if you are already signed in to the portal in that browser it
+  shows your user and a **Confirm connection** button, otherwise it asks for username and password.
+  When you confirm, the client stores the token and renews it by itself (you sign in again only if
+  the connection is disabled or stays unused for 90 days).
+- **A token in a header** (Claude Code, scripts): send it as `Authorization: Bearer <token>`, for
+  example `claude mcp add --transport http cerebro https://your-cerebro-host/mcp --header
+  "Authorization: Bearer <token>"`.
+
+Without either the server answers 401. The `/api/` page of your instance shows the same examples,
+next to the full HTTP API reference.
+
 ### B. Through the `cerebro` CLI
 
 For direct or scripted use (backups, bulk imports, managing tokens, editing a
@@ -114,9 +131,9 @@ flow definition by hand) there's a companion `cerebro` command-line tool. It
 reads the same kind of environment variables:
 
 ```bash
-export CEREBRO_MEMORY_URL=https://your-cerebro-host/memory
-export CEREBRO_DOCS_URL=https://your-cerebro-host/docs
-export CEREBRO_FLOWS_URL=https://your-cerebro-host/flows
+export CEREBRO_MEMORY_URL=https://your-cerebro-host/api/memory
+export CEREBRO_DOCS_URL=https://your-cerebro-host/api/docs
+export CEREBRO_FLOWS_URL=https://your-cerebro-host/api/flows
 export CEREBRO_TOKEN=<your token>
 
 cerebro docs list
@@ -343,6 +360,7 @@ often edited directly as files.
 | `cerebro flow validate --yaml-file FILE` | Validates a flow YAML definition without saving it. |
 | `cerebro flow save <category> --yaml-file FILE [--code CODE]` | Saves a new flow definition. |
 | `cerebro flow get <code>` | Reads a flow's full YAML by its code. |
+| `cerebro flow diagram <code> [--version N]` | Prints the flow as a Mermaid flowchart (paste it into any Mermaid renderer; the portal draws it for you). |
 | `cerebro flow list [--category SLUG] [--limit N] [--offset N]` | Lists flow definitions. |
 | `cerebro flow update <code> --yaml-file FILE` | Replaces a flow's YAML (new version; runs already in progress keep the version they started with). |
 | `cerebro flow delete <code> [--yes]` | Permanently deletes a flow definition and its run history. |
@@ -406,7 +424,55 @@ creating a duplicate.
 
 ---
 
-## 7. Managing your access
+## 7. The web portal
+
+Besides the assistant and the CLI, cerebro has a web portal: the same memories,
+documents and flows, in a browser. It is served by the instance itself, at its root
+address (for example `https://your-cerebro-host/`). It is available in English and Spanish
+(the switch is on the sign-in screen and in the user menu) and in light and dark themes.
+
+### Signing in
+
+Use the **username and password** an administrator gave you. The very first one is the
+*master user* of the deployment, defined by `ADMIN_USER` / `ADMIN_PASSWORD` in the server's
+`.env` (see `DEPLOY.md`); it creates everyone else. After too many wrong passwords an account
+is locked for a few minutes.
+
+A session lasts 12 hours by default. When it ends — it expired, an administrator closed it, or
+you signed out in another tab — the portal takes you back to the sign-in screen with a notice,
+and signing in again returns you to the page you were on. You only see the modules your account
+is allowed to use.
+
+### What's in it
+
+- **Overview** — counters per module and an activity chart you can rearrange.
+- **Memory** — search memories by meaning or browse them by context, type and status; create,
+  edit (a content change keeps the previous version) and forget them; create and manage contexts.
+- **Documents** — search and browse, write in Markdown with a live preview, see the version
+  history, archive and unarchive, manage categories, and import `.md`/`.txt` files in bulk.
+- **Flows** — two tabs. *Flows*: the definitions, shown as YAML or as a flowchart you can zoom
+  and export (PNG, SVG, PDF), with version history, validation before saving, the documents each
+  flow references (and an Upload button when one is missing) and category management. *Runs*: the
+  runs in progress or finished, with their timeline, and a badge for those waiting for your
+  approval. Runs are read-only here: approving or rejecting a checkpoint is done through the
+  assistant or the CLI.
+
+Administrators also see an **Administration** group:
+
+- **Users & access** — create users and groups, set passwords, choose what each one may see
+  (modules, contexts, categories) and their level (`user`, `owner`, `admin`). Users are
+  deactivated, not deleted, and the last active admin cannot be removed.
+- **API tokens** — create tokens for agents (the secret is shown **once**; copy it then), switch
+  them on and off without losing them, or revoke them for good. Sign-in sessions are hidden by
+  default.
+- **Logs** — what each module has recorded, as raw lines, newest first, with a filter, a live
+  mode and download. Only memory and flows record logs today; more tabs appear as other modules do.
+- **Backup** — downloads a full copy of the database as a `.sql` file. It contains token and
+  password hashes, so keep it private. There is no restore from the portal.
+
+---
+
+## 8. Managing your access
 
 Cerebro authenticates every request with a **token**, and every token carries
 one or more **scopes**:
@@ -456,7 +522,7 @@ it.
 
 ---
 
-## 8. Troubleshooting / FAQ
+## 9. Troubleshooting / FAQ
 
 **"The assistant says it doesn't know me / has no memory of this."**
 This usually means it searched and genuinely found nothing — not that
@@ -489,7 +555,7 @@ rather than silently filing something under the wrong bucket. Answer it
 once and similar questions in that area should stop coming up.
 
 **"I got a permission/scope error."**
-Your token doesn't have the scope needed for that action (see section 7).
+Your token doesn't have the scope needed for that action (see section 8).
 Ask whoever administers your instance for a token with the right scope.
 
 **"The assistant can't reach cerebro at all."**

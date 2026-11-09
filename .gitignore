@@ -11,3 +11,4 @@ api_local.log
 packages/cerebro-cli/build/
 packages/cerebro-cli/dist/
 *.spec
+dump.rdb

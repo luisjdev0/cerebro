@@ -182,7 +182,7 @@ async def resolve_effective_scope(pool: asyncpg.Pool, token_hash: str) -> Resolv
         """
         SELECT name, user_id, access_level, allowed_modules, module_scopes
         FROM api_tokens
-        WHERE token_hash = $1 AND revoked_at IS NULL
+        WHERE token_hash = $1 AND revoked_at IS NULL AND disabled_at IS NULL
           AND (expires_at IS NULL OR expires_at > now())
         """,
         token_hash,
@@ -375,7 +375,7 @@ async def create_api_token(
 async def list_api_tokens(pool: asyncpg.Pool) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         """
-        SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at
+        SELECT id, name, user_id, scopes, access_level, allowed_modules, module_scopes, created_at, revoked_at, expires_at, disabled_at
         FROM api_tokens ORDER BY created_at
         """
     )

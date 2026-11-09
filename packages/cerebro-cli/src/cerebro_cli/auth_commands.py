@@ -96,17 +96,17 @@ def resolve_password(
 
 def cmd_login(args: argparse.Namespace, *, client: AuthClient | None = None) -> None:
     # `--url` is the GATEWAY's base URL (e.g. https://cerebro.example.com), matching
-    # every other CEREBRO_*_URL in this project -- the gateway routes /auth/* to
+    # every other CEREBRO_*_URL in this project -- the gateway routes /api/auth/* to
     # cerebro-auth by prefix (gateway/Caddyfile), so the actual connection appends
     # that prefix. The unsuffixed gateway URL is what gets saved to
     # ~/.cerebro/config.json, so cerebro_clients.config's read-fallback can derive
-    # each service's own URL (.../memory, .../docs, .../flows, .../auth) from it.
+    # each service's own URL (.../api/memory, .../api/docs, .../api/flows, .../api/auth) from it.
     user = getattr(args, "user", None)
     token = getattr(args, "token", None)
     if bool(user) == bool(token):
         _fail("Pass --user (with a password) or --token, but not both and not neither.")
 
-    auth_url = f"{args.url.rstrip('/')}/auth" if args.url else None
+    auth_url = f"{args.url.rstrip('/')}/api/auth" if args.url else None
     client = client or _client(auth_url)
     try:
         if token:

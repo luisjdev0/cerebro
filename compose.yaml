@@ -208,6 +208,7 @@ services:
     environment:
       DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
       APP_PORT: 8000
+      PUBLIC_URL: ${CEREBRO_PUBLIC_URL:-}
     ports:
       # Host-side port made configurable via CEREBRO_AUTH_HOST_PORT (default
       # 8008, next free after flows=8007) - same reason as POSTGRES_HOST_PORT
@@ -219,6 +220,56 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+
+  # MCP over streamable HTTP, served by the gateway at /mcp. Stateless: every request carries
+  # the caller's own bearer token, forwarded to the APIs (no token or secret lives here, so no
+  # env_file). Built from the repo root because it needs the cerebro-clients package.
+  cerebro-mcp:
+    build:
+      context: .
+      dockerfile: packages/cerebro-mcp/Dockerfile
+    image: cerebro-mcp
+    container_name: cerebro-mcp
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      cerebro-memory-api:
+        condition: service_healthy
+      cerebro-docs-api:
+        condition: service_healthy
+      cerebro-flows-api:
+        condition: service_healthy
+      cerebro-auth-api:
+        condition: service_healthy
+    environment:
+      CEREBRO_MEMORY_URL: http://cerebro-memory-api:8000
+      CEREBRO_DOCS_URL: http://cerebro-docs-api:8000
+      CEREBRO_FLOWS_URL: http://cerebro-flows-api:8000
+      CEREBRO_AUTH_URL: http://cerebro-auth-api:8000
+      CEREBRO_PUBLIC_URL: ${CEREBRO_PUBLIC_URL:-}
+      CEREBRO_AGENT_NAME: cerebro-mcp-http
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # Web portal (Fase 1C): a static React SPA served by nginx. No published port -
+  # it is only reachable through the gateway (which routes everything that is not
+  # an API prefix to it). `full` profile, same as the APIs it talks to via the gateway.
+  cerebro-portal:
+    build:
+      context: ./packages/cerebro-portal
+    image: cerebro-portal
+    container_name: cerebro-portal
+    restart: unless-stopped
+    profiles: ["full"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   # Internal gateway (requested by Jose Luis, 2026-09-23): routes /memory, /docs,
   # /flows by prefix to each API and exposes A SINGLE port, so an EXTERNAL Caddy
@@ -241,13 +292,20 @@ services:
         condition: service_healthy
       cerebro-auth-api:
         condition: service_healthy
+      cerebro-portal:
+        condition: service_healthy
+      cerebro-mcp:
+        condition: service_healthy
     volumes:
       - ./gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./gateway/install:/srv/install:ro
+      - ./gateway/apidocs:/srv/apidocs:ro
     ports:
       # Host-side port made configurable via CEREBRO_GATEWAY_HOST_PORT (default
-      # 8080) - same reason as POSTGRES_HOST_PORT above.
-      - "127.0.0.1:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
+      # 8080) - same reason as POSTGRES_HOST_PORT above. The bind address defaults
+      # to localhost (put a reverse proxy in front); set CEREBRO_GATEWAY_BIND=0.0.0.0
+      # only on a disposable test server that must be reachable from the LAN.
+      - "${CEREBRO_GATEWAY_BIND:-127.0.0.1}:${CEREBRO_GATEWAY_HOST_PORT:-8080}:80"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
       interval: 10s

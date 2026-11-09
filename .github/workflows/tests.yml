@@ -2,7 +2,8 @@ name: tests
 
 # Green criterion for every PR: the full suite of every package against a real
 # Postgres (with pgvector) and Redis. Suites run one after another because they share
-# the ephemeral `cerebro_test` database name (see each tests/conftest.py).
+# the ephemeral `cerebro_test` database name (see each tests/conftest.py). The portal
+# (React/TypeScript) has no database, so it is its own job and runs in parallel.
 
 on:
   pull_request:
@@ -58,6 +59,10 @@ jobs:
             -e "./packages/cerebro-flows[dev]" \
             -e "./packages/cerebro-cli[dev]" \
             -e "./packages/cerebro-mcp[dev]"
+      - name: Postman collection is up to date with the APIs
+        # Generated from the services' OpenAPI documents (scripts/generate_postman.py); fails if an
+        # endpoint or contract changed and docs/postman/ was not regenerated.
+        run: python scripts/generate_postman.py --check
       - name: cerebro-auth
         working-directory: packages/cerebro-auth
         run: python -m pytest -q
@@ -85,3 +90,35 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: packages/cerebro-mcp
         run: python -m pytest -q
+
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/cerebro-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: packages/cerebro-portal/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/cerebro-portal/pnpm-lock.yaml
+      - name: Fetch Ixchel over anonymous https
+        # The lockfile records the Ixchel dependency with an ssh URL and CI has no ssh keys
+        # (same rewrite as the portal's Dockerfile; the repo is public).
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm typecheck
+      - name: Tests (includes the en/es translation parity check)
+        if: ${{ !cancelled() }}
+        run: pnpm test
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: pnpm build

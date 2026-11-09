@@ -327,3 +327,39 @@ async def get_run_state(pool: asyncpg.Pool, redis_client: redis.Redis, run_id: s
     if row is None:
         raise RunNotFoundError(f"run_id '{run_id}' does not exist")
     return {"run_id": run_id, "status": row["status"], "step": None}
+
+
+async def describe_in_progress(
+    pool: asyncpg.Pool, redis_client: redis.Redis, runs: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Live position of in-progress runs, for listings (the portal's runs table and
+    approval queue). `runs` items need `run_id`, `definition_id` and `definition_version`.
+    Returns `{run_id: {"current_step_id", "awaiting_approval", "expired"}}`:
+    - `expired`: the DB still says in_progress but the Redis pointer is gone (inactivity TTL),
+      so nobody can advance it any more;
+    - `awaiting_approval`: the current step has a required checkpoint nobody approved yet.
+    """
+    if not runs:
+        return {}
+    raws = await redis_client.mget([_redis_key(str(r["run_id"])) for r in runs])
+    definitions: dict[tuple[str, int], FlowDefinitionSchema] = {}
+    out: dict[str, dict[str, Any]] = {}
+    for run, raw in zip(runs, raws):
+        run_id = str(run["run_id"])
+        if raw is None:
+            out[run_id] = {"current_step_id": None, "awaiting_approval": False, "expired": True}
+            continue
+        pointer = json.loads(raw)
+        step_id = pointer["current_step_id"]
+        awaiting = False
+        if step_id != PREREQUISITES_STEP_ID:
+            key = (str(run["definition_id"]), int(run["definition_version"]))
+            if key not in definitions:
+                definitions[key] = await _load_definition(pool, key[0], key[1])
+            step = definitions[key].step(step_id)
+            pending = pointer.get("pending_checkpoint")
+            awaiting = bool(
+                step.checkpoint is not None and step.checkpoint.required and not (pending and pending.get("approved"))
+            )
+        out[run_id] = {"current_step_id": step_id, "awaiting_approval": awaiting, "expired": False}
+    return out

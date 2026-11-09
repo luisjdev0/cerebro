@@ -7,11 +7,12 @@ Tokens are resolved against the shared `cerebro_auth` schema (owned by the
 management itself (create/list/revoke) no longer lives in this service.
 """
 
+import json
 import logging
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Annotated, Any
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
@@ -19,9 +20,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, sta
 from pydantic import BaseModel, ConfigDict, Field
 
 from cerebro_flows import engine
+from cerebro_flows.diagram import flow_references, flow_to_mermaid
 from cerebro_flows.auth import (
     Principal,
     get_principal,
+    require_admin,
     require_scope,
 )
 from cerebro_flows.config import Settings, get_settings
@@ -60,6 +63,35 @@ class CategoryOut(BaseModel):
     updated_at: datetime
 
 
+class RunLogEntry(BaseModel):
+    seq: int
+    created_at: datetime
+    run_id: UUID
+    flow_code: str
+    event_type: str
+    step_id: str | None
+    payload: dict[str, Any] | None
+
+
+class RunLogOut(BaseModel):
+    items: list[RunLogEntry]
+    next: str | None  # pass as `before` (a `seq`) to read the next, older page
+
+
+class CategoryUpdate(StrictIn):
+    """Only the display data. The slug (tokens scope by it) and the code (flow ids like
+    OPS-1 are built from it) never change."""
+
+    name: str | None = Field(default=None, min_length=1)
+    description: str | None = None  # an empty string clears it
+
+
+class CategoryDeleteOut(BaseModel):
+    slug: str
+    status: str
+    flows_deleted: int
+
+
 class FlowValidateIn(StrictIn):
     yaml_content: str = Field(min_length=1)
 
@@ -88,10 +120,92 @@ class FlowOut(BaseModel):
     updated_at: datetime
 
 
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int  # flow definitions created
+    updated: int  # flow runs started
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
+
+
+class CategoryCount(BaseModel):
+    slug: str
+    name: str
+    code: str  # the category's flow-code prefix, e.g. "OPS" in OPS-1
+    count: int
+
+
 class StatsOut(BaseModel):
     categories: int
     flows: int
     runs: int
+    flows_by_category: list[CategoryCount] = []
+
+
+class FlowSummary(BaseModel):
+    id: UUID
+    code: str
+    category: str
+    name: str
+    description: str | None
+    status: str
+    current_version: int
+    created_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FlowBrowseResponse(BaseModel):
+    items: list[FlowSummary]
+    total: int
+
+
+class FlowVersionOut(BaseModel):
+    version_number: int
+    yaml_content: str
+    created_at: datetime
+
+
+class FlowDiagramOut(BaseModel):
+    code: str
+    version: int
+    format: str
+    diagram: str
+
+
+class FlowReferenceOut(BaseModel):
+    ref: str
+    kind: Literal["metadata", "prompt"]
+    step_id: str | None = None
+
+
+class RunSummary(BaseModel):
+    run_id: UUID
+    flow_code: str
+    flow_name: str
+    category: str
+    definition_version: int
+    status: str  # in_progress | completed | aborted
+    started_at: datetime
+    completed_at: datetime | None
+    current_step_id: str | None = None  # only while in progress and not expired
+    awaiting_approval: bool = False  # current step has a required checkpoint nobody approved
+    expired: bool = False  # still in_progress in the DB, but its Redis pointer expired
+
+
+class RunBrowseResponse(BaseModel):
+    items: list[RunSummary]
+    total: int
+
+
+class RunEventOut(BaseModel):
+    event_type: str
+    step_id: str | None
+    payload: Any = None
+    created_at: datetime
 
 
 class DecisionIn(StrictIn):
@@ -219,7 +333,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 allowed,
             )
-        return StatsOut(categories=categories, flows=flows, runs=runs)
+        # Per-category breakdown (portal pie chart): same category scope and ownership
+        # gate as /activity.
+        params: list[Any] = []
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"f.owner_user_id = ${len(params)}")
+            else:
+                params.append(principal.owner_filter["user_id_in"])
+                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await pool.fetch(
+            f"""
+            SELECT c.slug, c.name, c.code, count(*)::int AS count
+            FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+            {where} GROUP BY c.slug, c.name, c.code ORDER BY count(*) DESC, c.name
+            """,
+            *params,
+        )
+        return StatsOut(
+            categories=categories,
+            flows=flows,
+            runs=runs,
+            flows_by_category=[CategoryCount(**dict(r)) for r in rows],
+        )
+
+    # ---------------------------------------------------------------- activity
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    ):
+        """Per-day counts of flow definitions created (`created`) and runs started
+        (`updated`), for the last `days` days or for the calendar `year` (days without
+        activity are omitted), plus the years that have any visible activity. Honors
+        the token's category scope and the ownership gate on definitions."""
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            filters: list[str] = []
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
+            if principal.owner_filter is not None:
+                if "user_id" in principal.owner_filter:
+                    params.append(principal.owner_filter["user_id"])
+                    filters.append(f"f.owner_user_id = ${len(params)}")
+                else:
+                    params.append(principal.owner_filter["user_id_in"])
+                    filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+            return "".join(f" AND {f}" for f in filters)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (f.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
+                FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+                WHERE f.created_at >= $1 AND f.created_at < $2{extra}
+                UNION ALL
+                SELECT (r.started_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM flow_runs r
+                JOIN flow_definitions f ON f.id = r.definition_id
+                JOIN flow_categories c ON c.id = f.category_id
+                WHERE r.started_at >= $1 AND r.started_at < $2{extra}
+            )
+            SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY day ORDER BY day
+            """,
+            *params,
+        )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM f.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM r.started_at AT TIME ZONE 'UTC')::int
+                FROM flow_runs r
+                JOIN flow_definitions f ON f.id = r.definition_id
+                JOIN flow_categories c ON c.id = f.category_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
+        )
 
     # ---------------------------------------------------------------- categories
 
@@ -248,6 +465,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"category slug '{body.slug}' or code '{body.code}' already exists",
             ) from exc
         return dict(row)
+
+    @app.patch("/categories/{slug}", response_model=CategoryOut)
+    async def update_category(
+        slug: str,
+        body: CategoryUpdate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        """Edits a category's name/description (portal-only, no client/MCP/CLI mirror)."""
+        require_category_allowed(principal, slug)
+        sets: list[str] = []
+        params: list[Any] = []
+        if body.name is not None:
+            params.append(body.name)
+            sets.append(f"name = ${len(params)}")
+        if body.description is not None:
+            params.append(body.description.strip() or None)
+            sets.append(f"description = ${len(params)}")
+        if not sets:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="nothing to update")
+        params.append(slug)
+        row = await pool.fetchrow(
+            f"""
+            UPDATE flow_categories SET {", ".join(sets)}, updated_at = now() WHERE slug = ${len(params)}
+            RETURNING id, slug, code, name, description, created_at, updated_at
+            """,
+            *params,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
+        return dict(row)
+
+    @app.delete("/categories/{slug}", response_model=CategoryDeleteOut)
+    async def delete_category(
+        slug: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_admin())],
+        force: bool = False,
+    ):
+        """409 while the category still has flows, unless `?force=true`: the FKs' ON DELETE
+        CASCADE then remove its flows, their versions and their runs. `admin`-only, like
+        deleting a docs category or a memory context (destructive)."""
+        require_category_allowed(principal, slug)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                category_id = await conn.fetchval("SELECT id FROM flow_categories WHERE slug = $1 FOR UPDATE", slug)
+                if category_id is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"category '{slug}' not found")
+                count = await conn.fetchval("SELECT count(*) FROM flow_definitions WHERE category_id = $1", category_id)
+                if count > 0 and not force:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"category '{slug}' still has {count} flows - "
+                            "pass ?force=true to hard-delete them (with their versions and runs) along with the category"
+                        ),
+                    )
+                await conn.execute("DELETE FROM flow_categories WHERE id = $1", category_id)
+        return {"slug": slug, "status": "deleted", "flows_deleted": count}
 
     @app.get("/categories", response_model=list[CategoryOut])
     async def list_categories(
@@ -347,6 +623,217 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             code,
         )
 
+    # ---------------------------------------------------------------- portal listings
+    # Consumed by cerebro-portal only (paginated/sortable/searchable, with a total), so
+    # there is deliberately no client/MCP/CLI mirror -- same stance as cerebro-docs'
+    # `GET /documents/browse`. Registered before `/flows/{code}` so `browse` is not
+    # taken for a flow code.
+
+    def _scope_filters(principal: Principal, params: list[Any]) -> list[str]:
+        """Category scope + ownership gate on the flow definition (`f`) joined to its category (`c`)."""
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"f.owner_user_id = ${len(params)}")
+            else:
+                params.append(principal.owner_filter["user_id_in"])
+                filters.append(f"f.owner_user_id = ANY(${len(params)}::uuid[])")
+        return filters
+
+    @app.get("/flows/browse", response_model=FlowBrowseResponse)
+    async def browse_flows(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        category: str | None = None,
+        q: Annotated[str | None, Query(max_length=200)] = None,
+        sort: Literal["updated_at", "created_at", "code", "name", "category"] = "updated_at",
+        order: Literal["asc", "desc"] = "desc",
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        if category is not None:
+            require_category_allowed(principal, category)
+        params: list[Any] = []
+        filters = _scope_filters(principal, params)
+        if category is not None:
+            params.append(category)
+            filters.append(f"c.slug = ${len(params)}")
+        if q and q.strip():
+            escaped = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params.append(f"%{escaped}%")
+            n = len(params)
+            filters.append(f"(f.name ILIKE ${n} OR f.code ILIKE ${n} OR coalesce(f.description, '') ILIKE ${n})")
+        where = (" WHERE " + " AND ".join(filters)) if filters else ""
+        column = {
+            "updated_at": "f.updated_at",
+            "created_at": "f.created_at",
+            "code": "f.code",
+            "name": "lower(f.name)",
+            "category": "c.slug",
+        }[sort]
+        direction = "ASC" if order == "asc" else "DESC"
+        total = await pool.fetchval(
+            f"SELECT count(*) FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id{where}", *params
+        )
+        rows = await pool.fetch(
+            f"""
+            SELECT f.id, f.code, c.slug AS category, f.name, f.description, f.status, f.current_version,
+                   f.created_by, f.created_at, f.updated_at
+            FROM flow_definitions f JOIN flow_categories c ON c.id = f.category_id
+            {where}
+            ORDER BY {column} {direction}, f.id
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,
+            *params,
+            limit,
+            offset,
+        )
+        return {"items": [dict(r) for r in rows], "total": total}
+
+    @app.get("/runs", response_model=RunBrowseResponse)
+    async def browse_runs(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        redis_client: Annotated[Any, Depends(get_redis)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        run_status: Annotated[Literal["in_progress", "completed", "aborted", "all"], Query(alias="status")] = "all",
+        awaiting: bool = False,
+        flow: str | None = None,
+        category: str | None = None,
+        sort: Literal["started_at", "completed_at", "status", "flow_code"] = "started_at",
+        order: Literal["asc", "desc"] = "desc",
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Runs of the flows the caller can see. `awaiting=true` keeps only in-progress runs
+        stopped at a checkpoint nobody approved (the approval queue); that position lives in
+        Redis, so that mode is filtered in memory (capped to the 1000 most recent in-progress runs)."""
+        if category is not None:
+            require_category_allowed(principal, category)
+        params: list[Any] = []
+        filters = _scope_filters(principal, params)
+        if category is not None:
+            params.append(category)
+            filters.append(f"c.slug = ${len(params)}")
+        if flow is not None:
+            params.append(flow)
+            filters.append(f"f.code = ${len(params)}")
+        if awaiting:
+            run_status = "in_progress"
+        if run_status != "all":
+            params.append(run_status)
+            filters.append(f"r.status = ${len(params)}")
+        where = (" WHERE " + " AND ".join(filters)) if filters else ""
+        base = """
+            FROM flow_runs r
+            JOIN flow_definitions f ON f.id = r.definition_id
+            JOIN flow_categories c ON c.id = f.category_id
+        """
+        columns = """
+            r.run_id, r.definition_id, r.definition_version, r.status, r.started_at, r.completed_at,
+            f.code AS flow_code, f.name AS flow_name, c.slug AS category
+        """
+        sort_col = {
+            "started_at": "r.started_at",
+            "completed_at": "r.completed_at",
+            "status": "r.status",
+            "flow_code": "f.code",
+        }[sort]
+        direction = "ASC" if order == "asc" else "DESC"
+
+        def shape(row: asyncpg.Record, live: dict[str, dict[str, Any]]) -> dict[str, Any]:
+            item = {k: row[k] for k in ("run_id", "definition_version", "status", "started_at", "completed_at", "flow_code", "flow_name", "category")}
+            item.update(live.get(str(row["run_id"]), {}))
+            return item
+
+        if awaiting:
+            rows = await pool.fetch(
+                f"SELECT {columns} {base}{where} ORDER BY r.started_at DESC LIMIT 1000", *params
+            )
+            live = await engine.describe_in_progress(pool, redis_client, [dict(r) for r in rows])
+            kept = [r for r in rows if live[str(r["run_id"])]["awaiting_approval"]]
+            return {"items": [shape(r, live) for r in kept[offset : offset + limit]], "total": len(kept)}
+
+        total = await pool.fetchval(f"SELECT count(*) {base}{where}", *params)
+        rows = await pool.fetch(
+            f"""
+            SELECT {columns} {base}{where}
+            ORDER BY {sort_col} {direction} NULLS LAST, r.run_id
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,
+            *params,
+            limit,
+            offset,
+        )
+        live = await engine.describe_in_progress(pool, redis_client, [dict(r) for r in rows if r["status"] == "in_progress"])
+        return {"items": [shape(r, live) for r in rows], "total": total}
+
+    @app.get("/logs", response_model=RunLogOut)
+    async def get_logs(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_admin())],
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+        before: Annotated[int | None, Query(ge=1)] = None,
+        flow: str | None = None,
+        event_type: str | None = None,
+    ):
+        """Portal-only (no client/MCP/CLI mirror): every run event across all flows (`flow_run_events`),
+        newest first (insertion order), keyset-paginated by `seq`. Admin only."""
+        import json
+
+        filters: list[str] = []
+        params: list[Any] = []
+        for col, val in (("d.code", flow), ("e.event_type", event_type)):
+            if val:
+                params.append(val)
+                filters.append(f"{col} = ${len(params)}")
+        if before is not None:
+            params.append(before)
+            filters.append(f"e.seq < ${len(params)}")
+        params.append(limit + 1)
+        rows = await pool.fetch(
+            f"""
+            SELECT e.seq, e.created_at, e.run_id, d.code AS flow_code, e.event_type, e.step_id, e.payload
+            FROM flow_run_events e
+            JOIN flow_runs r ON r.run_id = e.run_id
+            JOIN flow_definitions d ON d.id = r.definition_id
+            {"WHERE " + " AND ".join(filters) if filters else ""}
+            ORDER BY e.seq DESC LIMIT ${len(params)}
+            """,
+            *params,
+        )
+        more = len(rows) > limit
+        items = []
+        for r in rows[:limit]:
+            d = dict(r)
+            if isinstance(d["payload"], str):
+                d["payload"] = json.loads(d["payload"])
+            items.append(d)
+        return {"items": items, "next": str(items[-1]["seq"]) if more and items else None}
+
+    @app.get("/runs/{run_id}/events", response_model=list[RunEventOut])
+    async def run_events(
+        run_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """The run's audit trail, oldest first (`flow_run_events`)."""
+        await _require_run_access(pool, principal, run_id)
+        rows = await pool.fetch(
+            "SELECT event_type, step_id, payload, created_at FROM flow_run_events WHERE run_id = $1 ORDER BY created_at, id",
+            run_id,
+        )
+        out = []
+        for r in rows:
+            payload = r["payload"]
+            if isinstance(payload, str):  # asyncpg does not decode jsonb by default
+                payload = json.loads(payload)
+            out.append({"event_type": r["event_type"], "step_id": r["step_id"], "payload": payload, "created_at": r["created_at"]})
+        return out
+
     @app.get("/flows/{code}", response_model=FlowOut)
     async def get_flow(
         code: str,
@@ -359,6 +846,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_category_allowed(principal, row["category"])
         require_owner_allowed(principal, row["owner_user_id"])
         return dict(row)
+
+    async def _flow_yaml(
+        pool: asyncpg.Pool, principal: Principal, code: str, version: int | None
+    ) -> tuple[int, str]:
+        """(version, yaml) of a flow the caller may read; the current version when `version` is None."""
+        row = await _flow_category_and_owner(pool, code)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
+        require_category_allowed(principal, row["slug"])
+        require_owner_allowed(principal, row["owner_user_id"])
+        found = await pool.fetchrow(
+            """
+            SELECT v.version_number, v.yaml_content
+            FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.definition_id
+            WHERE f.code = $1 AND v.version_number = coalesce($2::int, f.current_version)
+            """,
+            code,
+            version,
+        )
+        if found is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"version {version} not found")
+        return found["version_number"], found["yaml_content"]
+
+    @app.get("/flows/{code}/diagram", response_model=FlowDiagramOut)
+    async def flow_diagram(
+        code: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        format: Literal["mermaid"] = "mermaid",
+        version: Annotated[int | None, Query(ge=1)] = None,
+    ):
+        """Mermaid flowchart of the COMPLETE definition (for people; execution still reveals one step at a time)."""
+        number, text = await _flow_yaml(pool, principal, code, version)
+        return {"code": code, "version": number, "format": format, "diagram": flow_to_mermaid(validate_flow_yaml(text))}
+
+    @app.get("/flows/{code}/references", response_model=list[FlowReferenceOut])
+    async def flow_refs(
+        code: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """cerebro-docs URIs the current definition points at (metadata references and delegate prompts)."""
+        _, text = await _flow_yaml(pool, principal, code, None)
+        return flow_references(validate_flow_yaml(text))
+
+    @app.get("/flows/{code}/versions", response_model=list[FlowVersionOut])
+    async def flow_versions(
+        code: str,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """Every saved version of the definition, newest first."""
+        row = await _flow_category_and_owner(pool, code)
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="flow not found")
+        require_category_allowed(principal, row["slug"])
+        require_owner_allowed(principal, row["owner_user_id"])
+        rows = await pool.fetch(
+            """
+            SELECT v.version_number, v.yaml_content, v.created_at
+            FROM flow_definition_versions v JOIN flow_definitions f ON f.id = v.definition_id
+            WHERE f.code = $1 ORDER BY v.version_number DESC
+            """,
+            code,
+        )
+        return [dict(r) for r in rows]
 
     @app.get("/flows", response_model=list[FlowOut])
     async def list_flows(
@@ -498,17 +1051,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             code,
         )
 
-    async def _run_category(pool: asyncpg.Pool, run_id: UUID) -> str | None:
+    async def _require_run_access(pool: asyncpg.Pool, principal: Principal, run_id: UUID) -> None:
+        """Category gate + ownership gate of the run's flow definition (same rules as
+        the definition itself). A run outside the principal's ownership scope is
+        reported as not found, so its existence is not leaked."""
         row = await pool.fetchrow(
             """
-            SELECT c.slug FROM flow_runs r
+            SELECT c.slug, f.owner_user_id FROM flow_runs r
             JOIN flow_definitions f ON f.id = r.definition_id
             JOIN flow_categories c ON c.id = f.category_id
             WHERE r.run_id = $1
             """,
             run_id,
         )
-        return row["slug"] if row else None
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
+        require_category_allowed(principal, row["slug"])
+        try:
+            require_owner_allowed(principal, row["owner_user_id"])
+        except HTTPException:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found") from None
 
     @app.post("/flows/{code}/start", response_model=RunStateOut)
     async def start_flow(
@@ -535,10 +1097,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        category = await _run_category(pool, run_id)
-        if category is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
-        require_category_allowed(principal, category)
+        await _require_run_access(pool, principal, run_id)
         try:
             return await engine.advance(pool, redis_client, settings, str(run_id), decision=body.decision)
         except engine.RunNotFoundError as exc:
@@ -557,10 +1116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        category = await _run_category(pool, run_id)
-        if category is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
-        require_category_allowed(principal, category)
+        await _require_run_access(pool, principal, run_id)
         try:
             return await engine.approve_checkpoint(pool, redis_client, settings, str(run_id))
         except engine.RunNotFoundError as exc:
@@ -578,10 +1134,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        category = await _run_category(pool, run_id)
-        if category is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
-        require_category_allowed(principal, category)
+        await _require_run_access(pool, principal, run_id)
         try:
             return await engine.reject_checkpoint(pool, redis_client, settings, str(run_id), body.reason)
         except engine.RunNotFoundError as exc:
@@ -599,10 +1152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        category = await _run_category(pool, run_id)
-        if category is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
-        require_category_allowed(principal, category)
+        await _require_run_access(pool, principal, run_id)
         try:
             return await engine.abort_run(pool, redis_client, str(run_id), body.reason)
         except engine.RunNotFoundError as exc:
@@ -617,10 +1167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis)],
         principal: Annotated[Principal, Depends(require_scope("read"))],
     ):
-        category = await _run_category(pool, run_id)
-        if category is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"run_id '{run_id}' not found")
-        require_category_allowed(principal, category)
+        await _require_run_access(pool, principal, run_id)
         try:
             return await engine.get_run_state(pool, redis_client, str(run_id))
         except engine.RunNotFoundError as exc:

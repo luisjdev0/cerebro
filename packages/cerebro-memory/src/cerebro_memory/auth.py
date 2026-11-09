@@ -266,7 +266,7 @@ async def get_principal(
             u.access_level AS user_access_level
         FROM cerebro_auth.api_tokens t
         LEFT JOIN cerebro_auth.users u ON u.id = t.user_id
-        WHERE t.token_hash = $1 AND t.revoked_at IS NULL
+        WHERE t.token_hash = $1 AND t.revoked_at IS NULL AND t.disabled_at IS NULL
           AND (t.expires_at IS NULL OR t.expires_at > now())
         """,
         hash_token(token),
@@ -360,6 +360,22 @@ def require_scope(scope: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"token '{principal.name}' is missing required scope '{scope}' (has: {sorted(principal.scopes)})",
+            )
+        return principal
+
+    return _dependency
+
+
+def require_admin():
+    """For destructive endpoints (deleting a category/context with its content). The `admin`
+    scope only ever exists on the root token -- user and session tokens carry read/write --
+    so a person whose access level is `admin` must pass too, or no portal user could use them."""
+
+    async def _dependency(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
+        if not (principal.has_scope("admin") or principal.access_level == "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"'{principal.name}' needs the 'admin' scope or the 'admin' access level for this action",
             )
         return principal
 

@@ -56,6 +56,12 @@ class TestFlowDefinitions:
         make_client(transport).create_flow("incident", "metadata: {}", code="INC-99")
         assert transport.last["json"]["code"] == "INC-99"
 
+    def test_get_flow_diagram(self):
+        transport = RecordingTransport()
+        make_client(transport).get_flow_diagram("INC-22", version=2)
+        assert transport.last["path"] == "/flows/INC-22/diagram"
+        assert transport.last["params"] == {"format": "mermaid", "version": "2"}
+
     def test_get_flow(self):
         transport = RecordingTransport()
         make_client(transport).get_flow("INC-22")

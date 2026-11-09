@@ -37,6 +37,82 @@ def _client() -> MemoryClient:
     return MemoryClient()
 
 
+def _fail(exc: Exception) -> None:
+    if isinstance(exc, CerebroConnectionError):
+        print(f"Could not connect to cerebro-memory: {exc}", file=sys.stderr)
+    else:
+        assert isinstance(exc, CerebroAPIError)
+        print(f"The API returned {exc.status_code}: {exc.detail}", file=sys.stderr)
+    sys.exit(1)
+
+
+# --------------------------------------------------------------------------- update / contexts
+
+
+def cmd_update(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
+    client = client or _client()
+    try:
+        memory = client.update_memory(
+            args.memory_id,
+            args.content,
+            title=args.title,
+            type=args.type_,
+            importance=args.importance,
+            confidence=args.confidence,
+            occurred_at=args.occurred_at,
+        )
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail(exc)
+        return
+    print(f"Memory {memory['id']} updated ({memory['context']}/{memory['type']}, importance {memory['importance']:.2f}).")
+
+
+def cmd_context_list(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
+    client = client or _client()
+    try:
+        contexts = client.list_contexts()
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail(exc)
+        return
+    if not contexts:
+        print("(no contexts yet)")
+        return
+    print(f"{'slug':<30} {'kind':<10} description")
+    print("-" * 80)
+    for c in contexts:
+        print(f"{c['slug']:<30} {c['kind']:<10} {c.get('description') or ''}")
+
+
+def cmd_context_create(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
+    client = client or _client()
+    try:
+        context = client.create_context(args.slug, args.name, args.kind, description=args.description)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail(exc)
+        return
+    print(f"Context '{context['slug']}' created.")
+
+
+def cmd_context_update(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
+    client = client or _client()
+    try:
+        context = client.update_context(args.slug, name=args.name, kind=args.kind, description=args.description)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail(exc)
+        return
+    print(f"Context '{context['slug']}' updated.")
+
+
+def cmd_context_delete(args: argparse.Namespace, *, client: MemoryClient | None = None) -> None:
+    client = client or _client()
+    try:
+        result = client.delete_context(args.slug, force=args.force)
+    except (CerebroConnectionError, CerebroAPIError) as exc:
+        _fail(exc)
+        return
+    print(f"Context '{args.slug}' deleted (memories deleted: {result.get('memories_deleted', 0)}).")
+
+
 # --------------------------------------------------------------------------- stats
 
 

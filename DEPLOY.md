@@ -69,6 +69,26 @@ Note: if you already initialized the volume with the old password, changing it i
 `.env` does not change it in the database — do it before the first startup, or use
 `ALTER USER` in psql.
 
+### Master user (portal login)
+
+The root token (`API_TOKEN`) is not a login, so a fresh deployment needs a user who can
+sign in to the portal. Define the master user in `.env` before the first startup:
+
+```bash
+sed -i "s/^ADMIN_USER=.*/ADMIN_USER=admin/" .env
+sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=$(openssl rand -base64 18)/" .env   # min. 10 characters
+grep ADMIN_PASSWORD .env                                                         # note it down
+chmod 600 .env
+```
+
+The master user lives in `.env`, not in the database: it is checked on every login, like
+`API_TOKEN`, so to rotate it you edit `.env` and restart `cerebro-auth`
+(`docker compose --profile full up -d cerebro-auth-api`). It signs in with the normal
+password login and gets an `admin` session; from there you can create the regular users and
+groups in the portal. It does not show up in "Users & access" and a database user cannot take
+its name. Note that `.env` is shared by all containers (like `API_TOKEN`), so keep its
+permissions tight.
+
 ## 4. Start the stack
 
 ```bash
@@ -78,6 +98,10 @@ docker compose ps                     # all three "healthy" (postgres, cerebro-m
 curl -s localhost:8005/health         # {"status":"ok"}  (cerebro-memory-api)
 curl -s localhost:8006/health         # {"status":"ok"}  (cerebro-docs-api)
 ```
+
+The web portal is part of the `full` profile: once it is up, open the gateway's address
+(`http://localhost:8080/`, or your domain after step 5) and sign in with the master user from
+`.env`. It needs no extra port or proxy block: the gateway serves it at the root.
 
 `docker compose up -d` (without `--profile full`) still only starts `postgres` — no
 change to the day-to-day flow if you run the APIs outside Docker.
@@ -103,7 +127,7 @@ curl -s https://cerebro.luisjdev.com/docs/health
 curl -s https://cerebro.luisjdev.com/flows/health
 ```
 
-With this, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory` (same pattern for
+With this, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/api/memory` (same pattern for
 `_DOCS_`/`_FLOWS_`) — `MemoryClient`/`DocsClient`/`FlowsClient` need no code changes,
 since they already build the final URL by concatenating `base_url` + relative path.
 
@@ -137,6 +161,19 @@ In that case there's no need to run the `gateway` container at all.
 > the VPS and on your machines; the gateway becomes accessible only within your
 > tailnet via `http://<ip-tailscale>:8080` without exposing anything to the internet
 > (in that case bind the gateway port to the tailscale IP or use `tailscale serve`).
+
+The gateway also serves the **API documentation at `/api/`** (Swagger UI) and the **MCP server
+at `/mcp`** (streamable HTTP, token on every request) through that same single block, and keeps
+the old unprefixed `/memory`, `/docs`, `/flows`, `/auth` as aliases of `/api/<service>`. Nothing
+to add in your Caddy.
+
+**Connectors that sign in (claude.ai, ChatGPT, Cursor, any MCP client).** Adding `https://your-domain/mcp` as a
+custom connector opens the cerebro sign-in page, so the discovery documents and the 401 of `/mcp`
+must name your public address: set `CEREBRO_PUBLIC_URL=https://your-domain` in `.env` (no trailing
+slash) and recreate `cerebro-auth-api` and `cerebro-mcp`. Providers require HTTPS with a certificate
+they trust, and their servers must be able to reach `/mcp`, `/.well-known/*`
+and `/api/auth/oauth/*`. After the upgrade `cerebro-auth` applies migration `004_oauth.sql` by itself. If you deploy a version with `/api` over an old server, upgrade the server
+first: the CLI saved by `cerebro login` now derives `https://host/api/<service>`.
 
 ## 6. Update an existing VPS to this version (monorepo + schemas)
 
@@ -198,12 +235,16 @@ before continuing to use the system.
 
 ## 7. Tokens (don't use root for day-to-day work)
 
+You can also do this from the web portal (administrators only): **API tokens** creates a
+token (the secret is shown once), switches it on and off, or revokes it, and **Users & access**
+manages users and groups. The CLI commands below do the same.
+
 From your local machine (the CLI talks to the remote APIs):
 
 ```bash
-set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory
-set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/docs
-set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/flows
+set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/api/memory
+set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/api/docs
+set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/api/flows
 set CEREBRO_TOKEN=<your root token, the API_TOKEN from .env>
 
 # Token SCOPED to a single service (cerebro-memory):
@@ -240,9 +281,9 @@ services (`memory_*`, `docs_*`, `flow_*`, `auth_*`). In `claude_desktop_config.j
 "cerebro": {
   "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
   "env": {
-    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/memory",
-    "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/docs",
-    "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/flows",
+    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/api/memory",
+    "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/api/docs",
+    "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/api/flows",
     "CEREBRO_TOKEN": "<cross-service token for the agent, not the root one>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }
@@ -309,6 +350,8 @@ otherwise it does nothing.
 - [ ] Random root `API_TOKEN`, kept out of the repo (only in the VPS's `.env`) — it's
       the root for **both** services
 - [ ] `POSTGRES_PASSWORD` changed in `.env` (not in `compose.yaml`)
+- [ ] `ADMIN_USER` / `ADMIN_PASSWORD` set in `.env` (the portal's master user), `chmod 600 .env`,
+      and the password rotated or removed from `.env` once regular admins exist
 - [ ] `ufw` active; 5432/8005/8006 NOT exposed (verify: `ss -tlnp | grep -E '5432|8005|8006'` should show only 127.0.0.1)
 - [ ] HTTPS working on both subdomains (or Tailscale)
 - [ ] Agents using scoped tokens (cross-service or scoped to a single service), not root

@@ -19,8 +19,9 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-flows` | Step-by-step workflow execution engine ("traffic light"), Redis + Postgres | 8000 |
 | `cerebro-auth` | Owns the shared `cerebro_auth` schema (users, groups, tokens); memory/docs/flows validate every request against it directly | 8000 |
 | `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
-| `cerebro-mcp` | Single MCP server (`FastMCP`, stdio) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
+| `cerebro-mcp` | Single MCP server (`FastMCP`; stdio, and streamable HTTP at the gateway's `/mcp`: OAuth sign-in for connectors or a token header) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
 | `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients`; interactive layer (`rich` + `questionary`) that walks the argparse tree | — |
+| `cerebro-portal` | Web portal (React + Vite + TS + Tailwind, Ixchel components); static SPA served by nginx behind the gateway, talks to the same APIs and session tokens | 80 (internal, via the gateway) |
 
 Each internal API runs on port 8000 inside its container; `compose.yaml` maps
 each one to a different host port via `.env` (`CEREBRO_MEMORY_HOST_PORT`, etc. —
@@ -73,6 +74,13 @@ pytest
   straight to `main`, and reaches `main` through a PR that only the owner approves.
 - **Every change updates the docs and `CHANGELOG.md`** (README, DEPLOY,
   `docs/technical-manual.md`, `docs/user-manual.md`, this file when conventions change).
+- **The Postman collection must follow the API.** `docs/postman/cerebro.postman_collection.json`
+  is generated from the four services' OpenAPI documents. Whenever you add, remove or change an
+  endpoint or a request/response contract (path, method, parameters, body or auth), run
+  `python scripts/generate_postman.py` and commit the result in the same change (needs the four
+  API packages installed; no database). Never edit the JSON by hand. CI runs
+  `python scripts/generate_postman.py --check` and fails when it is stale. The same applies to
+  the `/api/` Swagger page, which reads the live OpenAPI and needs nothing extra.
 - **The green criterion is GitHub Actions** (`.github/workflows/tests.yml`: Postgres
   17 + pgvector and Redis, every package's suite). A PR is not ready until it is green.
 - **Integration tests can also run on the optional LAN test server**
@@ -90,9 +98,12 @@ pytest
 
 ## Internal gateway (`gateway/`)
 
-`gateway` service in `compose.yaml` (Caddy, `full` profile): routes `/memory`,
-`/docs`, `/flows` by prefix (`handle_path`) to each API, and exposes a single
-port (`CEREBRO_GATEWAY_HOST_PORT`). Meant so an external Caddy (a VPS or anyone
+`gateway` service in `compose.yaml` (Caddy, `full` profile): routes `/api/memory`,
+`/api/docs`, `/api/flows`, `/api/auth` by prefix (`handle_path`) to each API, serves the Swagger
+documentation at `/api/` (`gateway/apidocs`, vendored Swagger UI) and the MCP server at `/mcp`
+(`cerebro-mcp` container, token on every request), keeps the old unprefixed `/memory` etc. as
+aliases, and exposes a single port (`CEREBRO_GATEWAY_HOST_PORT`). Clients/CLI/portal use the
+`/api/<service>` form (`cerebro_clients.config`, the portal's `apiUrl`). Meant so an external Caddy (a VPS or anyone
 else's) only needs one `reverse_proxy` instead of one block per service. Any new
 module added to the ecosystem must add its own `handle_path` in
 `gateway/Caddyfile`, instead of forcing whoever deploys it to touch their own
@@ -131,10 +142,26 @@ a *session token* — a normal `api_tokens` row named `session:<user>:<hex>` wit
 `429`), generic `401` for every bad-credential case, no MCP tool handles
 passwords (a secret must not pass through a model).
 
+**Master user**: `ADMIN_USER`/`ADMIN_PASSWORD` in `.env` define a user that lives only in the
+environment (checked on every password login like the root token, never stored; `passwords.py`).
+It gets an `admin` session token with no user row. The root token is not a login, so this is how
+a fresh deployment gets someone who can sign in to the portal; rotate it by editing `.env` and
+restarting `cerebro-auth`.
+
 **asyncpg does not auto-decode `jsonb` columns** — always `json.loads()` a
 `module_scopes`/similar column read if it comes back as `str` (no codec is
 registered anywhere in this monorepo); a real bug from skipping this shipped in two
 services before being caught in live testing.
+
+## OAuth for MCP connectors
+
+`/mcp` must work for clients that cannot send a header (claude.ai, ChatGPT, Cursor, any provider): adding the
+connector opens a sign-in page and registers the token. `cerebro-auth` (`oauth.py`, migration
+`004_oauth.sql`) is the OAuth 2.1 authorization server (code + PKCE S256, DCR restricted by
+`OAUTH_REDIRECT_ALLOWLIST`, empty = any provider); the access token is a normal session token, so no other service
+changes. Discovery lives at the gateway root (`/.well-known/oauth-*`), the 401 of `/mcp` points
+to it, and `cerebro-mcp` turns an expired token into an HTTP 401 so connectors refresh. Header
+bearer tokens keep working for Claude Code and scripts. The external URL is `CEREBRO_PUBLIC_URL`.
 
 ## Conventions
 

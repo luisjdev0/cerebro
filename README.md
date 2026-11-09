@@ -108,17 +108,25 @@ To rebuild an image after a code change:
 `docker compose --profile full build cerebro-memory-api` (or `cerebro-docs-api`/
 `cerebro-flows-api`).
 
+Then open `http://localhost:8080/` for the web portal (see "Web portal" below). Set
+`ADMIN_USER` and `ADMIN_PASSWORD` in `.env` first: that is the account you sign in with.
+
 #### Exposing it behind a single reverse proxy (`gateway`)
 
 The `gateway` service (Caddy, `gateway/Caddyfile`) routes by prefix to each internal
-API and exposes everything on a single port (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`): `/memory`
-→ `cerebro-memory-api`, `/docs` → `cerebro-docs-api`, `/flows` → `cerebro-flows-api`. The
+API and exposes everything on a single port (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`):
+`/api/memory` → `cerebro-memory-api`, `/api/docs` → `cerebro-docs-api`, `/api/flows` →
+`cerebro-flows-api`, `/api/auth` → `cerebro-auth-api`. **`/api/` is the API documentation**
+(Swagger UI with a how-to and a token box, no internet needed), **`/mcp` is the MCP server over
+HTTP** (see "MCP over HTTP" below), and everything else is the web portal. The old prefixes
+without `/api` (`/memory`, `/docs`, `/flows`, `/auth`) remain as aliases, so nothing existing
+breaks. The
 idea is that if you're going to expose this behind your own Caddy/nginx (a VPS, whatever),
 that external reverse proxy only needs **one** block pointing at the gateway's port,
 instead of one block per service -- no matter how many modules the ecosystem has.
 It doesn't replace each API's direct ports (they're still there for local dev or
 direct access within the compose network); it's an additional, optional layer. With
-`CEREBRO_MEMORY_URL=https://your-domain/memory` (same pattern for `_DOCS_`/`_FLOWS_`),
+`CEREBRO_MEMORY_URL=https://your-domain/api/memory` (same pattern for `_DOCS_`/`_FLOWS_`),
 `MemoryClient`/`DocsClient`/`FlowsClient` need no code change at all -- they already
 build the final URL by concatenating `base_url` + relative path. See "HTTPS with Caddy" in
 `DEPLOY.md` for the full example with a real domain.
@@ -219,6 +227,40 @@ justifies it (see "Optional local classifier" below).
 `DATABASE_URL`/`POSTGRES_PASSWORD`) but each lives in its own schema and applies
 its own migrations on startup — they are independent stateless services, not a
 monolith split into two processes that coordinate at runtime.
+
+## Web portal (`cerebro-portal`)
+
+A browser UI over the same APIs and session tokens (React + Vite + TypeScript + Tailwind with
+the Ixchel components, English/Spanish, light/dark). It is a static SPA built into an nginx
+image and served by the gateway at its root, so everything is same-origin (`/memory`, `/docs`,
+`/flows`, `/auth`) and there is nothing extra to expose. With the `full` profile it comes up
+with the rest: open `http://localhost:8080/`.
+
+- **Everyone**: Overview (counters and activity), Memory, Documents, Flows (definitions, diagrams,
+  runs), limited to the modules and contexts/categories the account may see.
+- **Admins**: Users & access, API tokens (create / switch on-off / revoke), Logs (raw lines per
+  module that records them) and Backup (`POST /auth/backup` as a download).
+- **Sign-in**: username + password (`POST /auth/login/password`), which mints a session token
+  (12 h). The deployment's **master user** is defined in `.env` (`ADMIN_USER`/`ADMIN_PASSWORD`),
+  checked on every login like the root token and never stored; it creates everyone else.
+- Portal-only endpoints (`GET /logs` in memory and flows, flow categories and runs listing,
+  user/group/token management) deliberately have no client/MCP/CLI mirror.
+
+Develop it against a running gateway:
+
+```bash
+cd packages/cerebro-portal
+pnpm install
+VITE_GATEWAY_URL=http://localhost:8080 pnpm dev   # proxies /api and /mcp
+pnpm typecheck && pnpm test && pnpm build          # what CI runs (the `portal` job)
+```
+
+## API documentation and Postman
+
+Every instance serves the API reference at `/api/` (Swagger UI). For Postman, import
+`docs/postman/cerebro.postman_collection.json`: set `baseUrl` to your gateway and `token` to an API
+token (or run *Auth > Sign in with password*). The file is generated from the services' OpenAPI
+documents (`python scripts/generate_postman.py`) and CI keeps it in sync.
 
 ## `cerebro-memory` endpoints
 
@@ -633,6 +675,7 @@ Postgres at every step, never fully cached.
 | `POST` | `/flows/validate` | write | validates a YAML WITHOUT saving it -- a precise error (which step, which field) for iterative authoring |
 | `POST` | `/flows` | write | creates a definition (`category`, `yaml_content`, `code?`); `code` auto-generated if omitted |
 | `GET` | `/flows/{code}` | read | full definition (YAML of the current version) |
+| `GET` | `/flows/{code}/diagram` | read | Mermaid flowchart of the complete definition (`format=mermaid`, `version?`) -- for people; execution still reveals one step at a time |
 | `GET` | `/flows` | read | lists definitions (`category?`) |
 | `PATCH` | `/flows/{code}` | write | replaces the YAML (new version, snapshots the previous one) -- a run in progress keeps following the version it started with |
 | `DELETE` | `/flows/{code}` | write | deletes (cascading to versions and runs) |
@@ -709,18 +752,18 @@ each tool calls the corresponding HTTP API via `cerebro_clients` (`MemoryClient`
 `DocsClient` / `FlowsClient`), with no business logic of its own -- all of it lives in the APIs,
 so `cerebro-cli` shares exactly the same path.
 
-44 tools available:
+46 tools available:
 
-- **`memory_*`** (10, talk to `cerebro-memory`): `memory_search`,
+- **`memory_*`** (12, talk to `cerebro-memory`): `memory_search`,
   `memory_remember`, `memory_update`, `memory_forget`, `memory_contexts`,
-  `memory_create_context`, `memory_stats`, `memory_link`, `memory_related`,
+  `memory_create_context`, `memory_update_context`, `memory_delete_context`, `memory_stats`, `memory_link`, `memory_related`,
   `memory_timeline`.
 - **`docs_*`** (13, talk to `cerebro-docs`): `docs_create_category`,
   `docs_categories`, `docs_save`, `docs_get`, `docs_search`, `docs_list`,
   `docs_update`, `docs_patch_section`, `docs_delete`, `docs_archive`,
   `docs_unarchive`, `docs_list_archived`, `docs_history`.
 - **`flow_*`** (13, talk to `cerebro-flows`): `flow_create_category`,
-  `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_list`,
+  `flow_categories`, `flow_validate`, `flow_save`, `flow_get`, `flow_diagram`, `flow_list`,
   `flow_update`, `flow_delete` (authoring/CRUD) + `flow_start`, `flow_next`,
   `flow_approve_checkpoint`, `flow_reject_checkpoint`, `flow_abort` (execution
   engine -- see "`cerebro-flows`" above for the step-by-step protocol).
@@ -788,6 +831,33 @@ Note on defaults: `CEREBRO_MEMORY_URL` defaults to assuming the Docker port
 port (`8010`, not `8006`). If you run both APIs in the same mode (A or B),
 export both variables explicitly so they point to the same side -- see
 "Quickstart" above for each mode's port pairs.
+
+### MCP over HTTP (`/mcp`)
+
+Besides the stdio server below (one process per person, token in the environment), the gateway
+serves the same tools over **streamable HTTP at `/mcp`** (the `cerebro-mcp` container, `full`
+profile). It is stateless and every request carries a token, which it forwards to the APIs, so the
+assistant can do exactly what the token allows. No secret lives in that container. There are two
+ways to get that token there:
+
+- **Sign in through the connection (claude.ai, ChatGPT, Claude Desktop, Cursor, any MCP client that cannot set
+  headers).** Add a custom connector with the URL `https://your-domain/mcp` and nothing else. The
+  client discovers the OAuth sign-in from the `401` of `/mcp`, opens the cerebro sign-in page and,
+  once you confirm, registers the token itself. If you already have the portal open in that
+  browser the page shows your user with a **Confirm connection** button; otherwise it asks for
+  username and password (the same as the portal, master user included). The access token is a
+  normal 12-hour session; the client renews it with a refresh token (90 days, rotated on every use).
+  Disabling the user ends the connection at the next renewal; revoking the connection's access token, logging out its session or changing the password
+  ends it at once (the refresh token is tied to the session it was issued with). It is plain OAuth 2.1 (discovery, dynamic client registration, PKCE), so it works with any provider that supports remote MCP, not only Claude. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
+- **A token in a header (Claude Code, scripts).** `Authorization: Bearer <token>` on every request:
+
+```bash
+# Claude Code
+claude mcp add --transport http cerebro https://your-domain/mcp \
+  --header "Authorization: Bearer $CEREBRO_TOKEN"
+```
+
+Use the stdio server instead when you work against APIs that are not behind the gateway.
 
 ### Claude Code
 

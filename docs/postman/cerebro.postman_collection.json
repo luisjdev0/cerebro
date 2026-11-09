@@ -1,0 +1,3124 @@
+{
+  "info": {
+    "name": "cerebro",
+    "description": "Generated from the services' OpenAPI documents by scripts/generate_postman.py -- do not edit by hand.\n\n1. Set `baseUrl` (the gateway, default http://localhost:8080).\n2. Set `token` to an API token, or run Auth > Sign in with password to fetch a session token.\nEvery service lives under {{baseUrl}}/api/<service>.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Memory",
+      "description": "cerebro-memory (served at /api/memory)",
+      "item": [
+        {
+          "name": "activity",
+          "item": [
+            {
+              "name": "Activity",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/activity",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "activity"
+                  ],
+                  "query": [
+                    {
+                      "key": "days",
+                      "value": "365",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "year",
+                      "value": "2000",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Per-day counts of memories created and of memories edited on a later day\n(`updated_at` on a different UTC day than `created_at`), for the last `days`\ndays or for the calendar `year`, plus the years that have any visible\nactivity. Days with no activity are omitted. Honors the token's context scope\nand the ownership gate, like `/timeline`."
+              }
+            }
+          ]
+        },
+        {
+          "name": "contexts",
+          "item": [
+            {
+              "name": "List Contexts",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/contexts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "contexts"
+                  ]
+                },
+                "description": "List Contexts"
+              }
+            },
+            {
+              "name": "Create Context",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/contexts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "contexts"
+                  ]
+                },
+                "description": "Create Context",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"string\",\n  \"name\": \"string\",\n  \"kind\": \"string\",\n  \"description\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Update Context",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/contexts/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "contexts",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Update Context",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\",\n  \"kind\": \"string\",\n  \"description\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Context",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/contexts/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "contexts",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Hard-deletes a context. 409 if it still has memories (of any status),\nunless `?force=true` - in which case those memories (and, via cascade, their\n`memory_edges`) are hard-deleted first. `admin`-only (plan_v2.md SS9: token\nmanagement-adjacent, destructive), regardless of `write` scope."
+              }
+            }
+          ]
+        },
+        {
+          "name": "disambiguations",
+          "item": [
+            {
+              "name": "Export Disambiguations",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/disambiguations/export",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "disambiguations",
+                    "export"
+                  ],
+                  "query": [
+                    {
+                      "key": "resolved_only",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Dumps the complete `disambiguation_log` (or only the resolved rows with\n`resolved_only=true`) as {query, candidates, chosen_context, resolved_by,\ncreated_at} -- the raw dataset that `cerebro-memory export-disambiguations`\n(CLI) converts to JSONL for a future local fine-tuning (Phase 4,\nplan_v2.md SS8). Does not filter by agent nor paginate: it's a full export,\nmeant to be run once there is real volume."
+              }
+            },
+            {
+              "name": "Resolve Disambiguation Endpoint",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/disambiguations/:disambiguation_id/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "disambiguations",
+                    ":disambiguation_id",
+                    "resolve"
+                  ],
+                  "variable": [
+                    {
+                      "key": "disambiguation_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Resolve Disambiguation Endpoint",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"context\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "item": [
+            {
+              "name": "Health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "health"
+                  ]
+                },
+                "description": "Health"
+              }
+            }
+          ]
+        },
+        {
+          "name": "logs",
+          "item": [
+            {
+              "name": "Get Logs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/logs",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "200",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "before",
+                      "value": "1",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "agent",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "action",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Portal-only (no client/MCP/CLI mirror): the `audit_log` (which agent did what), newest\nfirst, keyset-paginated by id. Admin only: search queries are in there."
+              }
+            }
+          ]
+        },
+        {
+          "name": "memories",
+          "item": [
+            {
+              "name": "List Memories",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories"
+                  ],
+                  "query": [
+                    {
+                      "key": "context",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "type",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "status",
+                      "value": "active",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "sort",
+                      "value": "created_at",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "order",
+                      "value": "desc",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "25",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Paginated browse of memories (no semantic ranking -- that is `/memories/search`),\nnewest first by default. Filters: `context` (slug), `type`, `status` (default\n`active`; `all` for every status). Honors the token's context scope (a restricted\ntoken asking for an out-of-scope `context` gets 403) and the ownership gate."
+              }
+            },
+            {
+              "name": "Create Memory",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories"
+                  ]
+                },
+                "description": "Create Memory",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"content\": \"string\",\n  \"context\": \"string\",\n  \"type\": \"semantic\",\n  \"title\": \"string\",\n  \"importance\": 0.0,\n  \"source\": \"string\",\n  \"occurred_at\": \"2026-01-01T00:00:00Z\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Search Memories",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/search?q=string",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "string",
+                      "disabled": false,
+                      "description": ""
+                    },
+                    {
+                      "key": "context",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "scope",
+                      "value": "auto",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "type",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "5",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "include_superseded",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "expand",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Hybrid retrieval. `scope` controls the Context Engine (plan_v2.md SS7):\n\n- explicit `context=<slug>` (or `scope=<slug>` not equal to auto/all) filters\n  directly, no engine involved - `scope_decision.mode == \"explicit\"`.\n- `scope=all` (default off) is the Fase 1 behavior: unfiltered hybrid search\n  across every context - kept for the benchmark's control arm.\n- `scope=auto` (default) runs the Context Engine: a cheap deterministic\n  preliminary scoring decides whether one context clearly dominates\n  (`mode == \"auto\"`, results already filtered to it) or the query is\n  ambiguous between 2-4 contexts (`mode == \"ambiguous\"`, `results` comes back\n  empty on purpose - see `results_by_candidate` for a few results per\n  candidate instead, and `disambiguation_id` to resolve the choice later via\n  POST /disambiguations/{id}/resolve).\n\n`expand` (Fase 3, default False): when True, adds a separate `related` block\nwith the 1-hop neighbors (memory_edges + the virtual supersedence chain) of\nthe top 3 `results`, deduplicated, capped at 5. `related` is NEVER merged into\n`results` - it must not perturb retrieval metrics. Neighbors from a different\ncontext than the one this search resolved to (if any) are included only when\nreached via an explicit edge (`cross_context: true` on that entry) - explicit\nedges are intentional user-made bridges, not contamination."
+              }
+            },
+            {
+              "name": "Get Memory",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "One memory by id, with the same context-scope and ownership checks as\n`/memories/{id}/related`."
+              }
+            },
+            {
+              "name": "Update Memory",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Update Memory",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"content\": \"string\",\n  \"title\": \"string\",\n  \"type\": \"semantic\",\n  \"importance\": 0.0,\n  \"confidence\": 0.0,\n  \"occurred_at\": \"2026-01-01T00:00:00Z\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Memory",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "hard",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Delete Memory"
+              }
+            },
+            {
+              "name": "Create Edge",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id/edges",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id",
+                    "edges"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Create Edge",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"to_memory\": \"00000000-0000-0000-0000-000000000000\",\n  \"relation\": \"relates_to\",\n  \"note\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Edge Endpoint",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id/edges/:edge_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id",
+                    "edges",
+                    ":edge_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    },
+                    {
+                      "key": "edge_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Delete Edge Endpoint"
+              }
+            },
+            {
+              "name": "Get Related Endpoint",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/memories/:memory_id/related",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "memories",
+                    ":memory_id",
+                    "related"
+                  ],
+                  "variable": [
+                    {
+                      "key": "memory_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "relation",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "1-hop neighbors of `memory_id`, both directions, plus the derived\nsupersedence chain (`relation=\"supersedes\"`) - see `graph.get_related`.\n\n`allowed_contexts` (plan_v2.md SS9): 403 if `memory_id` itself sits in a\ndisallowed context (a missing memory still 404s normally, below - a\nrestricted token can't tell \"forbidden\" from \"doesn't exist\" from this check\nalone). Neighbors from a disallowed context are dropped from `related`\nentirely, even ones reached via an explicit edge - `cross_context` marks an\nintentional bridge for tokens that CAN see both sides, it is not an allowlist\nbypass for tokens that can't."
+              }
+            }
+          ]
+        },
+        {
+          "name": "stats",
+          "item": [
+            {
+              "name": "Get Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "stats"
+                  ]
+                },
+                "description": "Get Stats"
+              }
+            }
+          ]
+        },
+        {
+          "name": "timeline",
+          "item": [
+            {
+              "name": "Timeline",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/memory/timeline",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "memory",
+                    "timeline"
+                  ],
+                  "query": [
+                    {
+                      "key": "context",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "from",
+                      "value": "2026-01-01T00:00:00Z",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-01-01T00:00:00Z",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "50",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "`episodic`/`decision` memories, ordered by effective date\n(`occurred_at`, or `created_at` if there is no `occurred_at`) most recent first -\nmeant for \"what happened in X over the last few weeks\". Filters: `context` (slug),\n`from`/`to` (effective date range), `limit` (default 50)."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "description": "cerebro-docs (served at /api/docs)",
+      "item": [
+        {
+          "name": "activity",
+          "item": [
+            {
+              "name": "Activity",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/activity",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "activity"
+                  ],
+                  "query": [
+                    {
+                      "key": "days",
+                      "value": "365",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "year",
+                      "value": "2000",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Per-day counts of documents created and of documents edited on a later\nUTC day, for the last `days` days or for the calendar `year` (days without\nactivity are omitted), plus the years that have any visible activity.\nHonors the token's category scope and the ownership gate."
+              }
+            }
+          ]
+        },
+        {
+          "name": "categories",
+          "item": [
+            {
+              "name": "List Categories",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "categories"
+                  ]
+                },
+                "description": "`hidden=true` never shows up here (no parameter to turn it off -- see\nluisjdev-pendientes/ecosistema-cerebro): a hidden category is only\nreachable by knowing its exact slug in advance (create_document/get_document\ndon't filter by `hidden`, only this listing does)."
+              }
+            },
+            {
+              "name": "Create Category",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "categories"
+                  ]
+                },
+                "description": "Create Category",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"string\",\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"hidden\": false,\n  \"locked\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Update Category",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/categories/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "categories",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Renames/edits a category WITHOUT touching `documents` - its documents'\n`/{category}/{slug}` routes change for free when the join resolves,\nbecause `category_id` is an FK, never copied text (ecosistema-cerebro.md\nSS6). If the slug changes, registers a redirect for each document in the\ncategory (its external route moves even though `category_id` doesn't change) - see\nluisjdev-pendientes/ecosistema-cerebro, \"Slug redirects\".",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"string\",\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"hidden\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Category",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/categories/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "categories",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "409 if the category still has documents, unless `?force=true` - in which\ncase `documents.category_id`'s `ON DELETE CASCADE` (and\n`document_versions.document_id`'s over those documents) does the full\ncascade with a single DELETE. `admin`-only, same criterion as\n`DELETE /contexts/{slug}` in cerebro-memory (destructive)."
+              }
+            }
+          ]
+        },
+        {
+          "name": "documents",
+          "item": [
+            {
+              "name": "List Documents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "q",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "List Documents"
+              }
+            },
+            {
+              "name": "Create Document",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents"
+                  ]
+                },
+                "description": "Create Document",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"string\",\n  \"content\": \"string\",\n  \"category\": \"string\",\n  \"slug\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "List Archived Documents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/archived",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    "archived"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Dedicated listing of archived documents (never mixed with\n`GET /documents`) - see luisjdev-pendientes/ecosistema-cerebro, \"Archiving\"."
+              }
+            },
+            {
+              "name": "Browse Documents",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/browse",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    "browse"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "q",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "status",
+                      "value": "active",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "sort",
+                      "value": "updated_at",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "order",
+                      "value": "desc",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "25",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Paginated browse for the portal's table (active, archived or both, sortable, with\na total). Same visibility rules as `GET /documents`: an explicit `category` is taken\nas-is, otherwise `hidden` categories are left out and `allowed_categories` applies;\n`owner_filter` stacks on top. `q` is full-text and, when given, orders by relevance.\nOnly the portal consumes it, so it has no client/MCP/CLI mirror."
+              }
+            },
+            {
+              "name": "Get Document",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:category/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":category",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "category",
+                      "value": "",
+                      "description": "path parameter"
+                    },
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Exact route: works the same for archived documents and for `hidden`\ncategories (neither is filtered here, only in listings) -- but it DOES\nrespect `principal.owner_filter` (a separate, additional gate from the\ncategory one): reading a document by its exact known path must not bypass\nownership. If there's no direct match, falls back to `slug_redirects` --\nthe real document at its current route ALWAYS wins over a redirect; the\nfallback only runs when the direct lookup already returned a 404 (see\nluisjdev-pendientes/ecosistema-cerebro) -- and a redirected document must\nALSO pass the ownership check before being returned."
+              }
+            },
+            {
+              "name": "Replace Document",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Full replacement (includes moving categories). Mandatory transactionality\n(ecosistema-cerebro.md SS12): `SELECT ... FOR UPDATE` of the row,\nINSERT of the prior snapshot into `document_versions`, and the `UPDATE`, all in ONE\nsingle transaction - content is never read in a separate query without a lock.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"title\": \"string\",\n  \"content\": \"string\",\n  \"category\": \"string\",\n  \"slug\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Document",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Delete Document"
+              }
+            },
+            {
+              "name": "Archive Document",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id/archive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id",
+                    "archive"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Archive Document"
+              }
+            },
+            {
+              "name": "Patch Document Section",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id/section",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id",
+                    "section"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Partial patch by heading (ecosistema-cerebro.md SS12): section = from the\nheading to the next one at the same level or higher. Same mandatory\ntransactionality as `replace_document` - `FOR UPDATE` + snapshot + UPDATE in one\nsingle transaction.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"heading\": \"string\",\n  \"operation\": \"replace\",\n  \"body\": \"\",\n  \"create_if_missing\": false,\n  \"new_heading_level\": 2\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Unarchive Document",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id/unarchive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id",
+                    "unarchive"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Unarchive Document"
+              }
+            },
+            {
+              "name": "Get Document Versions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/documents/:document_id/versions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "documents",
+                    ":document_id",
+                    "versions"
+                  ],
+                  "variable": [
+                    {
+                      "key": "document_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Registered BEFORE `GET /documents/{category}/{slug}` on purpose: both\nroutes have 2 segments after `/documents/`, and this one must win over that\n(more generic) one so `/documents/<uuid>/versions` doesn't get interpreted as\ncategory='<uuid>', slug='versions'. Read-only -- no restore endpoint,\nsee luisjdev-pendientes/ecosistema-cerebro, \"document_versions with no\nway to read it\"."
+              }
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "item": [
+            {
+              "name": "Health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "health"
+                  ]
+                },
+                "description": "Health"
+              }
+            }
+          ]
+        },
+        {
+          "name": "stats",
+          "item": [
+            {
+              "name": "Get Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/docs/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "docs",
+                    "stats"
+                  ]
+                },
+                "description": "Counts of categories/documents/versions (minimal mirror of cerebro-memory's\nGET /stats). With `allowed_categories` restricted, counts only what's visible\nto that token -- same silent-filtering criterion as the rest of cerebro-docs'\nlistings (never a 403 on an aggregate, it's just narrowed)."
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Flows",
+      "description": "cerebro-flows (served at /api/flows)",
+      "item": [
+        {
+          "name": "activity",
+          "item": [
+            {
+              "name": "Activity",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/activity",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "activity"
+                  ],
+                  "query": [
+                    {
+                      "key": "days",
+                      "value": "365",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "year",
+                      "value": "2000",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Per-day counts of flow definitions created (`created`) and runs started\n(`updated`), for the last `days` days or for the calendar `year` (days without\nactivity are omitted), plus the years that have any visible activity. Honors\nthe token's category scope and the ownership gate on definitions."
+              }
+            }
+          ]
+        },
+        {
+          "name": "categories",
+          "item": [
+            {
+              "name": "List Categories",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "categories"
+                  ]
+                },
+                "description": "List Categories"
+              }
+            },
+            {
+              "name": "Create Category",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "categories"
+                  ]
+                },
+                "description": "Create Category",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"string\",\n  \"code\": \"string\",\n  \"name\": \"string\",\n  \"description\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Update Category",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/categories/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "categories",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Edits a category's name/description (portal-only, no client/MCP/CLI mirror).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\",\n  \"description\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Category",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/categories/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "categories",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "force",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "409 while the category still has flows, unless `?force=true`: the FKs' ON DELETE\nCASCADE then remove its flows, their versions and their runs. `admin`-only, like\ndeleting a docs category or a memory context (destructive)."
+              }
+            }
+          ]
+        },
+        {
+          "name": "flows",
+          "item": [
+            {
+              "name": "List Flows",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "List Flows"
+              }
+            },
+            {
+              "name": "Create Flow",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-agent-name",
+                    "value": "string",
+                    "disabled": true
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows"
+                  ]
+                },
+                "description": "Create Flow",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"category\": \"string\",\n  \"yaml_content\": \"string\",\n  \"code\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Browse Flows",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/browse",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    "browse"
+                  ],
+                  "query": [
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "q",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "sort",
+                      "value": "updated_at",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "order",
+                      "value": "desc",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Browse Flows"
+              }
+            },
+            {
+              "name": "Validate Flow",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/validate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    "validate"
+                  ]
+                },
+                "description": "Validate Flow",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"yaml_content\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Get Flow",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Get Flow"
+              }
+            },
+            {
+              "name": "Update Flow",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Update Flow",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"yaml_content\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Flow",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Delete Flow"
+              }
+            },
+            {
+              "name": "Flow Diagram",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code/diagram",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code",
+                    "diagram"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ],
+                  "query": [
+                    {
+                      "key": "format",
+                      "value": "mermaid",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "version",
+                      "value": "1",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Mermaid flowchart of the COMPLETE definition (for people; execution still reveals one step at a time)."
+              }
+            },
+            {
+              "name": "Flow Refs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code/references",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code",
+                    "references"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "cerebro-docs URIs the current definition points at (metadata references and delegate prompts)."
+              }
+            },
+            {
+              "name": "Start Flow",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code/start",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code",
+                    "start"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Start Flow"
+              }
+            },
+            {
+              "name": "Flow Versions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/flows/:code/versions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "flows",
+                    ":code",
+                    "versions"
+                  ],
+                  "variable": [
+                    {
+                      "key": "code",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Every saved version of the definition, newest first."
+              }
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "item": [
+            {
+              "name": "Health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "health"
+                  ]
+                },
+                "description": "Health"
+              }
+            }
+          ]
+        },
+        {
+          "name": "logs",
+          "item": [
+            {
+              "name": "Get Logs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/logs",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "200",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "before",
+                      "value": "1",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "flow",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "event_type",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Portal-only (no client/MCP/CLI mirror): every run event across all flows (`flow_run_events`),\nnewest first (insertion order), keyset-paginated by `seq`. Admin only."
+              }
+            }
+          ]
+        },
+        {
+          "name": "runs",
+          "item": [
+            {
+              "name": "Browse Runs",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs"
+                  ],
+                  "query": [
+                    {
+                      "key": "status",
+                      "value": "all",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "awaiting",
+                      "value": "false",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "flow",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "category",
+                      "value": "string",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "sort",
+                      "value": "started_at",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "order",
+                      "value": "desc",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "limit",
+                      "value": "20",
+                      "disabled": true,
+                      "description": ""
+                    },
+                    {
+                      "key": "offset",
+                      "value": "0",
+                      "disabled": true,
+                      "description": ""
+                    }
+                  ]
+                },
+                "description": "Runs of the flows the caller can see. `awaiting=true` keeps only in-progress runs\nstopped at a checkpoint nobody approved (the approval queue); that position lives in\nRedis, so that mode is filtered in memory (capped to the 1000 most recent in-progress runs)."
+              }
+            },
+            {
+              "name": "Get Run",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Get Run"
+              }
+            },
+            {
+              "name": "Abort Run",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id/abort",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id",
+                    "abort"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Abort Run",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Approve Checkpoint",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id/approve-checkpoint",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id",
+                    "approve-checkpoint"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Approve Checkpoint"
+              }
+            },
+            {
+              "name": "Run Events",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id/events",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id",
+                    "events"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "The run's audit trail, oldest first (`flow_run_events`)."
+              }
+            },
+            {
+              "name": "Next Step",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id/next",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id",
+                    "next"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Next Step",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"decision\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Reject Checkpoint",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/runs/:run_id/reject-checkpoint",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "runs",
+                    ":run_id",
+                    "reject-checkpoint"
+                  ],
+                  "variable": [
+                    {
+                      "key": "run_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Reject Checkpoint",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "stats",
+          "item": [
+            {
+              "name": "Get Stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/flows/stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "flows",
+                    "stats"
+                  ]
+                },
+                "description": "Get Stats"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "cerebro-auth (served at /api/auth)",
+      "item": [
+        {
+          "name": "backup",
+          "item": [
+            {
+              "name": "Backup",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/backup",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "backup"
+                  ]
+                },
+                "description": "Backup"
+              }
+            }
+          ]
+        },
+        {
+          "name": "groups",
+          "item": [
+            {
+              "name": "List Groups",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups"
+                  ]
+                },
+                "description": "Portal-only: every group with its members and the modules/scopes it grants."
+              }
+            },
+            {
+              "name": "Create Group",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups"
+                  ]
+                },
+                "description": "Create Group",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"string\",\n  \"name\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Update Group",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Update Group",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Delete Group",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups/:slug",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups",
+                    ":slug"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Memberships and the group's scopes go with it (FK cascade); the users stay."
+              }
+            },
+            {
+              "name": "Add Group Member",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups/:slug/members",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups",
+                    ":slug",
+                    "members"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Add Group Member",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"user\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Remove Group Member",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups/:slug/members/:user",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups",
+                    ":slug",
+                    "members",
+                    ":user"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    },
+                    {
+                      "key": "user",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Remove Group Member"
+              }
+            },
+            {
+              "name": "Set Group Scopes",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/groups/:slug/scopes",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "groups",
+                    ":slug",
+                    "scopes"
+                  ],
+                  "variable": [
+                    {
+                      "key": "slug",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Set Group Scopes",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"allowed_modules\": [\n    \"memory\"\n  ],\n  \"module_scopes\": {}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "health",
+          "item": [
+            {
+              "name": "Health",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "health"
+                  ]
+                },
+                "description": "Health"
+              }
+            }
+          ]
+        },
+        {
+          "name": "login",
+          "item": [
+            {
+              "name": "Login",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login"
+                  ]
+                },
+                "description": "Login",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"token\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Sign in with password",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/login/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "login",
+                    "password"
+                  ]
+                },
+                "description": "Username + password login. Returns a session token that expires after\n`session_ttl_hours`. Any failure (unknown user, wrong password, revoked\nuser, user with no password) answers the same 401; a locked account\nanswers 429 with `Retry-After`.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\",\n  \"password\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "  pm.collectionVariables.set('token', pm.response.json().token);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "logout",
+          "item": [
+            {
+              "name": "Logout",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/logout",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "logout"
+                  ]
+                },
+                "description": "Revoke the session token used for this request. Only session tokens\n(minted by a password login) can be logged out; any other token is\nrevoked by name with `DELETE /tokens/{name}`."
+              }
+            }
+          ]
+        },
+        {
+          "name": "tokens",
+          "item": [
+            {
+              "name": "List Tokens",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/tokens",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "tokens"
+                  ]
+                },
+                "description": "List Tokens"
+              }
+            },
+            {
+              "name": "Create Token",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/tokens",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "tokens"
+                  ]
+                },
+                "description": "Create Token",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\",\n  \"scopes\": [\n    \"read\"\n  ],\n  \"allowed_modules\": [\n    \"memory\"\n  ],\n  \"module_scopes\": {},\n  \"user\": \"string\",\n  \"access_level\": \"user\",\n  \"value\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Revoke Token",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/tokens/:name",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "tokens",
+                    ":name"
+                  ],
+                  "variable": [
+                    {
+                      "key": "name",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Revoke Token"
+              }
+            },
+            {
+              "name": "Set Token Active",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/tokens/:token_id",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "tokens",
+                    ":token_id"
+                  ],
+                  "variable": [
+                    {
+                      "key": "token_id",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Portal-only (no client/MCP/CLI mirror): switch a token off (`disabled_at = now()`) or back\non (`disabled_at = NULL`); the secret never changes. Different from revoking, which is\npermanent: a revoked token cannot be switched (409).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"active\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "users",
+          "item": [
+            {
+              "name": "List Users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "users"
+                  ]
+                },
+                "description": "List Users"
+              }
+            },
+            {
+              "name": "Create User",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "users"
+                  ]
+                },
+                "description": "Create User",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"string\",\n  \"email\": \"string\",\n  \"access_level\": \"user\",\n  \"password\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Update User",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/users/:name",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "users",
+                    ":name"
+                  ],
+                  "variable": [
+                    {
+                      "key": "name",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Portal-only (no client/MCP/CLI mirror). Refuses to leave the system without an\nactive admin: demoting or deactivating the last one is a 409.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"string\",\n  \"access_level\": \"user\",\n  \"active\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "Set Password",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/auth/users/:name/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "auth",
+                    "users",
+                    ":name",
+                    "password"
+                  ],
+                  "variable": [
+                    {
+                      "key": "name",
+                      "value": "",
+                      "description": "path parameter"
+                    }
+                  ]
+                },
+                "description": "Set a user's password. An admin may set anyone's. A non-admin may only\nchange their own, and must prove the current one (which counts toward the\nsame lockout as a login). Every session of the user is closed.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"string\",\n  \"current_password\": \"string\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -13,15 +13,15 @@ reused here.
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Annotated, Any
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import asyncpg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cerebro_docs.auth import Principal, get_principal, require_scope
+from cerebro_docs.auth import Principal, get_principal, require_admin, require_scope
 from cerebro_docs.config import Settings, get_settings
 from cerebro_docs.db import apply_migrations, check_health, create_pool
 from cerebro_docs.sections import (
@@ -125,6 +125,27 @@ class DocumentOut(BaseModel):
     redirected_from: dict[str, str] | None = None
 
 
+class DocumentSummary(BaseModel):
+    """A row of the portal's table: everything but the full content (an excerpt instead)."""
+
+    id: UUID
+    category: str
+    slug: str
+    title: str
+    excerpt: str
+    status: str
+    created_by: str | None
+    owner_user_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    score: float | None = None
+
+
+class DocumentBrowseResponse(BaseModel):
+    items: list[DocumentSummary]
+    total: int  # rows matching the filters (ignoring limit/offset)
+
+
 class DocumentVersionOut(BaseModel):
     version_number: int
     category: str
@@ -141,6 +162,23 @@ class SectionPatchIn(StrictIn):
     new_heading_level: int = Field(default=2, ge=1, le=6)
 
 
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int
+    updated: int
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
+
+
+class CategoryCount(BaseModel):
+    slug: str
+    name: str
+    count: int
+
+
 class StatsOut(BaseModel):
     """Minimal mirror of cerebro-memory's GET /stats (ecosistema-cerebro.md SS11):
     cerebro-docs has no disambiguations or learned preferences, so only these
@@ -149,6 +187,7 @@ class StatsOut(BaseModel):
     categories: int
     documents: int
     versions: int
+    documents_by_category: list[CategoryCount] = []
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -260,7 +299,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """,
                 allowed,
             )
-        return StatsOut(categories=categories, documents=documents, versions=versions)
+        # Per-category breakdown (portal pie chart): same category scope and ownership
+        # gate as /activity, so a restricted token never sees other people's counts.
+        params: list[Any] = []
+        filters: list[str] = []
+        if principal.allowed_categories is not None:
+            params.append(list(principal.allowed_categories))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        apply_owner_filter(filters, params, principal.owner_filter)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        rows = await pool.fetch(
+            f"""
+            SELECT c.slug, c.name, count(*)::int AS count
+            FROM documents d JOIN categories c ON c.id = d.category_id
+            {where} GROUP BY c.slug, c.name ORDER BY count(*) DESC, c.name
+            """,
+            *params,
+        )
+        return StatsOut(
+            categories=categories,
+            documents=documents,
+            versions=versions,
+            documents_by_category=[CategoryCount(**dict(r)) for r in rows],
+        )
+
+    # ---------------------------------------------------------------- activity
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    ):
+        """Per-day counts of documents created and of documents edited on a later
+        UTC day, for the last `days` days or for the calendar `year` (days without
+        activity are omitted), plus the years that have any visible activity.
+        Honors the token's category scope and the ownership gate."""
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            filters: list[str] = []
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
+            apply_owner_filter(filters, params, principal.owner_filter)
+            return "".join(f" AND {f}" for f in filters)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (d.created_at AT TIME ZONE 'UTC')::date AS day, 1 AS created, 0 AS updated
+                FROM documents d JOIN categories c ON c.id = d.category_id
+                WHERE d.created_at >= $1 AND d.created_at < $2{extra}
+                UNION ALL
+                SELECT (d.updated_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM documents d JOIN categories c ON c.id = d.category_id
+                WHERE d.updated_at >= $1 AND d.updated_at < $2{extra}
+                  AND (d.updated_at AT TIME ZONE 'UTC')::date <> (d.created_at AT TIME ZONE 'UTC')::date
+            )
+            SELECT day, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY day ORDER BY day
+            """,
+            *params,
+        )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM d.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM documents d JOIN categories c ON c.id = d.category_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM d.updated_at AT TIME ZONE 'UTC')::int
+                FROM documents d JOIN categories c ON c.id = d.category_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["day"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
+        )
 
     # ---------------------------------------------------------------- categories
 
@@ -394,7 +521,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def delete_category(
         slug: str,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
-        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        principal: Annotated[Principal, Depends(require_admin())],
         force: bool = False,
     ):
         """409 if the category still has documents, unless `?force=true` - in which
@@ -632,6 +759,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await _query_documents(
             pool, principal, doc_status="active", category=category, q=q, limit=limit, offset=offset
         )
+
+    @app.get("/documents/browse", response_model=DocumentBrowseResponse)
+    async def browse_documents(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        category: str | None = None,
+        q: str | None = None,
+        status_: Annotated[Literal["active", "archived", "all"], Query(alias="status")] = "active",
+        sort: Literal["updated_at", "created_at", "title", "category"] = "updated_at",
+        order: Literal["asc", "desc"] = "desc",
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Paginated browse for the portal's table (active, archived or both, sortable, with
+        a total). Same visibility rules as `GET /documents`: an explicit `category` is taken
+        as-is, otherwise `hidden` categories are left out and `allowed_categories` applies;
+        `owner_filter` stacks on top. `q` is full-text and, when given, orders by relevance.
+        Only the portal consumes it, so it has no client/MCP/CLI mirror."""
+        filters: list[str] = []
+        params: list[Any] = []
+        if status_ != "all":
+            params.append(status_)
+            filters.append(f"d.status = ${len(params)}")
+        if category is not None:
+            require_category_allowed(principal, category)
+            params.append(category)
+            filters.append(f"c.slug = ${len(params)}")
+        else:
+            filters.append("c.hidden = false")
+            if principal.allowed_categories is not None:
+                params.append(list(principal.allowed_categories))
+                filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        apply_owner_filter(filters, params, principal.owner_filter)
+
+        select_score = "NULL::real AS score"
+        # Column names come from the Literal above, never from the request text.
+        sort_column = {"updated_at": "d.updated_at", "created_at": "d.created_at", "title": "lower(d.title)", "category": "c.slug"}[sort]
+        order_clause = f"ORDER BY {sort_column} {order.upper()}, d.id"
+        if q:
+            params.append(q)
+            q_param = len(params)
+            filters.append(f"d.search_vector @@ websearch_to_tsquery('simple', ${q_param})")
+            select_score = f"ts_rank(d.search_vector, websearch_to_tsquery('simple', ${q_param})) AS score"
+            order_clause = "ORDER BY score DESC, d.updated_at DESC, d.id"
+        where_clause = (" WHERE " + " AND ".join(filters)) if filters else ""
+
+        total = await pool.fetchval(
+            f"SELECT count(*) FROM documents d JOIN categories c ON c.id = d.category_id{where_clause}", *params
+        )
+        params.append(limit)
+        limit_param = len(params)
+        params.append(offset)
+        offset_param = len(params)
+        rows = await pool.fetch(
+            f"""
+            SELECT d.id, d.slug, d.title, left(d.content, 240) AS excerpt, d.status, d.created_by, d.owner_user_id,
+                   d.created_at, d.updated_at, c.slug AS category, {select_score}
+            FROM documents d JOIN categories c ON c.id = d.category_id
+            {where_clause}
+            {order_clause}
+            LIMIT ${limit_param} OFFSET ${offset_param}
+            """,
+            *params,
+        )
+        return {"items": [dict(r) for r in rows], "total": total}
 
     @app.get("/documents/archived", response_model=list[DocumentOut])
     async def list_archived_documents(

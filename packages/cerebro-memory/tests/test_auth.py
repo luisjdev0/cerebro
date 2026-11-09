@@ -513,6 +513,92 @@ class TestAllowedContextsEnforcement:
         assert other_slug not in contexts_seen
 
 
+class TestListAndGetMemory:
+    """GET /memories (paginated browse) and GET /memories/{id}: feed the portal's Memory screen."""
+
+    def _remember(self, client, headers, ctx, text, type_="semantic"):
+        resp = client.post("/memories", json={"content": text, "context": ctx, "type": type_}, headers=headers)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_list_paginates_and_filters(self, client, root_headers):
+        ctx = _make_context(client, root_headers)
+        for i in range(3):
+            self._remember(client, root_headers, ctx, f"list probe {i} in {ctx}")
+        self._remember(client, root_headers, ctx, f"episode in {ctx}", type_="episodic")
+
+        resp = client.get("/memories", params={"context": ctx, "limit": 2}, headers=root_headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total"] == 4 and len(data["items"]) == 2
+        page2 = client.get("/memories", params={"context": ctx, "limit": 2, "offset": 2}, headers=root_headers).json()
+        assert len(page2["items"]) == 2
+        assert {m["id"] for m in data["items"]}.isdisjoint({m["id"] for m in page2["items"]})
+
+        only_episodic = client.get("/memories", params={"context": ctx, "type": "episodic"}, headers=root_headers).json()
+        assert only_episodic["total"] == 1 and only_episodic["items"][0]["type"] == "episodic"
+        by_title = client.get("/memories", params={"context": ctx, "sort": "title", "order": "asc"}, headers=root_headers)
+        assert by_title.status_code == 200
+        titles = [m["title"] for m in by_title.json()["items"]]
+        assert titles == sorted(titles)
+        assert client.get("/memories", params={"sort": "context"}, headers=root_headers).status_code == 200
+        assert client.get("/memories", params={"sort": "content; DROP TABLE memories"}, headers=root_headers).status_code == 422
+        assert client.get("/memories", params={"limit": 0}, headers=root_headers).status_code == 422
+        assert client.get("/memories", params={"status": "bogus"}, headers=root_headers).status_code == 422
+
+    def test_list_and_get_respect_context_scope(self, client, root_headers):
+        allowed, other = _make_context(client, root_headers), _make_context(client, root_headers)
+        mine = self._remember(client, root_headers, allowed, f"visible in {allowed}")
+        theirs = self._remember(client, root_headers, other, f"hidden in {other}")
+        token = _create_service_token(scopes=["read"], contexts=[allowed])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        listed = client.get("/memories", headers=headers).json()
+        assert {m["context"] for m in listed["items"]} == {allowed}
+        assert client.get("/memories", params={"context": other}, headers=headers).status_code == 403
+        assert client.get(f"/memories/{mine['id']}", headers=headers).status_code == 200
+        assert client.get(f"/memories/{theirs['id']}", headers=headers).status_code == 403
+
+    def test_get_memory_404(self, client, root_headers):
+        missing = "00000000-0000-0000-0000-000000000000"
+        assert client.get(f"/memories/{missing}", headers=root_headers).status_code == 404
+
+
+class TestActivity:
+    def test_activity_counts_only_allowed_contexts(self, client, root_headers):
+        allowed_slug = _make_context(client, root_headers)
+        other_slug = _make_context(client, root_headers)
+        for slug in (allowed_slug, other_slug):
+            client.post(
+                "/memories",
+                json={"content": f"activity probe in {slug}", "context": slug, "type": "semantic"},
+                headers=root_headers,
+            )
+        token = _create_service_token(scopes=["read"], contexts=[allowed_slug])
+
+        scoped = client.get("/activity", params={"days": 7}, headers={"Authorization": f"Bearer {token}"})
+        assert scoped.status_code == 200, scoped.text
+        assert sum(d["created"] for d in scoped.json()["days"]) == 1
+
+        full = client.get("/activity", params={"days": 7}, headers=root_headers)
+        assert sum(d["created"] for d in full.json()["days"]) >= 2
+
+    def test_activity_years_and_year_filter(self, client, root_headers):
+        slug = _make_context(client, root_headers)
+        client.post("/memories", json={"content": "year probe", "context": slug, "type": "semantic"}, headers=root_headers)
+        resp = client.get("/activity", params={"days": 7}, headers=root_headers)
+        assert resp.status_code == 200, resp.text
+        year = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).year
+        assert year in resp.json()["years"]
+        # a calendar year overrides the rolling window; a year with no data is empty
+        assert client.get("/activity", params={"year": year}, headers=root_headers).json()["days"]
+        assert client.get("/activity", params={"year": 2001}, headers=root_headers).json()["days"] == []
+        assert client.get("/activity", params={"year": 1999}, headers=root_headers).status_code == 422
+
+    def test_activity_rejects_out_of_range_days(self, client, root_headers):
+        assert client.get("/activity", params={"days": 0}, headers=root_headers).status_code == 422
+
+
 class TestDeleteContext:
     def test_delete_empty_context_succeeds_without_force(self, client, root_headers):
         slug = _make_context(client, root_headers)
@@ -544,6 +630,22 @@ class TestDeleteContext:
         resp = client.delete(f"/contexts/does-not-exist-{uuid.uuid4().hex[:8]}", headers=root_headers)
         assert resp.status_code == 404, resp.text
 
+    def test_a_disabled_token_is_rejected_until_switched_back_on(self, client):
+        token, _ = _create_user_token(access_level="user", scopes=["read"])
+        h = {"Authorization": f"Bearer {token}"}
+
+        async def _set_disabled(conn, disabled: bool):
+            await conn.execute(
+                f"UPDATE cerebro_auth.api_tokens SET disabled_at = {'now()' if disabled else 'NULL'} WHERE token_hash = $1",
+                hash_token(token),
+            )
+
+        assert client.get("/contexts", headers=h).status_code == 200
+        _run_sql(_set_disabled, True)
+        assert client.get("/contexts", headers=h).status_code == 401
+        _run_sql(_set_disabled, False)
+        assert client.get("/contexts", headers=h).status_code == 200
+
     def test_delete_context_requires_admin_not_just_write(self, client, root_headers):
         slug = _make_context(client, root_headers)
         token = _create_service_token(scopes=["read", "write"])
@@ -551,6 +653,14 @@ class TestDeleteContext:
 
         resp = client.delete(f"/contexts/{slug}", headers=headers)
         assert resp.status_code == 403, resp.text
+
+    def test_delete_context_allowed_for_admin_access_level_without_admin_scope(self, client, root_headers):
+        """The `admin` scope exists only on the root token; a user whose access level is
+        `admin` (read/write token, e.g. a portal session) must still be able to delete."""
+        slug = _make_context(client, root_headers)
+        token, _ = _create_user_token(access_level="admin", scopes=["read", "write"])
+        resp = client.delete(f"/contexts/{slug}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
 
 
 class TestAllowedContextsEnforcementOnRelated:
@@ -853,3 +963,22 @@ class TestOwnershipFilter:
             f"/memories/{memory_id}", json={"content": "editada por user_a"}, headers=headers_a
         )
         assert own_patch.status_code == 200, own_patch.text
+
+
+class TestLogs:
+    def test_logs_list_the_audit_trail_newest_first_with_filters_and_paging(self, client, root_headers):
+        slug = _make_context(client, root_headers)
+        _make_memory(client, root_headers, slug, "primera memoria para el log")
+        _make_memory(client, root_headers, slug, "segunda memoria para el log")
+
+        r = client.get("/logs", params={"action": "remember", "limit": 1}, headers=root_headers)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["items"]) == 1 and body["items"][0]["action"] == "remember" and body["next"] is not None
+        older = client.get("/logs", params={"action": "remember", "limit": 1, "before": body["next"]}, headers=root_headers).json()
+        assert older["items"] and older["items"][0]["id"] < body["items"][0]["id"]
+
+    def test_logs_are_admin_only(self, client):
+        for level, expected in (("user", 403), ("admin", 200)):
+            token, _ = _create_user_token(access_level=level, scopes=["read"])
+            assert client.get("/logs", headers={"Authorization": f"Bearer {token}"}).status_code == expected, level

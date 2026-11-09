@@ -7,7 +7,7 @@ memory.source (default "unknown").
 
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from cerebro_memory.auth import (
     Principal,
     get_principal,
+    require_admin,
     require_scope,
 )
 from cerebro_memory.config import Settings, get_settings
@@ -64,6 +65,20 @@ class ContextCreate(BaseModel):
     description: str | None = None
 
 
+class AuditLogEntry(BaseModel):
+    id: int
+    created_at: datetime
+    agent: str
+    action: str
+    memory_id: UUID | None
+    detail: dict[str, Any] | None
+
+
+class AuditLogOut(BaseModel):
+    items: list[AuditLogEntry]
+    next: str | None  # pass as `before` to read the next (older) page; null at the end
+
+
 class ContextOut(BaseModel):
     id: UUID
     slug: str
@@ -84,7 +99,24 @@ class MemoryCreate(BaseModel):
 
 
 class MemoryUpdate(BaseModel):
-    content: str = Field(min_length=1)
+    """Every field is optional, but at least one must be given. A new `content`
+    stores a new version (the old row becomes superseded); changes limited to
+    metadata (title, type, importance, confidence, occurred_at) are made in place."""
+
+    content: str | None = Field(default=None, min_length=1)
+    title: str | None = Field(default=None, min_length=1)
+    type: MemoryType | None = None
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    occurred_at: datetime | None = None
+
+
+class ContextUpdate(BaseModel):
+    """The slug is immutable: token scopes and group scopes reference it."""
+
+    name: str | None = Field(default=None, min_length=1)
+    kind: str | None = Field(default=None, min_length=1)
+    description: str | None = None
 
 
 class MemoryOut(BaseModel):
@@ -101,6 +133,11 @@ class MemoryOut(BaseModel):
     occurred_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class MemoryListResponse(BaseModel):
+    items: list[MemoryOut]
+    total: int  # rows matching the filters (ignoring limit/offset)
 
 
 class MemorySearchResult(MemoryOut):
@@ -219,6 +256,17 @@ class TimelineItem(MemoryOut):
 
 class TimelineResponse(BaseModel):
     items: list[TimelineItem]
+
+
+class ActivityDay(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int
+    updated: int
+
+
+class ActivityResponse(BaseModel):
+    days: list[ActivityDay]
+    years: list[int] = []  # calendar years (UTC) with visible activity, newest first
 
 
 # --------------------------------------------------------------------------- app wiring
@@ -387,6 +435,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
         return dict(row)
 
+    @app.patch("/contexts/{slug}", response_model=ContextOut)
+    async def update_context(
+        slug: str,
+        body: ContextUpdate,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("write"))],
+    ):
+        changes = body.model_dump(exclude_unset=True)
+        if not changes or ("name" in changes and changes["name"] is None) or ("kind" in changes and changes["kind"] is None):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="provide at least one of name, kind, description",
+            )
+        if not principal.context_allowed(slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to modify context '{slug}'",
+            )
+        # Column names come from the model's own fields, never from the request.
+        sets = ", ".join(f"{col} = ${i}" for i, col in enumerate(changes, start=2))
+        row = await pool.fetchrow(
+            f"UPDATE contexts SET {sets} WHERE slug = $1 RETURNING id, slug, name, kind, description, created_at",
+            slug,
+            *changes.values(),
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"context '{slug}' not found")
+        return dict(row)
+
     @app.get("/contexts", response_model=list[ContextOut])
     async def list_contexts(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
@@ -402,7 +479,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         slug: str,
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
         agent: Annotated[str, Depends(agent_name)],
-        principal: Annotated[Principal, Depends(require_scope("admin"))],
+        principal: Annotated[Principal, Depends(require_admin())],
         force: bool = False,
     ):
         """Hard-deletes a context. 409 if it still has memories (of any status),
@@ -738,6 +815,135 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         return DisambiguationResolveOut(**result)
 
+    @app.get("/memories", response_model=MemoryListResponse)
+    async def list_memories(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        context: str | None = None,
+        type: str | None = None,  # noqa: A002
+        status_: Annotated[Literal["active", "superseded", "archived", "all"], Query(alias="status")] = "active",
+        sort: Literal["created_at", "updated_at", "importance", "title", "type", "context"] = "created_at",
+        order: Literal["asc", "desc"] = "desc",
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ):
+        """Paginated browse of memories (no semantic ranking -- that is `/memories/search`),
+        newest first by default. Filters: `context` (slug), `type`, `status` (default
+        `active`; `all` for every status). Honors the token's context scope (a restricted
+        token asking for an out-of-scope `context` gets 403) and the ownership gate."""
+        if context is not None and not principal.context_allowed(context):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"token '{principal.name}' is not allowed to see context '{context}'",
+            )
+        params: list[Any] = []
+        filters: list[str] = []
+        if context is not None:
+            params.append(context)
+            filters.append(f"c.slug = ${len(params)}")
+        elif principal.allowed_contexts is not None:
+            params.append(list(principal.allowed_contexts))
+            filters.append(f"c.slug = ANY(${len(params)}::text[])")
+        if type is not None:
+            params.append(type)
+            filters.append(f"m.type = ${len(params)}")
+        if status_ != "all":
+            params.append(status_)
+            filters.append(f"m.status = ${len(params)}")
+        if principal.owner_filter is not None:
+            if "user_id" in principal.owner_filter:
+                params.append(principal.owner_filter["user_id"])
+                filters.append(f"m.owner_user_id = ${len(params)}")
+            elif "user_id_in" in principal.owner_filter:
+                params.append(list(principal.owner_filter["user_id_in"]))
+                filters.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        total = await pool.fetchval(
+            f"SELECT count(*) FROM memories m JOIN contexts c ON c.id = m.context_id {where}", *params
+        )
+        # `sort`/`order` are Literal-validated above (never user text): map to a fixed column
+        sort_column = "c.slug" if sort == "context" else f"m.{sort}"
+        rows = await pool.fetch(
+            f"""
+            SELECT m.id, c.slug AS context, m.type, m.title, m.content, m.importance, m.confidence,
+                   m.source, m.status, m.superseded_by, m.occurred_at, m.created_at, m.updated_at
+            FROM memories m JOIN contexts c ON c.id = m.context_id
+            {where}
+            ORDER BY {sort_column} {order.upper()}, m.id
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,
+            *params,
+            limit,
+            offset,
+        )
+        return MemoryListResponse(items=[row_to_memory_out(r) for r in rows], total=total)
+
+    @app.get("/memories/{memory_id}", response_model=MemoryOut)
+    async def get_memory(
+        memory_id: UUID,
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+    ):
+        """One memory by id, with the same context-scope and ownership checks as
+        `/memories/{id}/related`."""
+        if principal.allowed_contexts is not None:
+            require_context_allowed(principal, await context_slug_of_memory(pool, memory_id), memory_id=memory_id)
+        if principal.owner_filter is not None:
+            owner_user_id = await owner_user_id_of_memory(pool, memory_id)
+            if owner_user_id is not False:
+                require_owner_allowed(principal, owner_user_id, memory_id=memory_id)
+        row = await pool.fetchrow(
+            """
+            SELECT m.id, c.slug AS context, m.type, m.title, m.content, m.importance, m.confidence,
+                   m.source, m.status, m.superseded_by, m.occurred_at, m.created_at, m.updated_at
+            FROM memories m JOIN contexts c ON c.id = m.context_id WHERE m.id = $1
+            """,
+            memory_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"memory '{memory_id}' not found")
+        return row_to_memory_out(row)
+
+    @app.get("/logs", response_model=AuditLogOut)
+    async def get_logs(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_admin())],
+        limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+        before: Annotated[int | None, Query(ge=1)] = None,
+        agent: str | None = None,
+        action: str | None = None,
+    ):
+        """Portal-only (no client/MCP/CLI mirror): the `audit_log` (which agent did what), newest
+        first, keyset-paginated by id. Admin only: search queries are in there."""
+        import json
+
+        filters: list[str] = []
+        params: list[Any] = []
+        for col, val in (("agent", agent), ("action", action)):
+            if val:
+                params.append(val)
+                filters.append(f"{col} = ${len(params)}")
+        if before is not None:
+            params.append(before)
+            filters.append(f"id < ${len(params)}")
+        params.append(limit + 1)
+        rows = await pool.fetch(
+            f"""
+            SELECT id, created_at, agent, action, memory_id, detail FROM audit_log
+            {"WHERE " + " AND ".join(filters) if filters else ""}
+            ORDER BY id DESC LIMIT ${len(params)}
+            """,
+            *params,
+        )
+        more = len(rows) > limit
+        items = []
+        for r in rows[:limit]:
+            d = dict(r)
+            if isinstance(d["detail"], str):
+                d["detail"] = json.loads(d["detail"])
+            items.append(d)
+        return {"items": items, "next": str(items[-1]["id"]) if more and items else None}
+
     @app.get("/stats", response_model=StatsOut)
     async def get_stats(
         pool: Annotated[asyncpg.Pool, Depends(get_pool)],
@@ -830,12 +1036,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         agent: Annotated[str, Depends(agent_name)],
         principal: Annotated[Principal, Depends(require_scope("write"))],
     ):
-        leak = find_credential_leak(body.content)
-        if leak is not None:
+        changes = body.model_dump(exclude_unset=True)
+        if not changes or any(
+            changes.get(k) is None for k in ("content", "title", "type", "importance", "confidence") if k in changes
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=credential_rejection_message(leak),
+                detail="provide at least one of content, title, type, importance, confidence, occurred_at",
             )
+        for text in (body.content, body.title):
+            leak = find_credential_leak(text) if text else None
+            if leak is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=credential_rejection_message(leak),
+                )
 
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -856,6 +1071,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         )
                 require_owner_allowed(principal, old["owner_user_id"], memory_id=memory_id)
 
+                if body.content is None or body.content == old["content"]:
+                    # Metadata-only edit: same knowledge, so no new version (an importance
+                    # tweak must not fill the history with superseded rows).
+                    meta = {k: v for k, v in changes.items() if k != "content"}
+                    if not meta:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="nothing to change: content is identical",
+                        )
+                    # Column names come from the model's own fields, never from the request.
+                    sets = ", ".join(f"{col} = ${i}" for i, col in enumerate(meta, start=2))
+                    updated = await conn.fetchrow(
+                        f"""
+                        WITH upd AS (
+                            UPDATE memories SET {sets}, updated_at = now() WHERE id = $1
+                            RETURNING id, context_id, type, title, content, importance, confidence, source,
+                                      status, superseded_by, occurred_at, created_at, updated_at
+                        )
+                        SELECT upd.*, c.slug AS context FROM upd JOIN contexts c ON c.id = upd.context_id
+                        """,
+                        memory_id,
+                        *meta.values(),
+                    )
+                    await log_audit(
+                        pool,
+                        agent=agent,
+                        action="update",
+                        memory_id=memory_id,
+                        detail={"fields": sorted(meta)},
+                    )
+                    return row_to_memory_out(updated)
+
                 embedding = await provider.embed_passage(body.content)
 
                 # owner_user_id carries over to the superseding row - an update() is
@@ -871,13 +1118,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     SELECT ins.*, c.slug AS context FROM ins JOIN contexts c ON c.id = ins.context_id
                     """,
                     old["context_id"],
-                    old["type"],
-                    old["title"],
+                    changes.get("type", old["type"]),
+                    changes.get("title", old["title"]),
                     body.content,
-                    old["importance"],
-                    old["confidence"],
+                    changes.get("importance", old["importance"]),
+                    changes.get("confidence", old["confidence"]),
                     old["source"],
-                    old["occurred_at"],
+                    changes["occurred_at"] if "occurred_at" in changes else old["occurred_at"],
                     _vector_literal(embedding),
                     old["owner_user_id"],
                 )
@@ -1139,6 +1386,77 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
 
         return TimelineResponse(items=[row_to_memory_out(r) for r in rows])
+
+    @app.get("/activity", response_model=ActivityResponse)
+    async def activity(
+        pool: Annotated[asyncpg.Pool, Depends(get_pool)],
+        principal: Annotated[Principal, Depends(require_scope("read"))],
+        days: Annotated[int, Query(ge=1, le=730)] = 365,
+        year: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    ):
+        """Per-day counts of memories created and of memories edited on a later day
+        (`updated_at` on a different UTC day than `created_at`), for the last `days`
+        days or for the calendar `year`, plus the years that have any visible
+        activity. Days with no activity are omitted. Honors the token's context scope
+        and the ownership gate, like `/timeline`."""
+        # `year` (calendar year, UTC) overrides the rolling `days` window.
+        if year is not None:
+            start, end = datetime(year, 1, 1, tzinfo=timezone.utc), datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime.now(timezone.utc) + timedelta(days=1)
+            start = end - timedelta(days=days + 1)
+
+        def scope(params: list[Any]) -> str:
+            extra: list[str] = []
+            if principal.allowed_contexts is not None:
+                params.append(list(principal.allowed_contexts))
+                extra.append(f"c.slug = ANY(${len(params)}::text[])")
+            if principal.owner_filter is not None:
+                if "user_id" in principal.owner_filter:
+                    params.append(principal.owner_filter["user_id"])
+                    extra.append(f"m.owner_user_id = ${len(params)}")
+                elif "user_id_in" in principal.owner_filter:
+                    params.append(list(principal.owner_filter["user_id_in"]))
+                    extra.append(f"m.owner_user_id = ANY(${len(params)}::uuid[])")
+            return "".join(f" AND {e}" for e in extra)
+
+        params: list[Any] = [start, end]
+        extra = scope(params)
+        rows = await pool.fetch(
+            f"""
+            WITH ev AS (
+                SELECT (m.created_at AT TIME ZONE 'UTC')::date AS d, 1 AS created, 0 AS updated
+                FROM memories m JOIN contexts c ON c.id = m.context_id
+                WHERE m.created_at >= $1 AND m.created_at < $2{extra}
+                UNION ALL
+                SELECT (m.updated_at AT TIME ZONE 'UTC')::date, 0, 1
+                FROM memories m JOIN contexts c ON c.id = m.context_id
+                WHERE m.updated_at >= $1 AND m.updated_at < $2{extra}
+                  AND (m.updated_at AT TIME ZONE 'UTC')::date <> (m.created_at AT TIME ZONE 'UTC')::date
+            )
+            SELECT d, sum(created)::int AS created, sum(updated)::int AS updated
+            FROM ev GROUP BY d ORDER BY d
+            """,
+            *params,
+        )
+        year_params: list[Any] = []
+        year_extra = scope(year_params)
+        year_rows = await pool.fetch(
+            f"""
+            SELECT DISTINCT y FROM (
+                SELECT extract(year FROM m.created_at AT TIME ZONE 'UTC')::int AS y
+                FROM memories m JOIN contexts c ON c.id = m.context_id WHERE true{year_extra}
+                UNION
+                SELECT extract(year FROM m.updated_at AT TIME ZONE 'UTC')::int
+                FROM memories m JOIN contexts c ON c.id = m.context_id WHERE true{year_extra}
+            ) t ORDER BY y DESC
+            """,
+            *year_params,
+        )
+        return ActivityResponse(
+            days=[ActivityDay(date=r["d"].isoformat(), created=r["created"], updated=r["updated"]) for r in rows],
+            years=[r["y"] for r in year_rows],
+        )
 
     return app
 

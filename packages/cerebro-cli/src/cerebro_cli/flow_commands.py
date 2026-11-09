@@ -119,6 +119,19 @@ def cmd_get(args: argparse.Namespace, *, client: FlowsClient | None = None) -> N
     print(flow["yaml_content"])
 
 
+def cmd_diagram(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
+    client = client or _client()
+    try:
+        out = client.get_flow_diagram(args.code, version=args.version)
+    except CerebroConnectionError as exc:
+        print(f"Could not connect to cerebro-flows: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except CerebroAPIError as exc:
+        print(f"The API returned {exc.status_code}: {exc.detail}", file=sys.stderr)
+        sys.exit(1)
+    print(out["diagram"], end="")
+
+
 def cmd_list(args: argparse.Namespace, *, client: FlowsClient | None = None) -> None:
     client = client or _client()
     try:

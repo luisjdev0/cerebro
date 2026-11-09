@@ -41,6 +41,7 @@ from cerebro_auth.auth import (
 )
 from cerebro_auth.config import Settings, get_settings
 from cerebro_auth.db import apply_migrations, check_health, create_pool
+from cerebro_auth.oauth import build_router as build_oauth_router
 from cerebro_auth.passwords import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -48,6 +49,7 @@ from cerebro_auth.passwords import (
     InvalidCredentialsError,
     UserNotFoundError,
     check_user_password,
+    is_master_name,
     hash_password,
     password_login,
     revoke_session,
@@ -85,6 +87,16 @@ class UserOut(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     has_password: bool = False
+    groups: list[str] = []
+
+
+class UserUpdate(StrictIn):
+    """The name is the user's identity (tokens, audit trail) and never changes. `active=false`
+    deactivates the account (every token it owns stops working); `true` reactivates it."""
+
+    email: str | None = None  # an empty string clears it
+    access_level: Literal["user", "owner", "admin"] | None = None
+    active: bool | None = None
 
 
 class GroupCreate(StrictIn):
@@ -97,6 +109,16 @@ class GroupOut(BaseModel):
     slug: str
     name: str
     created_at: datetime
+
+
+class GroupUpdate(StrictIn):
+    name: str = Field(min_length=1)
+
+
+class GroupDetailOut(GroupOut):
+    members: list[str]
+    allowed_modules: list[str] | None
+    module_scopes: dict[str, Any]
 
 
 class GroupScopesIn(StrictIn):
@@ -135,6 +157,11 @@ class TokenOut(BaseModel):
     created_at: datetime
     revoked_at: datetime | None
     expires_at: datetime | None = None
+    disabled_at: datetime | None = None
+
+
+class TokenToggle(StrictIn):
+    active: bool
 
 
 class TokenCreateOut(TokenOut):
@@ -210,6 +237,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unreachable")
         return {"status": "ok"}
 
+    # ---------------------------------------------------------------- OAuth (MCP connectors)
+
+    app.include_router(build_oauth_router(get_pool, settings))
+
     # ---------------------------------------------------------------- login
 
     @app.post("/login", response_model=LoginOut)
@@ -269,6 +300,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_admin)],
     )
     async def create_user(body: UserCreate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        if is_master_name(settings, body.name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"'{body.name}' is the master user defined in the server environment",
+            )
         try:
             row = await pool.fetchrow(
                 """
@@ -292,10 +328,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/users", response_model=list[UserOut], dependencies=[Depends(require_admin)])
     async def list_users(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         rows = await pool.fetch(
-            "SELECT id, name, email, access_level, created_at, revoked_at, "
-            "(password_hash IS NOT NULL) AS has_password FROM users ORDER BY created_at"
+            """
+            SELECT u.id, u.name, u.email, u.access_level, u.created_at, u.revoked_at,
+                   (u.password_hash IS NOT NULL) AS has_password,
+                   COALESCE((SELECT array_agg(g.slug ORDER BY g.slug) FROM user_groups ug
+                             JOIN groups g ON g.id = ug.group_id WHERE ug.user_id = u.id), '{}') AS groups
+            FROM users u ORDER BY u.created_at
+            """
         )
         return [dict(r) for r in rows]
+
+    @app.patch("/users/{name}", response_model=UserOut, dependencies=[Depends(require_admin)])
+    async def update_user(name: str, body: UserUpdate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Portal-only (no client/MCP/CLI mirror). Refuses to leave the system without an
+        active admin: demoting or deactivating the last one is a 409."""
+        if body.email is None and body.access_level is None and body.active is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="nothing to update")
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                user = await conn.fetchrow(
+                    "SELECT id, access_level, revoked_at FROM users WHERE name = $1 FOR UPDATE", name
+                )
+                if user is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no user named '{name}'")
+                is_active_admin = user["access_level"] == "admin" and user["revoked_at"] is None
+                stays_active_admin = (
+                    (body.access_level or user["access_level"]) == "admin"
+                    and (body.active if body.active is not None else user["revoked_at"] is None)
+                )
+                if is_active_admin and not stays_active_admin:
+                    others = await conn.fetchval(
+                        "SELECT count(*) FROM users WHERE access_level = 'admin' AND revoked_at IS NULL AND id <> $1",
+                        user["id"],
+                    )
+                    if others == 0:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="this is the last active admin - promote another user first",
+                        )
+                sets: list[str] = []
+                params: list[Any] = []
+                if body.email is not None:
+                    params.append(body.email.strip() or None)
+                    sets.append(f"email = ${len(params)}")
+                if body.access_level is not None:
+                    params.append(body.access_level)
+                    sets.append(f"access_level = ${len(params)}")
+                if body.active is not None:
+                    sets.append("revoked_at = NULL" if body.active else "revoked_at = COALESCE(revoked_at, now())")
+                params.append(user["id"])
+                await conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ${len(params)}", *params)
+                row = await conn.fetchrow(
+                    """
+                    SELECT u.id, u.name, u.email, u.access_level, u.created_at, u.revoked_at,
+                           (u.password_hash IS NOT NULL) AS has_password,
+                           COALESCE((SELECT array_agg(g.slug ORDER BY g.slug) FROM user_groups ug
+                                     JOIN groups g ON g.id = ug.group_id WHERE ug.user_id = u.id), '{}') AS groups
+                    FROM users u WHERE u.id = $1
+                    """,
+                    user["id"],
+                )
+        return dict(row)
 
     @app.post("/users/{name}/password", status_code=status.HTTP_204_NO_CONTENT)
     async def set_password(
@@ -361,6 +454,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if group is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no group with slug '{slug}'")
         return group["id"]
+
+    @app.get("/groups", response_model=list[GroupDetailOut], dependencies=[Depends(require_admin)])
+    async def list_groups(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Portal-only: every group with its members and the modules/scopes it grants."""
+        rows = await pool.fetch(
+            """
+            SELECT g.id, g.slug, g.name, g.created_at, gs.allowed_modules, gs.module_scopes,
+                   COALESCE((SELECT array_agg(u.name ORDER BY u.name) FROM user_groups ug
+                             JOIN users u ON u.id = ug.user_id WHERE ug.group_id = g.id), '{}') AS members
+            FROM groups g LEFT JOIN group_scopes gs ON gs.group_id = g.id
+            ORDER BY g.created_at
+            """
+        )
+        out = []
+        for r in rows:
+            d = dict(r)
+            ms = d["module_scopes"]
+            d["module_scopes"] = (json.loads(ms) if isinstance(ms, str) else ms) or {}
+            out.append(d)
+        return out
+
+    @app.patch("/groups/{slug}", response_model=GroupOut, dependencies=[Depends(require_admin)])
+    async def update_group(slug: str, body: GroupUpdate, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        row = await pool.fetchrow(
+            "UPDATE groups SET name = $1 WHERE slug = $2 RETURNING id, slug, name, created_at", body.name, slug
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no group with slug '{slug}'")
+        return dict(row)
+
+    @app.delete("/groups/{slug}", dependencies=[Depends(require_admin)])
+    async def delete_group(slug: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Memberships and the group's scopes go with it (FK cascade); the users stay."""
+        deleted = await pool.fetchval("DELETE FROM groups WHERE slug = $1 RETURNING id", slug)
+        if deleted is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"no group with slug '{slug}'")
+        return {"slug": slug, "status": "deleted"}
+
+    @app.delete("/groups/{slug}/members/{user}", dependencies=[Depends(require_admin)])
+    async def remove_group_member(slug: str, user: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        group_id = await _get_group_id(pool, slug)
+        removed = await pool.fetchval(
+            "DELETE FROM user_groups WHERE group_id = $1 AND user_id = (SELECT id FROM users WHERE name = $2) "
+            "RETURNING user_id",
+            group_id,
+            user,
+        )
+        if removed is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"'{user}' is not a member of '{slug}'")
+        return {"group": slug, "user": user, "status": "removed"}
 
     @app.post(
         "/groups/{slug}/scopes",
@@ -482,6 +625,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tokens", response_model=list[TokenOut], dependencies=[Depends(require_admin)])
     async def list_tokens(pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
         return await list_api_tokens(pool)
+
+    @app.patch("/tokens/{token_id}", response_model=TokenOut, dependencies=[Depends(require_admin)])
+    async def set_token_active(token_id: UUID, body: TokenToggle, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):
+        """Portal-only (no client/MCP/CLI mirror): switch a token off (`disabled_at = now()`) or back
+        on (`disabled_at = NULL`); the secret never changes. Different from revoking, which is
+        permanent: a revoked token cannot be switched (409)."""
+        row = await pool.fetchrow(
+            f"""
+            UPDATE api_tokens SET disabled_at = {"NULL" if body.active else "COALESCE(disabled_at, now())"}
+            WHERE id = $1 AND revoked_at IS NULL
+            RETURNING id, name, user_id, scopes, access_level, allowed_modules, module_scopes,
+                      created_at, revoked_at, expires_at, disabled_at
+            """,
+            token_id,
+        )
+        if row is None:
+            exists = await pool.fetchval("SELECT 1 FROM api_tokens WHERE id = $1", token_id)
+            if exists:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="this token is revoked for good and cannot be switched")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such token")
+        data = dict(row)
+        ms = data["module_scopes"]
+        data["module_scopes"] = (json.loads(ms) if isinstance(ms, str) else ms) or {}
+        return data
 
     @app.delete("/tokens/{name}", response_model=TokenOut, dependencies=[Depends(require_admin)])
     async def revoke_token(name: str, pool: Annotated[asyncpg.Pool, Depends(get_pool)]):

@@ -90,8 +90,30 @@ class MemoryClient(BaseClient):
             body["source"] = source
         return self._request("POST", "/memories", json=body).json()
 
-    def update_memory(self, memory_id: str, content: str) -> dict[str, Any]:
-        return self._request("PATCH", f"/memories/{memory_id}", json={"content": content}).json()
+    def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        *,
+        title: str | None = None,
+        type: str | None = None,
+        importance: float | None = None,
+        confidence: float | None = None,
+        occurred_at: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "content": content,
+                "title": title,
+                "type": type,
+                "importance": importance,
+                "confidence": confidence,
+                "occurred_at": occurred_at,
+            }.items()
+            if v is not None
+        }
+        return self._request("PATCH", f"/memories/{memory_id}", json=body).json()
 
     def delete_memory(self, memory_id: str, *, hard: bool = False) -> dict[str, Any]:
         return self._request("DELETE", f"/memories/{memory_id}", params={"hard": hard}).json()
@@ -156,6 +178,12 @@ class MemoryClient(BaseClient):
         if description is not None:
             body["description"] = description
         return self._request("POST", "/contexts", json=body).json()
+
+    def update_context(
+        self, slug: str, *, name: str | None = None, kind: str | None = None, description: str | None = None
+    ) -> dict[str, Any]:
+        body = {k: v for k, v in {"name": name, "kind": kind, "description": description}.items() if v is not None}
+        return self._request("PATCH", f"/contexts/{slug}", json=body).json()
 
     def delete_context(self, slug: str, *, force: bool = False) -> dict[str, Any]:
         return self._request("DELETE", f"/contexts/{slug}", params={"force": force}).json()
