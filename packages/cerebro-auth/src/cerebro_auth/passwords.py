@@ -172,17 +172,21 @@ def _check_master_password(settings: Settings, name: str, password: str) -> None
     _master_failures.pop(name, None)
 
 
-async def password_login(
+async def authenticate_password(
     pool: asyncpg.Pool, settings: Settings, name: str, password: str
-) -> dict[str, Any]:
-    """Authenticate with username + password and mint a session token."""
-    master = is_master_name(settings, name)
-    if master:
+) -> tuple[Any, bool]:
+    """Check username + password (lockout rules included) without minting anything.
+    Returns `(user_row, is_master)`; the master has no database row."""
+    if is_master_name(settings, name):
         _check_master_password(settings, name, password)
-        row = {"id": None, "name": name, "access_level": "admin"}
-    else:
-        row = await check_user_password(pool, settings, name, password)
+        return {"id": None, "name": name, "access_level": "admin"}, True
+    return await check_user_password(pool, settings, name, password), False
 
+
+async def mint_session(
+    pool: asyncpg.Pool, settings: Settings, row: Any, master: bool
+) -> dict[str, Any]:
+    """Mint a session token for an already authenticated user (see `authenticate_password`)."""
     # Opportunistic housekeeping: drop sessions that expired more than a week ago.
     await pool.execute(
         "DELETE FROM api_tokens WHERE expires_at IS NOT NULL AND expires_at < now() - interval '7 days'"
@@ -210,6 +214,14 @@ async def password_login(
         "token": created["token"],
         "expires_at": expires_at,
     }
+
+
+async def password_login(
+    pool: asyncpg.Pool, settings: Settings, name: str, password: str
+) -> dict[str, Any]:
+    """Authenticate with username + password and mint a session token."""
+    row, master = await authenticate_password(pool, settings, name, password)
+    return await mint_session(pool, settings, row, master)
 
 
 async def set_user_password(pool: asyncpg.Pool, name: str, new_password: str) -> None:

@@ -165,7 +165,14 @@ In that case there's no need to run the `gateway` container at all.
 The gateway also serves the **API documentation at `/api/`** (Swagger UI) and the **MCP server
 at `/mcp`** (streamable HTTP, token on every request) through that same single block, and keeps
 the old unprefixed `/memory`, `/docs`, `/flows`, `/auth` as aliases of `/api/<service>`. Nothing
-to add in your Caddy. If you deploy a version with `/api` over an old server, upgrade the server
+to add in your Caddy.
+
+**Connectors that sign in (claude.ai, Claude Desktop).** Adding `https://your-domain/mcp` as a
+custom connector opens the cerebro sign-in page, so the discovery documents and the 401 of `/mcp`
+must name your public address: set `CEREBRO_PUBLIC_URL=https://your-domain` in `.env` (no trailing
+slash) and recreate `cerebro-auth-api` and `cerebro-mcp`. Claude requires HTTPS and a certificate
+it trusts, and its servers (egress `160.79.104.0/21`) must be able to reach `/mcp`, `/.well-known/*`
+and `/api/auth/oauth/*`. After the upgrade `cerebro-auth` applies migration `004_oauth.sql` by itself. If you deploy a version with `/api` over an old server, upgrade the server
 first: the CLI saved by `cerebro login` now derives `https://host/api/<service>`.
 
 ## 6. Update an existing VPS to this version (monorepo + schemas)

@@ -836,11 +836,20 @@ export both variables explicitly so they point to the same side -- see
 
 Besides the stdio server below (one process per person, token in the environment), the gateway
 serves the same tools over **streamable HTTP at `/mcp`** (the `cerebro-mcp` container, `full`
-profile). It is stateless and takes the token **on every request**, as
-`Authorization: Bearer <token>`; it forwards that token to the APIs, so the assistant can do
-exactly what the token allows, and a request without one gets `401`. Nothing is configured on the
-server for it: no token or secret lives in that container. The API reference and a connection
-example are also on the `/api/` page of your instance.
+profile). It is stateless and every request carries a token, which it forwards to the APIs, so the
+assistant can do exactly what the token allows. No secret lives in that container. There are two
+ways to get that token there:
+
+- **Sign in through the connection (claude.ai, Claude Desktop, any client that cannot set
+  headers).** Add a custom connector with the URL `https://your-domain/mcp` and nothing else. The
+  client discovers the OAuth sign-in from the `401` of `/mcp`, opens the cerebro sign-in page and,
+  once you confirm, registers the token itself. If you already have the portal open in that
+  browser the page shows your user with a **Confirm connection** button; otherwise it asks for
+  username and password (the same as the portal, master user included). The access token is a
+  normal 12-hour session; the client renews it with a refresh token (90 days, rotated on every use).
+  Disabling the user ends the connection at the next renewal; revoking or logging out the session
+  ends it at once. Set `CEREBRO_PUBLIC_URL` in `.env` to the public address (see DEPLOY).
+- **A token in a header (Claude Code, scripts).** `Authorization: Bearer <token>` on every request:
 
 ```bash
 # Claude Code
@@ -848,9 +857,7 @@ claude mcp add --transport http cerebro https://your-domain/mcp \
   --header "Authorization: Bearer $CEREBRO_TOKEN"
 ```
 
-Any MCP client that supports streamable HTTP with custom headers connects the same way. Use the
-stdio server instead when the client cannot send headers, or when you work against APIs that are
-not behind the gateway.
+Use the stdio server instead when you work against APIs that are not behind the gateway.
 
 ### Claude Code
 

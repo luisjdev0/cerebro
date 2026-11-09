@@ -19,7 +19,7 @@ Modules (each an independent Python package under `packages/`):
 | `cerebro-flows` | Step-by-step workflow execution engine ("traffic light"), Redis + Postgres | 8000 |
 | `cerebro-auth` | Owns the shared `cerebro_auth` schema (users, groups, tokens); memory/docs/flows validate every request against it directly | 8000 |
 | `cerebro-clients` | Shared thin httpx SDK (`MemoryClient`/`DocsClient`/`FlowsClient`/`AuthClient`) — no business logic | — |
-| `cerebro-mcp` | Single MCP server (`FastMCP`; stdio, and streamable HTTP at the gateway's `/mcp` with the token on every request) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
+| `cerebro-mcp` | Single MCP server (`FastMCP`; stdio, and streamable HTTP at the gateway's `/mcp`: OAuth sign-in for connectors or a token header) exposing `memory_*`/`docs_*`/`flow_*`/`auth_*` as tools | — |
 | `cerebro-cli` | CLI (`cerebro <module> <subcommand>`) on top of `cerebro-clients`; interactive layer (`rich` + `questionary`) that walks the argparse tree | — |
 | `cerebro-portal` | Web portal (React + Vite + TS + Tailwind, Ixchel components); static SPA served by nginx behind the gateway, talks to the same APIs and session tokens | 80 (internal, via the gateway) |
 
@@ -152,6 +152,16 @@ restarting `cerebro-auth`.
 `module_scopes`/similar column read if it comes back as `str` (no codec is
 registered anywhere in this monorepo); a real bug from skipping this shipped in two
 services before being caught in live testing.
+
+## OAuth for MCP connectors
+
+`/mcp` must work for clients that cannot send a header (claude.ai, Claude Desktop): adding the
+connector opens a sign-in page and registers the token. `cerebro-auth` (`oauth.py`, migration
+`004_oauth.sql`) is the OAuth 2.1 authorization server (code + PKCE S256, DCR restricted by
+`OAUTH_REDIRECT_ALLOWLIST`); the access token is a normal session token, so no other service
+changes. Discovery lives at the gateway root (`/.well-known/oauth-*`), the 401 of `/mcp` points
+to it, and `cerebro-mcp` turns an expired token into an HTTP 401 so connectors refresh. Header
+bearer tokens keep working for Claude Code and scripts. The external URL is `CEREBRO_PUBLIC_URL`.
 
 ## Conventions
 

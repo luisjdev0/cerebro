@@ -109,11 +109,20 @@ it something only cerebro would know ("what did we decide about the
 database?") to confirm the connection works.
 
 **Remote, no install (HTTP).** If your instance runs behind the gateway, it also serves the
-tools at `https://your-cerebro-host/mcp`. Connect any MCP client that supports streamable HTTP
-and custom headers, sending your token in `Authorization: Bearer <token>`; for example, in
-Claude Code: `claude mcp add --transport http cerebro https://your-cerebro-host/mcp --header
-"Authorization: Bearer <token>"`. Without a token the server answers 401. The `/api/` page of your
-instance shows the same example, next to the full HTTP API reference.
+tools at `https://your-cerebro-host/mcp`. Two ways to connect:
+
+- **Sign in through the connection** (claude.ai, Claude Desktop, any client where you cannot set a
+  header): add a custom connector with just the URL `https://your-cerebro-host/mcp`. The client
+  opens the cerebro sign-in page; if you are already signed in to the portal in that browser it
+  shows your user and a **Confirm connection** button, otherwise it asks for username and password.
+  When you confirm, the client stores the token and renews it by itself (you sign in again only if
+  the connection is disabled or stays unused for 90 days).
+- **A token in a header** (Claude Code, scripts): send it as `Authorization: Bearer <token>`, for
+  example `claude mcp add --transport http cerebro https://your-cerebro-host/mcp --header
+  "Authorization: Bearer <token>"`.
+
+Without either the server answers 401. The `/api/` page of your instance shows the same examples,
+next to the full HTTP API reference.
 
 ### B. Through the `cerebro` CLI
 

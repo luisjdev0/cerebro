@@ -208,6 +208,7 @@ services:
     environment:
       DATABASE_URL: postgresql://knowledgeos:${POSTGRES_PASSWORD}@postgres:5432/knowledgeos
       APP_PORT: 8000
+      PUBLIC_URL: ${CEREBRO_PUBLIC_URL:-}
     ports:
       # Host-side port made configurable via CEREBRO_AUTH_HOST_PORT (default
       # 8008, next free after flows=8007) - same reason as POSTGRES_HOST_PORT
@@ -245,6 +246,7 @@ services:
       CEREBRO_DOCS_URL: http://cerebro-docs-api:8000
       CEREBRO_FLOWS_URL: http://cerebro-flows-api:8000
       CEREBRO_AUTH_URL: http://cerebro-auth-api:8000
+      CEREBRO_PUBLIC_URL: ${CEREBRO_PUBLIC_URL:-}
       CEREBRO_AGENT_NAME: cerebro-mcp-http
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]

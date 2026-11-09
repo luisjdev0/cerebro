@@ -54,7 +54,10 @@ def test_missing_token_is_401_before_any_mcp_processing(seen):
     client, calls = seen
     r = _rpc(client, "tools/list", None, token=None)
     assert r.status_code == 401
-    assert "Bearer" in r.headers["www-authenticate"]
+    challenge = r.headers["www-authenticate"]
+    assert "Bearer" in challenge
+    # Points the connector at the OAuth discovery document (that is what opens the sign-in page).
+    assert 'resource_metadata="http://testserver/.well-known/oauth-protected-resource/mcp"' in challenge
     assert calls == []
 
 
@@ -106,3 +109,40 @@ def test_a_rejected_token_is_reported_in_terms_of_the_connection_not_the_environ
     r = _rpc(client, "tools/call", {"name": "memory_search", "arguments": {"query": "x"}}, token="revoked")
     text = r.json()["result"]["content"][0]["text"]
     assert "Authorization header" in text and "CEREBRO_TOKEN" not in text
+
+
+def test_a_token_the_auth_service_rejects_is_an_http_401_so_connectors_refresh(seen, monkeypatch):
+    client, calls = seen
+    mcp_http._valid_until.clear()
+
+    class Rejecting(httpx.AsyncClient):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, transport=httpx.MockTransport(lambda req: httpx.Response(401, json={"detail": "x"})), **kw)
+
+    monkeypatch.setattr(mcp_http.httpx, "AsyncClient", Rejecting)
+    r = _rpc(client, "tools/list", None, token="expired-session")
+    assert r.status_code == 401
+    assert 'error="invalid_token"' in r.headers["www-authenticate"]
+    assert calls == []
+
+
+def test_an_unreachable_auth_service_does_not_block_the_request(seen, monkeypatch):
+    client, _ = seen
+    mcp_http._valid_until.clear()
+
+    class Down(httpx.AsyncClient):
+        def __init__(self, *a, **kw):
+            def boom(req):
+                raise httpx.ConnectError("down")
+
+            super().__init__(*a, transport=httpx.MockTransport(boom), **kw)
+
+    monkeypatch.setattr(mcp_http.httpx, "AsyncClient", Down)
+    assert _rpc(client, "tools/list", None, token="tok-x").status_code == 200
+
+
+def test_public_url_setting_wins_over_request_headers(seen, monkeypatch):
+    client, _ = seen
+    monkeypatch.setenv("CEREBRO_PUBLIC_URL", "https://cerebro.example.com/")
+    r = _rpc(client, "tools/list", None, token=None)
+    assert 'resource_metadata="https://cerebro.example.com/.well-known/oauth-protected-resource/mcp"' in r.headers["www-authenticate"]

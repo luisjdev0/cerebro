@@ -10,7 +10,8 @@
 # Public layout (Phase 1C):
 #   /api/memory|docs|flows|auth/*  the four APIs (the canonical prefix)
 #   /api/                          API documentation (Swagger UI, gateway/apidocs, vendored)
-#   /mcp                           the MCP server over streamable HTTP (token on every request)
+#   /mcp                           the MCP server over streamable HTTP (OAuth sign-in or a token header)
+#   /.well-known/oauth-*           OAuth discovery for MCP connectors (served by cerebro-auth)
 #   /memory|docs|flows|auth/*      the same four APIs, kept as ALIASES of /api/<service> so every
 #                                  existing deployment, script and saved CLI login keeps working
 #   anything else                  the web portal
@@ -62,6 +63,13 @@
 	handle_path /api/vendor/* {
 		root * /srv/apidocs/vendor
 		file_server
+	}
+
+	# OAuth discovery for MCP connectors (claude.ai, Claude Desktop). These documents must live at
+	# the root of the origin; cerebro-auth answers them (and serves the sign-in page under
+	# /api/auth/oauth/*).
+	handle /.well-known/oauth-* {
+		reverse_proxy cerebro-auth-api:8000
 	}
 
 	# MCP over streamable HTTP (cerebro-mcp container). Not stripped: the server itself

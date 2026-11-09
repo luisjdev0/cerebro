@@ -1024,11 +1024,35 @@ so the page works without internet access. The token lives only in `sessionStora
 **`/mcp`** is the `cerebro-mcp` container (`python -m cerebro_mcp.http`, image built from the repo
 root because it needs `cerebro-clients`): the same tools as the stdio server, over streamable HTTP,
 **stateless**. Every request must carry `Authorization: Bearer <token>`; the server answers 401
-itself when it is missing and otherwise forwards that token to the APIs on each call (a
+itself when it is missing (see "OAuth for connectors" below) and otherwise forwards that token to the APIs on each call (a
 `_ClientProxy` resolves the client for the request's token; the environment token is ignored in
 this mode), so the caller can do exactly what their token allows. State that used to be per process
 (the pending disambiguation of `memory_search`) is keyed by token. It talks to the APIs over the
 compose network (`CEREBRO_*_URL=http://cerebro-<x>-api:8000`) and holds no secret.
+
+**OAuth for connectors** (`cerebro-auth`, `oauth.py`, migration `004_oauth.sql`). A connector
+(claude.ai, Claude Desktop) cannot be given a header: adding it must open a sign-in page and
+register the token afterwards. `cerebro-auth` is therefore also a small OAuth 2.1 authorization
+server (authorization code + PKCE S256, public clients), reached through the gateway:
+
+| Piece | Where |
+|---|---|
+| Challenge | `401` from `/mcp` with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"` |
+| Discovery (RFC 9728 / 8414) | `/.well-known/oauth-protected-resource[/mcp]` and `/.well-known/oauth-authorization-server` (Caddy `handle /.well-known/oauth-*` -> `cerebro-auth`) |
+| Registration (RFC 7591) | `POST /api/auth/oauth/register`, only redirect URIs matching `OAUTH_REDIRECT_ALLOWLIST` (default: claude.ai/claude.com + loopback) |
+| Sign-in | `GET/POST /api/auth/oauth/authorize`: centred card in the portal's palette; a script reads the portal session from `localStorage` (same origin) and, when it is live, shows the user with **Confirm connection**, which posts that session token; otherwise username + password (same lockout as `/login/password`) |
+| Tokens | `POST /api/auth/oauth/token` (form-encoded): `authorization_code` (60 s, single use, PKCE) and `refresh_token` (90 days, rotated: the old one is deleted by the exchange) |
+
+The access token **is an ordinary session token** (`session:<user>:<hex>`, 12 h), so memory, docs,
+flows and auth validate it with no change and revoking/disabling it works as for any session.
+Codes and refresh tokens are stored hashed; a refresh re-checks that the user is still active (or
+that the master is still configured). "Confirm connection" accepts only live *session* tokens, so a
+service token cannot be turned into a login. `cerebro-mcp` additionally asks `POST /login` of
+`cerebro-auth` (cached 30 s) whether the bearer is still valid, because an expired token must be an
+HTTP `401` for the connector to use its refresh token; if the auth service is unreachable the
+request goes on and the APIs decide. The external address in the metadata is `CEREBRO_PUBLIC_URL`
+(passed to both services; `PUBLIC_URL` in `cerebro-auth`) or, when empty, the forwarded headers.
+The routes are `include_in_schema=False`, so Swagger and Postman do not list them.
 
 
 `handle_path` **strips the prefix** before forwarding: `/api/memory/contexts`

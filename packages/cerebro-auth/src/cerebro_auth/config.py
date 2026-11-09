@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     max_failed_attempts: int = 5
     lockout_minutes: int = 15
 
+    # OAuth for MCP connectors (claude.ai, Claude Desktop): the sign-in page that adding the
+    # connector opens. `public_url` is the externally visible base URL of the gateway (no
+    # trailing slash); when empty it is derived from the request's forwarded headers.
+    public_url: str = ""
+    oauth_refresh_days: int = 90
+    # Registered clients may only use redirect URIs starting with one of these prefixes
+    # (comma separated), so a stranger cannot register a client that receives the codes of
+    # people signing in. Loopback addresses (any port) are what CLI clients such as Claude Code use.
+    oauth_redirect_allowlist: str = (
+        "https://claude.ai/,https://claude.com/,http://localhost,http://127.0.0.1,http://[::1]"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

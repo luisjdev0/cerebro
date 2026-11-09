@@ -41,6 +41,7 @@ from cerebro_auth.auth import (
 )
 from cerebro_auth.config import Settings, get_settings
 from cerebro_auth.db import apply_migrations, check_health, create_pool
+from cerebro_auth.oauth import build_router as build_oauth_router
 from cerebro_auth.passwords import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
@@ -235,6 +236,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unreachable")
         return {"status": "ok"}
+
+    # ---------------------------------------------------------------- OAuth (MCP connectors)
+
+    app.include_router(build_oauth_router(get_pool, settings))
 
     # ---------------------------------------------------------------- login
 
