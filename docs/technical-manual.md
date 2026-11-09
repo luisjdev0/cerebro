@@ -989,30 +989,50 @@ Its only job is path-prefix routing to a single exposed port
 
 ```caddyfile
 :80 {
-	handle /health {
-		respond "cerebro gateway: ok" 200
-	}
+	handle /health { respond "cerebro gateway: ok" 200 }
 
-	handle_path /memory/* {
-		reverse_proxy cerebro-memory-api:8000
-	}
+	# canonical prefix: /api/<service>
+	handle_path /api/memory/* { reverse_proxy cerebro-memory-api:8000 }
+	handle_path /api/docs/*   { reverse_proxy cerebro-docs-api:8000 }
+	handle_path /api/flows/*  { reverse_proxy cerebro-flows-api:8000 }
+	handle_path /api/auth/*   { reverse_proxy cerebro-auth-api:8000 }
 
-	handle_path /docs/* {
-		reverse_proxy cerebro-docs-api:8000
-	}
+	handle /api  { redir /api/ 308 }
+	handle /api/ { root * /srv/apidocs; rewrite * /index.html; file_server }   # Swagger UI page
+	handle_path /api/vendor/* { root * /srv/apidocs/vendor; file_server }
 
-	handle_path /flows/* {
-		reverse_proxy cerebro-flows-api:8000
-	}
+	handle /mcp* { reverse_proxy cerebro-mcp:8000 { flush_interval -1 } }      # MCP over HTTP
 
-	handle {
-		respond "cerebro gateway: use /memory, /docs or /flows" 404
-	}
+	# legacy aliases (same backends, no /api): /memory /docs /flows /auth, and /install/*
+	# everything else: the web portal
 }
 ```
 
-`handle_path` **strips the prefix** before forwarding: `/memory/contexts`
-reaches `cerebro-memory-api` as `/contexts`; `/docs/categories` reaches
+(Abbreviated: `gateway/Caddyfile` is the source of truth.) Public layout: the four
+APIs live under **`/api/<service>`**; `/api/` is the API documentation; `/mcp` is the MCP
+server; the old `/<service>` prefixes remain **aliases** of the same backends so existing
+deployments, scripts and saved CLI logins keep working; everything else is the portal.
+
+**`/api/` documentation** (`gateway/apidocs/`): one static page with a short how-to (base URL,
+bearer token, a sign-in box that fetches a 12 h session token, the `curl` form) and one tab per
+service. Each tab fetches the service's own `/api/<service>/openapi.json`, rewrites `servers` to
+`/api/<service>` (behind the gateway the service is not at the root) and drops the per-operation
+`authorization` header parameter in favour of the token box, then renders it with Swagger UI. Swagger
+UI (`swagger-ui-dist` 5.17.14: CSS + bundle, Apache-2.0) is **vendored** in `gateway/apidocs/vendor/`
+so the page works without internet access. The token lives only in `sessionStorage` of that tab.
+
+**`/mcp`** is the `cerebro-mcp` container (`python -m cerebro_mcp.http`, image built from the repo
+root because it needs `cerebro-clients`): the same tools as the stdio server, over streamable HTTP,
+**stateless**. Every request must carry `Authorization: Bearer <token>`; the server answers 401
+itself when it is missing and otherwise forwards that token to the APIs on each call (a
+`_ClientProxy` resolves the client for the request's token; the environment token is ignored in
+this mode), so the caller can do exactly what their token allows. State that used to be per process
+(the pending disambiguation of `memory_search`) is keyed by token. It talks to the APIs over the
+compose network (`CEREBRO_*_URL=http://cerebro-<x>-api:8000`) and holds no secret.
+
+
+`handle_path` **strips the prefix** before forwarding: `/api/memory/contexts`
+(or the alias `/memory/contexts`) reaches `cerebro-memory-api` as `/contexts`; `/docs/categories` reaches
 `cerebro-docs-api` as `/categories`; `/flows/flows/INC-1` reaches
 `cerebro-flows-api` as `/flows/INC-1` — the repeated `flows` segment there is
 that API's own top-level resource (`GET /flows/{code}`), not a routing
@@ -1023,7 +1043,7 @@ own reverse proxy (a VPS, someone else's Caddy/nginx) needs one
 `reverse_proxy` block per internal service, and that number grows every time a
 new module is added. With the gateway, one block
 (`reverse_proxy 127.0.0.1:8080`) covers the whole ecosystem regardless of how
-many services it has — `CEREBRO_MEMORY_URL=https://your-domain/memory` (same
+many services it has — `CEREBRO_MEMORY_URL=https://your-domain/api/memory` (same
 pattern for `_DOCS_`/`_FLOWS_`) is then enough for `MemoryClient`/
 `DocsClient`/`FlowsClient` to work with **zero code changes**, since they
 already build final URLs by concatenating `base_url` + a relative path.

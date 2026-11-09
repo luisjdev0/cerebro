@@ -127,7 +127,7 @@ curl -s https://cerebro.luisjdev.com/docs/health
 curl -s https://cerebro.luisjdev.com/flows/health
 ```
 
-With this, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory` (same pattern for
+With this, `CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/api/memory` (same pattern for
 `_DOCS_`/`_FLOWS_`) — `MemoryClient`/`DocsClient`/`FlowsClient` need no code changes,
 since they already build the final URL by concatenating `base_url` + relative path.
 
@@ -161,6 +161,12 @@ In that case there's no need to run the `gateway` container at all.
 > the VPS and on your machines; the gateway becomes accessible only within your
 > tailnet via `http://<ip-tailscale>:8080` without exposing anything to the internet
 > (in that case bind the gateway port to the tailscale IP or use `tailscale serve`).
+
+The gateway also serves the **API documentation at `/api/`** (Swagger UI) and the **MCP server
+at `/mcp`** (streamable HTTP, token on every request) through that same single block, and keeps
+the old unprefixed `/memory`, `/docs`, `/flows`, `/auth` as aliases of `/api/<service>`. Nothing
+to add in your Caddy. If you deploy a version with `/api` over an old server, upgrade the server
+first: the CLI saved by `cerebro login` now derives `https://host/api/<service>`.
 
 ## 6. Update an existing VPS to this version (monorepo + schemas)
 
@@ -229,9 +235,9 @@ manages users and groups. The CLI commands below do the same.
 From your local machine (the CLI talks to the remote APIs):
 
 ```bash
-set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/memory
-set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/docs
-set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/flows
+set CEREBRO_MEMORY_URL=https://cerebro.luisjdev.com/api/memory
+set CEREBRO_DOCS_URL=https://cerebro.luisjdev.com/api/docs
+set CEREBRO_FLOWS_URL=https://cerebro.luisjdev.com/api/flows
 set CEREBRO_TOKEN=<your root token, the API_TOKEN from .env>
 
 # Token SCOPED to a single service (cerebro-memory):
@@ -268,9 +274,9 @@ services (`memory_*`, `docs_*`, `flow_*`, `auth_*`). In `claude_desktop_config.j
 "cerebro": {
   "command": "D:\\dev\\jobs\\luisjdev\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
   "env": {
-    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/memory",
-    "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/docs",
-    "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/flows",
+    "CEREBRO_MEMORY_URL": "https://cerebro.luisjdev.com/api/memory",
+    "CEREBRO_DOCS_URL": "https://cerebro.luisjdev.com/api/docs",
+    "CEREBRO_FLOWS_URL": "https://cerebro.luisjdev.com/api/flows",
     "CEREBRO_TOKEN": "<cross-service token for the agent, not the root one>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }

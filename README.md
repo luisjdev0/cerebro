@@ -114,14 +114,19 @@ Then open `http://localhost:8080/` for the web portal (see "Web portal" below). 
 #### Exposing it behind a single reverse proxy (`gateway`)
 
 The `gateway` service (Caddy, `gateway/Caddyfile`) routes by prefix to each internal
-API and exposes everything on a single port (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`): `/memory`
-→ `cerebro-memory-api`, `/docs` → `cerebro-docs-api`, `/flows` → `cerebro-flows-api`. The
+API and exposes everything on a single port (`CEREBRO_GATEWAY_HOST_PORT`, default `8080`):
+`/api/memory` → `cerebro-memory-api`, `/api/docs` → `cerebro-docs-api`, `/api/flows` →
+`cerebro-flows-api`, `/api/auth` → `cerebro-auth-api`. **`/api/` is the API documentation**
+(Swagger UI with a how-to and a token box, no internet needed), **`/mcp` is the MCP server over
+HTTP** (see "MCP over HTTP" below), and everything else is the web portal. The old prefixes
+without `/api` (`/memory`, `/docs`, `/flows`, `/auth`) remain as aliases, so nothing existing
+breaks. The
 idea is that if you're going to expose this behind your own Caddy/nginx (a VPS, whatever),
 that external reverse proxy only needs **one** block pointing at the gateway's port,
 instead of one block per service -- no matter how many modules the ecosystem has.
 It doesn't replace each API's direct ports (they're still there for local dev or
 direct access within the compose network); it's an additional, optional layer. With
-`CEREBRO_MEMORY_URL=https://your-domain/memory` (same pattern for `_DOCS_`/`_FLOWS_`),
+`CEREBRO_MEMORY_URL=https://your-domain/api/memory` (same pattern for `_DOCS_`/`_FLOWS_`),
 `MemoryClient`/`DocsClient`/`FlowsClient` need no code change at all -- they already
 build the final URL by concatenating `base_url` + relative path. See "HTTPS with Caddy" in
 `DEPLOY.md` for the full example with a real domain.
@@ -246,7 +251,7 @@ Develop it against a running gateway:
 ```bash
 cd packages/cerebro-portal
 pnpm install
-VITE_GATEWAY_URL=http://localhost:8080 pnpm dev   # proxies /memory /docs /flows /auth
+VITE_GATEWAY_URL=http://localhost:8080 pnpm dev   # proxies /api and /mcp
 pnpm typecheck && pnpm test && pnpm build          # what CI runs (the `portal` job)
 ```
 
@@ -819,6 +824,26 @@ Note on defaults: `CEREBRO_MEMORY_URL` defaults to assuming the Docker port
 port (`8010`, not `8006`). If you run both APIs in the same mode (A or B),
 export both variables explicitly so they point to the same side -- see
 "Quickstart" above for each mode's port pairs.
+
+### MCP over HTTP (`/mcp`)
+
+Besides the stdio server below (one process per person, token in the environment), the gateway
+serves the same tools over **streamable HTTP at `/mcp`** (the `cerebro-mcp` container, `full`
+profile). It is stateless and takes the token **on every request**, as
+`Authorization: Bearer <token>`; it forwards that token to the APIs, so the assistant can do
+exactly what the token allows, and a request without one gets `401`. Nothing is configured on the
+server for it: no token or secret lives in that container. The API reference and a connection
+example are also on the `/api/` page of your instance.
+
+```bash
+# Claude Code
+claude mcp add --transport http cerebro https://your-domain/mcp \
+  --header "Authorization: Bearer $CEREBRO_TOKEN"
+```
+
+Any MCP client that supports streamable HTTP with custom headers connects the same way. Use the
+stdio server instead when the client cannot send headers, or when you work against APIs that are
+not behind the gateway.
 
 ### Claude Code
 

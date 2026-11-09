@@ -91,9 +91,12 @@ pytest
 
 ## Internal gateway (`gateway/`)
 
-`gateway` service in `compose.yaml` (Caddy, `full` profile): routes `/memory`,
-`/docs`, `/flows` by prefix (`handle_path`) to each API, and exposes a single
-port (`CEREBRO_GATEWAY_HOST_PORT`). Meant so an external Caddy (a VPS or anyone
+`gateway` service in `compose.yaml` (Caddy, `full` profile): routes `/api/memory`,
+`/api/docs`, `/api/flows`, `/api/auth` by prefix (`handle_path`) to each API, serves the Swagger
+documentation at `/api/` (`gateway/apidocs`, vendored Swagger UI) and the MCP server at `/mcp`
+(`cerebro-mcp` container, token on every request), keeps the old unprefixed `/memory` etc. as
+aliases, and exposes a single port (`CEREBRO_GATEWAY_HOST_PORT`). Clients/CLI/portal use the
+`/api/<service>` form (`cerebro_clients.config`, the portal's `apiUrl`). Meant so an external Caddy (a VPS or anyone
 else's) only needs one `reverse_proxy` instead of one block per service. Any new
 module added to the ecosystem must add its own `handle_path` in
 `gateway/Caddyfile`, instead of forcing whoever deploys it to touch their own

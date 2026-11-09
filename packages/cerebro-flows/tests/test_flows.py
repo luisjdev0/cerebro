@@ -578,12 +578,12 @@ class TestPortalListings:
 class TestCategoryManagement:
     def test_patch_name_and_description_keeps_slug_and_code(self, client, auth_headers):
         cat = _make_category(client, auth_headers, code="CMG")
-        resp = client.patch(f"/categories/{cat}", json={"name": "Nuevo nombre", "description": "Descripción"}, headers=auth_headers)
+        resp = client.patch(f"/categories/{cat}", json={"name": "New name", "description": "Description"}, headers=auth_headers)
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert (body["slug"], body["code"], body["name"], body["description"]) == (cat, "CMG", "Nuevo nombre", "Descripción")
+        assert (body["slug"], body["code"], body["name"], body["description"]) == (cat, "CMG", "New name", "Description")
         cleared = client.patch(f"/categories/{cat}", json={"description": "  "}, headers=auth_headers).json()
-        assert cleared["description"] is None and cleared["name"] == "Nuevo nombre"
+        assert cleared["description"] is None and cleared["name"] == "New name"
 
     def test_patch_rejects_empty_unknown_fields_and_missing_category(self, client, auth_headers):
         cat = _make_category(client, auth_headers)

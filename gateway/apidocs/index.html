@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cerebro API</title>
+<link rel="stylesheet" href="/api/vendor/swagger-ui.css">
+<style>
+  :root { --fg:#0f172a; --muted:#475569; --bg:#f8fafc; --card:#fff; --line:#e2e8f0; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e2e8f0; --muted:#94a3b8; --bg:#0b1220; --card:#111a2e; --line:#243049; --accent:#60a5fa; } }
+  html { background: var(--bg); }
+  body { margin:0; font:15px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--fg); background:var(--bg); }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { margin:0 0 4px; font-size:28px; } h2 { margin:28px 0 8px; font-size:19px; }
+  p, li { color:var(--muted); } code, pre { font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
+  code { background:var(--card); border:1px solid var(--line); border-radius:5px; padding:1px 5px; color:var(--fg); }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; color:var(--fg); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  input { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  input.token { flex:1; min-width:240px; }
+  button { font:inherit; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .tabs { display:flex; gap:6px; margin:16px 0 8px; flex-wrap:wrap; }
+  .tabs button[aria-selected="true"] { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  #status { font-size:13px; color:var(--muted); min-height:20px; }
+  #swagger { background:#fff; border-radius:12px; padding:4px 0; }
+  .swagger-ui .topbar { display:none; }
+  .swagger-ui .info { margin:20px 0 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>cerebro API</h1>
+  <p>Four HTTP services behind one address. This page documents them; everything here runs against this instance.</p>
+
+  <h2>How to use it</h2>
+  <div class="card">
+    <ol>
+      <li><b>Base URL.</b> Every service lives under <code>/api/&lt;service&gt;</code>:
+        <code>/api/memory</code>, <code>/api/docs</code>, <code>/api/flows</code>, <code>/api/auth</code>.
+        The old prefixes without <code>/api</code> (<code>/memory</code>, …) still work as aliases.</li>
+      <li><b>Authenticate</b> with <code>Authorization: Bearer &lt;token&gt;</code> on every call. Get a token in the
+        portal (<i>API tokens</i>), with <code>cerebro token create</code>, or sign in below to get a 12-hour session token.</li>
+      <li><b>Try it.</b> Paste the token here, pick a service and use <i>Try it out</i> on any endpoint.</li>
+    </ol>
+    <div class="row" style="margin-top:12px">
+      <input id="token" class="token" type="password" placeholder="Bearer token (cbr…)" autocomplete="off" aria-label="Bearer token">
+      <button id="save" class="primary">Use token</button>
+      <button id="clear">Forget</button>
+    </div>
+    <details style="margin-top:12px"><summary>Or sign in with a username and password</summary>
+      <div class="row" style="margin-top:8px">
+        <input id="user" placeholder="username" autocomplete="username" aria-label="Username">
+        <input id="pass" type="password" placeholder="password" autocomplete="current-password" aria-label="Password">
+        <button id="login">Sign in</button>
+      </div>
+    </details>
+    <div id="status" role="status"></div>
+    <pre>curl -H "Authorization: Bearer $CEREBRO_TOKEN" "$HOST/api/memory/contexts"</pre>
+  </div>
+
+  <h2>MCP</h2>
+  <div class="card">
+    <p style="margin-top:0">The same tools the CLI and the stdio server expose are available over HTTP at
+      <code>/mcp</code> (streamable HTTP, stateless). Send your token in the <code>Authorization</code> header on
+      every request: the server forwards it to the APIs, so the assistant can do exactly what that token allows.
+      A request without a token is rejected with 401.</p>
+    <pre>claude mcp add --transport http cerebro "$HOST/mcp" --header "Authorization: Bearer $CEREBRO_TOKEN"</pre>
+    <p style="margin-bottom:0">Any MCP client that supports streamable HTTP with custom headers works the same way.</p>
+  </div>
+
+  <h2>Reference</h2>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div id="swagger"></div>
+</main>
+
+<script src="/api/vendor/swagger-ui-bundle.js"></script>
+<script>
+(function () {
+  var SERVICES = [
+    { id: 'memory', label: 'Memory' },
+    { id: 'docs', label: 'Documents' },
+    { id: 'flows', label: 'Flows' },
+    { id: 'auth', label: 'Auth' }
+  ];
+  var KEY = 'cerebro.apidocs.token';
+  var $ = function (id) { return document.getElementById(id); };
+  var token = '';
+  try { token = sessionStorage.getItem(KEY) || ''; } catch (e) {}
+  $('token').value = token;
+
+  function say(msg) { $('status').textContent = msg; }
+  function setToken(t) {
+    token = (t || '').trim();
+    try { token ? sessionStorage.setItem(KEY, token) : sessionStorage.removeItem(KEY); } catch (e) {}
+    $('token').value = token;
+    say(token ? 'Token set for "Try it out" (kept only in this tab).' : 'Token cleared.');
+  }
+  $('save').onclick = function () { setToken($('token').value); };
+  $('clear').onclick = function () { setToken(''); };
+  $('login').onclick = function () {
+    say('Signing in…');
+    fetch('/api/auth/login/password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('user').value, password: $('pass').value })
+    }).then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; });
+    }).then(function (r) {
+      $('pass').value = '';
+      if (!r.ok) return say(r.status === 429 ? 'Too many attempts, try again later.' : 'Invalid username or password.');
+      setToken(r.body.token);
+      say('Signed in as ' + r.body.name + '. Session token set (expires ' + r.body.expires_at + ').');
+    }).catch(function () { say('Could not reach the server.'); });
+  };
+
+  var current = null;
+  function show(id) {
+    current = id;
+    Array.prototype.forEach.call($('tabs').children, function (b) { b.setAttribute('aria-selected', String(b.dataset.id === id)); });
+    $('swagger').innerHTML = '<p style="padding:16px">Loading…</p>';
+    fetch('/api/' + id + '/openapi.json').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (spec) {
+      if (current !== id) return;
+      // Behind the gateway the service is reachable under /api/<id>, not at the root, and its
+      // `authorization` header is sent from the token box above instead of per operation.
+      spec.servers = [{ url: '/api/' + id }];
+      Object.keys(spec.paths || {}).forEach(function (p) {
+        Object.keys(spec.paths[p]).forEach(function (m) {
+          var op = spec.paths[p][m];
+          if (op && op.parameters) op.parameters = op.parameters.filter(function (x) {
+            return !(x['in'] === 'header' && String(x.name).toLowerCase() === 'authorization');
+          });
+        });
+      });
+      $('swagger').innerHTML = '';
+      window.SwaggerUIBundle({
+        spec: spec, dom_id: '#swagger', deepLinking: false, docExpansion: 'list',
+        defaultModelsExpandDepth: -1, tryItOutEnabled: false,
+        requestInterceptor: function (req) {
+          if (token) req.headers['Authorization'] = 'Bearer ' + token;
+          return req;
+        }
+      });
+    }).catch(function (e) {
+      $('swagger').innerHTML = '<p style="padding:16px">Could not load the ' + id + ' reference (' + e.message + ').</p>';
+    });
+  }
+  SERVICES.forEach(function (s) {
+    var b = document.createElement('button');
+    b.textContent = s.label; b.dataset.id = s.id; b.setAttribute('role', 'tab');
+    b.onclick = function () { show(s.id); };
+    $('tabs').appendChild(b);
+  });
+  show('memory');
+})();
+</script>
+</body>
+</html>

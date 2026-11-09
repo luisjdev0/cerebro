@@ -1,4 +1,4 @@
-import { ApiError, loadSession } from './api';
+import { ApiError, apiUrl, loadSession } from './api';
 
 /**
  * Downloads a full `pg_dump` of the instance from `POST /auth/backup` (admin only). The dump is
@@ -8,7 +8,7 @@ export async function downloadBackup(): Promise<{ filename: string; bytes: numbe
   const session = loadSession();
   let res: Response;
   try {
-    res = await fetch('/auth/backup', { method: 'POST', headers: session ? { Authorization: `Bearer ${session.token}` } : {} });
+    res = await fetch(apiUrl('/auth/backup'), { method: 'POST', headers: session ? { Authorization: `Bearer ${session.token}` } : {} });
   } catch {
     throw new ApiError(0, 'Could not reach the server');
   }

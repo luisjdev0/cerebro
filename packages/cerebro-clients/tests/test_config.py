@@ -110,3 +110,25 @@ class TestAgentName:
         monkeypatch.setenv("CEREBRO_AGENT_NAME", "new-agent")
         monkeypatch.setenv("KNOWLEDGEOS_AGENT_NAME", "legacy-agent")
         assert config.agent_name() == "new-agent"
+
+
+class TestSavedLoginUrl:
+    """`cerebro login` saves the GATEWAY url; each module's url is derived under /api/<module>."""
+
+    def test_modules_are_derived_under_the_api_prefix(self, monkeypatch, tmp_path):
+        saved = tmp_path / "config.json"
+        saved.write_text('{"url": "https://cerebro.example.com/", "token": "t"}', encoding="utf-8")
+        monkeypatch.setattr(config, "_CONFIG_PATH", saved)
+        for var in ("CEREBRO_MEMORY_URL", "KNOWLEDGEOS_API_URL", "CEREBRO_DOCS_URL", "CEREBRO_FLOWS_URL", "CEREBRO_AUTH_URL"):
+            monkeypatch.delenv(var, raising=False)
+        assert config.memory_base_url() == "https://cerebro.example.com/api/memory"
+        assert config.docs_base_url() == "https://cerebro.example.com/api/docs"
+        assert config.flows_base_url() == "https://cerebro.example.com/api/flows"
+        assert config.auth_base_url() == "https://cerebro.example.com/api/auth"
+
+    def test_an_explicit_variable_still_wins_and_may_use_the_legacy_prefix(self, monkeypatch, tmp_path):
+        saved = tmp_path / "config.json"
+        saved.write_text('{"url": "https://cerebro.example.com"}', encoding="utf-8")
+        monkeypatch.setattr(config, "_CONFIG_PATH", saved)
+        monkeypatch.setenv("CEREBRO_MEMORY_URL", "https://cerebro.example.com/memory")
+        assert config.memory_base_url() == "https://cerebro.example.com/memory"

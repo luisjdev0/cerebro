@@ -1,5 +1,10 @@
-// Thin same-origin client for the cerebro gateway (/memory, /docs, /flows, /auth).
-// No business logic here: it adds the bearer token and normalizes errors.
+// Thin same-origin client for the cerebro gateway. Call sites pass service-relative paths
+// (`/memory/...`, `/docs/...`, `/flows/...`, `/auth/...`); the gateway's canonical prefix `/api`
+// is added in one place (`apiUrl`). No business logic here: it adds the bearer token and
+// normalizes errors.
+
+export const API_PREFIX = '/api';
+export const apiUrl = (path: string): string => `${API_PREFIX}${path}`;
 
 export type Session = {
   token: string;
@@ -63,7 +68,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown;
   if (session) h.set('Authorization', `Bearer ${session.token}`);
   let res: Response;
   try {
-    res = await fetch(path, { ...rest, headers: h, body: json !== undefined ? JSON.stringify(json) : rest.body });
+    res = await fetch(apiUrl(path), { ...rest, headers: h, body: json !== undefined ? JSON.stringify(json) : rest.body });
   } catch {
     throw new ApiError(0, 'Could not reach the server');
   }

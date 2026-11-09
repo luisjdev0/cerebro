@@ -7,6 +7,15 @@
 # they are for local dev or direct access within the compose network) -- this
 # is an additional, optional layer.
 #
+# Public layout (Phase 1C):
+#   /api/memory|docs|flows|auth/*  the four APIs (the canonical prefix)
+#   /api/                          API documentation (Swagger UI, gateway/apidocs, vendored)
+#   /mcp                           the MCP server over streamable HTTP (token on every request)
+#   /memory|docs|flows|auth/*      the same four APIs, kept as ALIASES of /api/<service> so every
+#                                  existing deployment, script and saved CLI login keeps working
+#   anything else                  the web portal
+# New clients and the portal use /api/<service>; nothing has to change for old ones.
+#
 # `handle_path` strips the prefix before forwarding, so `/memory/contexts`
 # reaches the backend as `/contexts`, `/docs/categories` as `/categories`,
 # `/flows/flows/INC-1` as `/flows/INC-1` (the repeated "flows" is that API's own
@@ -21,6 +30,49 @@
 		respond "cerebro gateway: ok" 200
 	}
 
+	# --- canonical API prefix -------------------------------------------------------------
+	handle_path /api/memory/* {
+		reverse_proxy cerebro-memory-api:8000
+	}
+
+	handle_path /api/docs/* {
+		reverse_proxy cerebro-docs-api:8000
+	}
+
+	handle_path /api/flows/* {
+		reverse_proxy cerebro-flows-api:8000
+	}
+
+	handle_path /api/auth/* {
+		reverse_proxy cerebro-auth-api:8000
+	}
+
+	# API documentation: /api/ is the page, /api/vendor/* its bundled Swagger UI files
+	# (gateway/apidocs, mounted at /srv/apidocs -- see compose.yaml).
+	handle /api {
+		redir /api/ 308
+	}
+
+	handle /api/ {
+		root * /srv/apidocs
+		rewrite * /index.html
+		file_server
+	}
+
+	handle_path /api/vendor/* {
+		root * /srv/apidocs/vendor
+		file_server
+	}
+
+	# MCP over streamable HTTP (cerebro-mcp container). Not stripped: the server itself
+	# serves /mcp. Every request must carry the caller's `Authorization: Bearer` token.
+	handle /mcp* {
+		reverse_proxy cerebro-mcp:8000 {
+			flush_interval -1
+		}
+	}
+
+	# --- legacy aliases (same backends, no /api) ------------------------------------------
 	handle_path /memory/* {
 		reverse_proxy cerebro-memory-api:8000
 	}

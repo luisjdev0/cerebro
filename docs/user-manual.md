@@ -85,9 +85,9 @@ along these lines (Windows path shown; adjust for your OS) in
 "cerebro": {
   "command": "C:\\path\\to\\cerebro\\.venv\\Scripts\\cerebro-mcp.exe",
   "env": {
-    "CEREBRO_MEMORY_URL": "https://your-cerebro-host/memory",
-    "CEREBRO_DOCS_URL": "https://your-cerebro-host/docs",
-    "CEREBRO_FLOWS_URL": "https://your-cerebro-host/flows",
+    "CEREBRO_MEMORY_URL": "https://your-cerebro-host/api/memory",
+    "CEREBRO_DOCS_URL": "https://your-cerebro-host/api/docs",
+    "CEREBRO_FLOWS_URL": "https://your-cerebro-host/api/flows",
     "CEREBRO_TOKEN": "<your personal/agent token, not the root token>",
     "CEREBRO_AGENT_NAME": "claude-desktop"
   }
@@ -108,6 +108,13 @@ Once that's in place, restart Claude Desktop/Code and just talk to it — ask
 it something only cerebro would know ("what did we decide about the
 database?") to confirm the connection works.
 
+**Remote, no install (HTTP).** If your instance runs behind the gateway, it also serves the
+tools at `https://your-cerebro-host/mcp`. Connect any MCP client that supports streamable HTTP
+and custom headers, sending your token in `Authorization: Bearer <token>`; for example, in
+Claude Code: `claude mcp add --transport http cerebro https://your-cerebro-host/mcp --header
+"Authorization: Bearer <token>"`. Without a token the server answers 401. The `/api/` page of your
+instance shows the same example, next to the full HTTP API reference.
+
 ### B. Through the `cerebro` CLI
 
 For direct or scripted use (backups, bulk imports, managing tokens, editing a
@@ -115,9 +122,9 @@ flow definition by hand) there's a companion `cerebro` command-line tool. It
 reads the same kind of environment variables:
 
 ```bash
-export CEREBRO_MEMORY_URL=https://your-cerebro-host/memory
-export CEREBRO_DOCS_URL=https://your-cerebro-host/docs
-export CEREBRO_FLOWS_URL=https://your-cerebro-host/flows
+export CEREBRO_MEMORY_URL=https://your-cerebro-host/api/memory
+export CEREBRO_DOCS_URL=https://your-cerebro-host/api/docs
+export CEREBRO_FLOWS_URL=https://your-cerebro-host/api/flows
 export CEREBRO_TOKEN=<your token>
 
 cerebro docs list

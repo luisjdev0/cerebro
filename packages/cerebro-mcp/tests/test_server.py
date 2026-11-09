@@ -25,7 +25,7 @@ def fake_clients(monkeypatch):
     monkeypatch.setattr(server, "_docs", fake_docs)
     monkeypatch.setattr(server, "_flows", fake_flows)
     monkeypatch.setattr(server, "_auth", fake_auth)
-    monkeypatch.setattr(server, "_last_disambiguation_id", None)
+    monkeypatch.setattr(server, "_last_disambiguation_ids", {})
     return fake_memory, fake_docs, fake_flows, fake_auth
 
 
@@ -70,11 +70,11 @@ class TestMemorySearch:
         out = server.memory_search("query")
         assert out["ambiguous"] is True
         assert "ambiguous" in out["message"]
-        assert server._last_disambiguation_id == "d1"
+        assert server._last_disambiguation_ids[""] == "d1"
 
     def test_next_call_with_context_resolves_pending_disambiguation(self, fake_clients):
         fake_memory, _, _, _ = fake_clients
-        server._last_disambiguation_id = "pending-1"
+        server._last_disambiguation_ids[""] = "pending-1"
         fake_memory.search_memories.return_value = {
             "results": [],
             "scope_decision": {"mode": "explicit", "context": "ctx"},
@@ -85,7 +85,7 @@ class TestMemorySearch:
 
         fake_memory.resolve_disambiguation.assert_called_once_with("pending-1", "ctx")
         assert out["note"] is not None
-        assert server._last_disambiguation_id is None  # slot consumed
+        assert server._last_disambiguation_ids.get("") is None  # slot consumed
 
     def test_connection_error_becomes_error_dict(self, fake_clients):
         fake_memory, _, _, _ = fake_clients

@@ -42,18 +42,74 @@ from mcp.server.fastmcp import FastMCP
 MEMORY_TYPES = ("semantic", "episodic", "procedural", "decision")
 SECTION_OPERATIONS = ("replace", "append", "insert_after", "insert_before", "delete")
 
-_memory = MemoryClient()
-_docs = DocsClient()
-_flows = FlowsClient()
-_auth = AuthClient()
+# Set by `cerebro_mcp.http` when the server runs over HTTP (`/mcp`): then every request
+# carries its own `Authorization: Bearer` token and the environment token is never used.
+HTTP_MODE = False
+
+
+def _request_headers() -> Any:
+    """Headers of the HTTP request being served right now, or None (stdio, or outside a request)."""
+    try:
+        from mcp.server.lowlevel.server import request_ctx
+
+        request = getattr(request_ctx.get(), "request", None)
+    except (ImportError, LookupError):
+        return None
+    return getattr(request, "headers", None)
+
+
+def _request_token() -> str | None:
+    headers = _request_headers()
+    value = headers.get("authorization", "") if headers is not None else ""
+    return value[7:].strip() if value.lower().startswith("bearer ") else None
+
+
+class _ClientProxy:
+    """Stands in for one `cerebro_clients` client. Over stdio it is the single client the
+    environment configures (as before); over HTTP it resolves, on every call, the client for
+    the token of the request being served, so two callers never share an identity."""
+
+    _MAX_CACHED = 64
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+        self._default: Any = None
+        self._by_token: dict[str, Any] = {}
+
+    def _resolve(self) -> Any:
+        if not HTTP_MODE:
+            if self._default is None:
+                self._default = self._factory()
+            return self._default
+        token = _request_token() or ""
+        client = self._by_token.get(token)
+        if client is None:
+            if len(self._by_token) >= self._MAX_CACHED:  # evict the oldest, close its connections
+                self._by_token.pop(next(iter(self._by_token))).close()
+            client = self._by_token[token] = self._factory(token=token)
+        return client
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+
+_memory = _ClientProxy(MemoryClient)
+_docs = _ClientProxy(DocsClient)
+_flows = _ClientProxy(FlowsClient)
+_auth = _ClientProxy(AuthClient)
 
 # Process-memory of the last *unresolved* disambiguation (Phase 2 Context Engine,
 # plan_v2.md SS7). See the memory_search() docstring for the auto-resolution
-# behavior this enables. Deliberately a single slot, not a
+# behavior this enables. Deliberately a single slot per caller, not a
 # stack/history: it only needs to bridge "ambiguous search" -> "the NEXT search
 # from the agent with an explicit context", which is the pattern that an
-# agent calling tools naturally produces.
-_last_disambiguation_id: str | None = None
+# agent calling tools naturally produces. Keyed by the caller's token so that, over
+# HTTP, one person's pending ambiguity can never be consumed by another.
+_last_disambiguation_ids: dict[str, str | None] = {}
+
+
+def _caller_key() -> str:
+    return (_request_token() or "") if HTTP_MODE else ""
 
 mcp = FastMCP(
     name="cerebro",
@@ -212,7 +268,7 @@ def memory_search(
         None, confirms when a preference was learned by resolving a
         previous ambiguity) and `related` (list, present only if `expand=True`).
     """
-    global _last_disambiguation_id
+    caller = _caller_key()
 
     try:
         data = _memory.search_memories(query, context=context, type=type, limit=limit, expand=expand)
@@ -230,8 +286,7 @@ def memory_search(
 
     # Consume the pending slot in THIS call (whether it's used below or not) so it only
     # covers one following call - see docstring.
-    pending_id = _last_disambiguation_id
-    _last_disambiguation_id = None
+    pending_id = _last_disambiguation_ids.pop(caller, None)
 
     note: str | None = None
     if context and pending_id:
@@ -245,7 +300,7 @@ def memory_search(
             pass  # best-effort: do not lose the search result over this
 
     if mode == "ambiguous":
-        _last_disambiguation_id = scope_decision.get("disambiguation_id")
+        _last_disambiguation_ids[caller] = scope_decision.get("disambiguation_id")
         out: dict[str, Any] = {
             "results": results,
             "scope_decision": scope_decision,

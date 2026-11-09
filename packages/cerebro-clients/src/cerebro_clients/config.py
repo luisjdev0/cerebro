@@ -5,7 +5,7 @@
 Precedence:
     URL    -- CEREBRO_MEMORY_URL / CEREBRO_DOCS_URL / CEREBRO_FLOWS_URL / CEREBRO_AUTH_URL
               >  (memory only) KNOWLEDGEOS_API_URL
-              >  ~/.cerebro/config.json's "url" (the gateway base saved by `cerebro login`) + "/<module>"
+              >  ~/.cerebro/config.json's "url" (the gateway base saved by `cerebro login`) + "/api/<module>"
               >  local default
     Token  -- CEREBRO_TOKEN                          >  (memory only) KNOWLEDGEOS_API_TOKEN
               >  ~/.cerebro/config.json's "token" (saved by `cerebro login`)
@@ -28,9 +28,10 @@ only for the container port mapping).
 by this package -- its "url" field is the GATEWAY's base URL (e.g.
 https://cerebro.example.com), not any single service's own address, since that's what
 a human types once at login time. Each `*_base_url()` below appends its own
-`/<module>` prefix to it, matching the gateway's routing convention
-(gateway/Caddyfile) -- the same convention `CEREBRO_MEMORY_URL=.../memory` already
-follows when set explicitly via environment.
+`/api/<module>` prefix to it, matching the gateway's canonical routing
+(gateway/Caddyfile). The gateway still answers the old `/<module>` prefixes as aliases, so an
+explicit `CEREBRO_MEMORY_URL=.../memory` keeps working; a saved login against a gateway that
+predates `/api` needs those variables set (or the gateway upgraded).
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def _saved_module_url(module: str) -> str | None:
     gateway_url = config.get("url") if config else None
     if not gateway_url:
         return None
-    return f"{gateway_url.rstrip('/')}/{module}"
+    return f"{gateway_url.rstrip('/')}/api/{module}"
 
 
 def memory_base_url() -> str:

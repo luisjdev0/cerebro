@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_GATEWAY_URL;
   const proxy = target
     ? Object.fromEntries(
-        ['/memory', '/docs', '/flows', '/auth'].map((p) => [p, { target, changeOrigin: true }]),
+        ['/api', '/mcp'].map((p) => [p, { target, changeOrigin: true }]),
       )
     : undefined;
   return {
