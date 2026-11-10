@@ -66,3 +66,16 @@
 .md th { background: color-mix(in oklab, var(--foreground) 5%, transparent); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1.5em 0; }
 .md img { max-width: 100%; border-radius: 0.5rem; }
+
+/* Collapsed sidebar (icon rail): Ixchel hides the accent bar there and paints every icon the same
+   color, so the current page was impossible to tell. Mark it with a tinted tile and a ring. */
+[data-collapsible='icon'] [data-sidebar='menu-button'][data-active='true'] {
+  background: color-mix(in oklab, var(--color-brand-soft) 22%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--color-brand-soft) 80%, transparent);
+}
+[data-collapsible='icon'] [data-sidebar='menu-button'][data-active='true'] svg {
+  color: var(--color-brand-peri);
+}
+:root:not(.dark) [data-collapsible='icon'] [data-sidebar='menu-button'][data-active='true'] svg {
+  color: var(--color-brand-soft);
+}

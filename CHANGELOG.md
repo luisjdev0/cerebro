@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Portal: the current page is now marked when the sidebar is collapsed.** In the icon rail every icon looked the same, so there was no way to tell which menu was active. The active icon now gets a tinted tile with a blue ring, in light and dark themes.
+
 ### Changed
 - **Portal dashboard: the evolution lines follow the year picker.** Choosing a year next to the activity heatmap now also redraws the three line charts for January to December of that year (up to the current month for the current year); "Last 12 months" keeps the rolling window. The pie charts are unchanged, since they show what exists now.
 
