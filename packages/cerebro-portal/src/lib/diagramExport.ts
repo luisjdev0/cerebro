@@ -23,6 +23,9 @@ export function withPixelSize(svg: string, { w, h }: Size, background?: string):
 /** The Mermaid source without the HTML bold tags, which plain-text SVG labels cannot render. */
 export const plainSource = (source: string) => source.replace(/<\/?b>/g, '');
 
+/** The Mermaid source as a downloadable text file (opens in mermaid.live, GitHub, Notion, editors). */
+export const mermaidBlob = (source: string) => new Blob([source.endsWith('\n') ? source : `${source}\n`], { type: 'text/plain;charset=utf-8' });
+
 let n = 0;
 /** Renders the source as a standalone light SVG with pixel dimensions. */
 export async function renderExportSvg(source: string): Promise<{ svg: string; size: Size }> {

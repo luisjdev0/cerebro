@@ -451,7 +451,7 @@ is allowed to use.
 - **Documents** — search and browse, write in Markdown with a live preview, see the version
   history, archive and unarchive, manage categories, and import `.md`/`.txt` files in bulk.
 - **Flows** — two tabs. *Flows*: the definitions, shown as YAML or as a flowchart you can zoom
-  and export (PNG, SVG, PDF), with version history, validation before saving, the documents each
+  and export (PNG, SVG, PDF, or the Mermaid source as a `.mmd` file), with version history, validation before saving, the documents each
   flow references (and an Upload button when one is missing) and category management. *Runs*: the
   runs in progress or finished, with their timeline, and a badge for those waiting for your
   approval. Runs are read-only here: approving or rejecting a checkpoint is done through the

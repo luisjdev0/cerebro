@@ -367,7 +367,7 @@ export const en = {
       refMissing: 'Not found',
     },
     refDoc: { title: 'Upload the referenced document', desc: 'The flow points at this document. These categories stay hidden from the Documents screen, so it is uploaded here.', upload: 'Upload', drop: 'Drop a .md or .txt file here or click to choose', dropHint: 'One file; it fills the title and content below', one: 'Choose one file at a time.' },
-    diagram: { error: 'The diagram could not be drawn.', copySource: 'Copy Mermaid source', zoomIn: 'Zoom in', zoomOut: 'Zoom out', fit: 'Fit the whole diagram', actualSize: 'Actual size', fullscreen: 'Full screen', exitFullscreen: 'Exit full screen', hint: 'Drag to move · scroll to zoom · double-click to fit', export: 'Export', exporting: 'Exporting…', exportError: 'The export failed.', as_png: 'PNG image', as_svg: 'SVG (vector)', as_pdf: 'PDF document' },
+    diagram: { error: 'The diagram could not be drawn.', copySource: 'Copy Mermaid source', zoomIn: 'Zoom in', zoomOut: 'Zoom out', fit: 'Fit the whole diagram', actualSize: 'Actual size', fullscreen: 'Full screen', exitFullscreen: 'Exit full screen', hint: 'Drag to move · scroll to zoom · double-click to fit', export: 'Export', exporting: 'Exporting…', exportError: 'The export failed.', as_png: 'PNG image', as_svg: 'SVG (vector)', as_pdf: 'PDF document', as_mmd: 'Mermaid source (.mmd)' },
     upload: { drop: 'Drop a .yaml file here or click to choose', hint: 'One file; it replaces the text below', one: 'Choose one file at a time.', type: 'Only .yaml or .yml files.', size: 'The file is larger than 1 MB.', empty: 'The file is empty.' },
     deleteTitle: 'Delete this flow?',
     deleteDesc: 'The definition is deleted with its version history and its runs. This cannot be undone.',
