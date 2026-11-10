@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plainSource, svgSize, withPixelSize } from './diagramExport';
+import { mermaidBlob, plainSource, svgSize, withPixelSize } from './diagramExport';
 
 const MERMAID_SVG = '<svg id="x" width="100%" xmlns="http://www.w3.org/2000/svg" style="max-width: 1104.5px;" viewBox="0 0 1104.54 8812.125" role="graphics-document"><g/></svg>';
 
@@ -24,5 +24,15 @@ describe('diagram export helpers', () => {
 
   it('strips bold tags, which plain-text labels cannot render', () => {
     expect(plainSource('a["<b>x</b><br/>y"]')).toBe('a["x<br/>y"]');
+  });
+});
+
+describe('mermaidBlob', () => {
+  it('keeps the source verbatim as plain text and ends it with a newline', async () => {
+    const src = 'flowchart TD\n  A["<b>Start</b>"] --> B';
+    const blob = mermaidBlob(src);
+    expect(blob.type).toBe('text/plain;charset=utf-8');
+    expect(await new Response(blob).text()).toBe(`${src}\n`);
+    expect(await new Response(mermaidBlob(`${src}\n`)).text()).toBe(`${src}\n`);
   });
 });

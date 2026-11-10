@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Portal: export a flow diagram as Mermaid source.** The diagram's Export menu gains "Mermaid source (.mmd)" next to PNG, SVG and PDF, so the flow can be opened in mermaid.live, GitHub or Notion, or edited by hand.
+
 ### Fixed
 - **Portal: the current page is now marked when the sidebar is collapsed.** In the icon rail every icon looked the same, so there was no way to tell which menu was active. The active icon now gets a tinted tile with a blue ring, in light and dark themes.
 

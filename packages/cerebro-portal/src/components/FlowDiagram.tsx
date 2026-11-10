@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { Check, ChevronDown, Copy, Download, Focus, Maximize, Minimize, ZoomIn, ZoomOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { copyText } from '../lib/clipboard';
-import { canvasBlob, pdfFromCanvas, renderExportSvg, saveBlob, svgSize, svgToCanvas, withPixelSize, type Size } from '../lib/diagramExport';
+import { canvasBlob, mermaidBlob, pdfFromCanvas, renderExportSvg, saveBlob, svgSize, svgToCanvas, withPixelSize, type Size } from '../lib/diagramExport';
 import { getFlowDiagram } from '../lib/flows';
 
 let counter = 0;
@@ -153,9 +153,9 @@ function Viewer({ svg, size, fillHeight }: { svg: string; size: Size; fillHeight
   );
 }
 
-type Format = 'svg' | 'png' | 'pdf';
+type Format = 'svg' | 'png' | 'pdf' | 'mmd';
 
-/** Source copy + export menu (SVG / PNG / PDF, always light on white). */
+/** Source copy + export menu (SVG / PNG / PDF always light on white, and the Mermaid source). */
 function Actions({ source, basename }: { source: string; basename: string }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -175,6 +175,10 @@ function Actions({ source, basename }: { source: string; basename: string }) {
     setBusy(format);
     setFailed(false);
     try {
+      if (format === 'mmd') {
+        saveBlob(mermaidBlob(source), `${basename}.mmd`);
+        return;
+      }
       const { svg, size } = await renderExportSvg(source);
       if (format === 'svg') saveBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${basename}.svg`);
       else {
@@ -214,8 +218,8 @@ function Actions({ source, basename }: { source: string; basename: string }) {
           <ChevronDown className="size-3.5" />
         </button>
         {open && (
-          <div role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border bg-popover p-1 text-sm shadow-lg">
-            {(['png', 'svg', 'pdf'] as const).map((f) => (
+          <div role="menu" className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-lg border bg-popover p-1 text-sm shadow-lg">
+            {(['png', 'svg', 'pdf', 'mmd'] as const).map((f) => (
               <button key={f} type="button" role="menuitem" className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left hover:bg-muted" onClick={() => void run(f)}>
                 {t(`flows.diagram.as_${f}`)}
               </button>
